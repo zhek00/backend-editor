@@ -1,0 +1,90 @@
+# Base dos canais de documentário. Não use este arquivo como perfil de um projeto.
+# Um canal novo copia perfis/exemplo-nicho.yaml, escreve `base: base-documentario.yaml` na primeira linha
+# e só preenche o que é do nicho dele: nome, diretrizes, orientação de mídia e de textos, e estilo de imagem.
+#
+# Como a herança funciona
+# - bloco (voz, imagens, textos_na_tela...): o filho troca só os campos que escrever, o resto vem daqui.
+# - diretrizes e orientacao: o texto do filho é ACRESCENTADO ao daqui, para estas regras continuarem valendo.
+#   Se o filho quiser trocar em vez de somar, comece o texto dele com SUBSTITUIR:
+#
+# O ritmo de corte (cenas de 3 a 5 segundos, com movimento de câmera diferente em cada cena) e a
+# proporção de 90% de acervo real e 10% de IA são do estilo da fábrica, valem para todo perfil e
+# não se configuram aqui.
+
+nome: Documentário (base)
+
+voz:
+  provedor: edge-tts                 # voz gratuita da Microsoft. Troque para elevenlabs se quiser mais realismo
+  voz_edge: pt-BR-AntonioNeural      # vozes em pt-BR: AntonioNeural (homem), FranciscaNeural (mulher)
+  velocidade_edge: "+0%"
+  voice_id: COLE_AQUI_O_VOICE_ID     # só usado com provedor elevenlabs
+  modelo: eleven_turbo_v2_5
+  estabilidade: 0.5
+  similaridade: 0.75
+  estilo: 0.0
+  velocidade: 1.0
+
+ritmo:
+  # MEÇA o seu. Rode a narração uma vez e use o número que a fábrica mostrar ("ritmo de N caracteres
+  # por minuto"). Este valor só serve para estimar a duração, não muda a narração.
+  # Medido com a voz edge-tts acima: 914 num roteiro de 20 mil caracteres (e 853 num de 800, onde o
+  # arredondamento das pausas pesa mais). Roteiro curto tende a sair um pouco mais devagar que isso.
+  caracteres_por_minuto: 914
+
+midia_real:
+  fontes_foto: [wikimedia, pexels, pixabay, unsplash, smithsonian, europeana, harvard]   # iNaturalist (cena de animal) e NASA (cena de espaço) entram sozinhos
+  fontes_video: [pixabay, pexels]
+  aceitar_cc_by: true                # exige crédito ao autor, que vai para creditos.txt
+  aceitar_cc_by_sa: false
+  orientacao: >-
+    Regra obrigatória de congruência, sem exceção: cada cena mostra o que a narração está dizendo
+    naquele momento específico. Quando a narração cita algo pelo nome, a busca ou o prompt daquela cena
+    é sobre aquilo, nunca sobre outra coisa nem sobre um termo genérico. Quando a narração é abstrata,
+    escolha um detalhe visual concreto que traduza a ideia, em vez de uma imagem vaga.
+    Nunca reaproveite a busca de uma cena vizinha só porque o tema é parecido, e varie o enquadramento
+    entre cenas seguidas (close, plano aberto, detalhe, ação) para o vídeo não ficar monótono.
+
+    Linguagem figurada, nunca ao pé da letra. Comparações, metáforas e expressões não são o assunto da
+    cena: elas descrevem o assunto de verdade, que é o que deve aparecer. Se a narração diz que a dor é
+    "um ferro em brasa", o assunto é a dor e quem a sente, não um ferro. Se diz que o som lembra
+    "tambores de guerra", o assunto é o bicho que faz o som, não um tambor. Se diz que algo é só "o
+    cartão de visitas", o assunto é o que vem depois, não um cartão. Se chama um enxame de "exército",
+    mostre o enxame, não soldados. Pergunte sempre do que o trecho fala de verdade antes de escrever a
+    busca, e se a expressão for só uma figura de linguagem, mostre o sujeito real daquela parte.
+
+    Números, posições e títulos não viram imagem. Nunca busque placa, cartaz, algarismo ou relógio por
+    causa de "o número 7", "em primeiro lugar", "minutos depois" ou "todos os anos". Nesses trechos
+    mostre o assunto daquela parte. O número já aparece no texto na tela.
+
+    Quando a narração muda de assunto, a busca muda junto, na mesma cena em que a mudança acontece.
+    Nunca continue mostrando o sujeito da parte anterior depois que a narração passou para outro.
+
+imagens:
+  provedor: kie                      # kie (Grok Imagine, mais barato) ou google (Nano Banana 2)
+  modelo: grok-imagine-image-2-0/text-to-image
+  proporcao: "16:9"
+  estilo: >-
+    Cinematic still, photorealistic, dramatic lighting, strong contrast, one clear focal subject,
+    shallow depth of field, subtle film grain, striking composition.
+  evitar: >-
+    text, letters, logos, watermarks, cartoon style, blurry, deformed limbs, extra limbs, extra fingers
+
+diretrizes: >-
+  Alinhamento entre cena e roteiro é obrigatório e vem antes de qualquer outra prioridade: nenhuma cena
+  pode mostrar algo diferente do que a narração está citando naquele exato trecho.
+
+textos_na_tela:
+  ativo: true
+  tema: documentario                 # documentario (branco e vermelho) ou selado (preto, dourado e serifa)
+  orientacao: >-
+    Use destaque para dados de impacto, com número ou fato forte. Use rotulo ao citar pela primeira vez
+    o nome do assunto daquele trecho. Use lista quando a narração enumerar itens. A maioria das cenas
+    fica sem texto, e nunca use texto em duas cenas seguidas.
+
+abertura:
+  ativo: false                       # prévia sem fala, com cenas do próprio vídeo passando rápido
+
+titulos:
+  duracao: 5                         # segundos do cartão de [TITULO] Nome da parte
+
+legenda_na_tela: true

@@ -1,0 +1,25 @@
+# Perfil dos vídeos em que só o personagem fala, na sala dele, do começo ao fim.
+# Serve para apresentação do canal, aviso, convite e qualquer recado curto.
+nome: Ezequiel Braga, recado
+
+voz:
+  voice_id: COLE_AQUI_O_VOICE_ID       # a mesma voz do canal
+  modelo: eleven_v3
+  estabilidade: 0.5
+  similaridade: 0.8
+  estilo: 0.15
+  voz_offline: "Reed (Português (Brasil))"
+
+ritmo:
+  caracteres_por_minuto: 524
+
+avatar:
+  ativo: true
+  modo: trechos
+  somente_avatar: true               # a narração inteira vira um vídeo do personagem, sem cenas de imagem
+  pasta_fixos: avatar_fixos
+  # sem fechamento, porque o próprio roteiro termina com o convite
+
+legenda_na_tela: true
+musica: musicas/livro-selado
+volume_musica_db: -24                # bem baixa, porque não há imagem para sustentar a trilha

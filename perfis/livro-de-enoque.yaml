@@ -1,0 +1,99 @@
+# Perfil do canal O Livro Selado. Documentário que mistura material real com imagens de IA.
+nome: O Livro Selado
+
+voz:
+  voice_id: COLE_AQUI_O_VOICE_ID       # O Livro Selado, narrador (criada no Voice Design, variação C forte e áspera)
+  modelo: eleven_v3                    # mais lento e dramático que o eleven_multilingual_v2
+  estabilidade: 0.5                    # no v3 os valores aceitos são 0, 0.5 e 1
+  similaridade: 0.8
+  estilo: 0.15
+  velocidade: 0.95
+  voz_offline: "Reed (Português (Brasil))"   # voz do Mac usada nos testes sem custo
+
+ritmo:
+  caracteres_por_minuto: 524         # medido com a voz v3 do canal, cerca de 88 palavras por minuto
+  segundos_por_cena: 7
+  minimo_segundos_por_cena: 3
+  maximo_segundos_por_cena: 11
+
+midia_real:
+  proporcao: 0.5                       # ignorado: o estilo da fábrica já fixa 90% real / 10% IA em fabrica/cenas.py
+  fontes_foto: [wikimedia, pexels, pixabay]
+  fontes_video: [pexels, pixabay]
+  aceitar_cc_by: true                  # exige crédito ao autor, que vai para creditos.txt
+  aceitar_cc_by_sa: false
+  orientacao: >-
+    Use foto_real sempre que a narração citar manuscritos, os Manuscritos do Mar Morto, Qumran, a Etiópia,
+    a Igreja Ortodoxa Etíope, códices, sítios arqueológicos, o Monte Hermom ou obras de arte antigas,
+    como as gravuras de Gustave Doré. Use video_real para desertos, cavernas, montanhas, céu estrelado,
+    fogo, velas e mar. Use ia para os Vigilantes, os gigantes, as visões de Enoque, o trono, o dilúvio
+    e cenas antigas sem registro. Paisagem comum, pessoa posando e foto sem drama perdem para uma imagem
+    de IA bem composta, então nesses casos prefira ia.
+  buscas_de_teste: [Mount Hermon, Dead Sea Scrolls, Ethiopian manuscript, Gustave Dore angels, Qumran caves]
+
+imagens:
+  provedor: google                   # google ou fal
+  modelo: gemini-3.1-flash-image     # Nano Banana 2
+  proporcao: "16:9"
+  resolucao: 1K                      # 1K custa US$ 0,067 e 2K custa US$ 0,101
+  estilo: >-
+    Cinematic still from an epic historical drama, dramatic chiaroscuro lighting, deep shadows with warm golden
+    highlights, strong contrast, volumetric light and haze, one clear focal subject, shallow depth of field,
+    subtle film grain. Striking composition like a movie poster. Supernatural beings look physical and
+    believable, never cartoonish.
+  evitar: >-
+    text, letters, inscriptions, logos, watermarks, modern objects, horns, cartoon style, blood, gore,
+    deformed hands, extra fingers.
+
+personagem:
+  nome: Enoque
+  descricao: >-
+    Enoch, the biblical patriarch, a tall lean man in his sixties with a long grey beard, deep-set dark eyes,
+    weathered olive skin, long grey hair under a simple wool head covering, wearing a plain undyed linen robe
+    and a brown wool mantle.
+  referencias: []   # rode fabrica personagem, escolha um rosto e coloque o caminho aqui
+  frequencia: >-
+    Enoch appears rarely, at most one of every ten scenes, only when the narration focuses on him.
+
+diretrizes: >-
+  O canal investiga textos antigos com tom sério, como um documentário, sempre a partir do que o texto diz.
+  Os Vigilantes têm forma humana imponente, sem chifres. Os gigantes aparecem sem violência explícita.
+  Deus nunca aparece com rosto. A presença divina é luz intensa, fogo e nuvens.
+
+textos_na_tela:
+  ativo: true
+  orientacao: >-
+    Use capitulo sempre que a narração citar capítulo ou versículo. Use rotulo quando citar outro livro,
+    documento ou fonte, como CARTAS DE JOÃO ou LIVRO DOS JUBILEUS. Use lista quando a narração enumerar
+    marcadores, sinais, habilidades ou itens. Use destaque em frases de impacto, no máximo uma a cada 40 segundos.
+  tema: selado                         # selado (preto, dourado e serifa) ou documentario (branco e vermelho)
+  cor_ouro: "#C9A45C"
+  cor_texto: "#F2E8D5"
+  cor_painel: "#0C0906"
+
+avatar:
+  ativo: true
+  modo: trechos                    # só aparece onde o roteiro marca [AVATAR]. quadro deixa ele o vídeo inteiro
+  pasta_fixos: avatar_fixos        # clipes sempre iguais, gerados uma vez, usados em todo vídeo do canal
+  fechamento: cta_final            # entra depois da última cena de todo vídeo
+  pausa_antes_inserto: 0.6         # respiro antes de um clipe fixo, tirado da pausa natural da narração
+  transicao: 0.35                  # segundos da fusão entre dois clipes seguidos do personagem
+
+efeitos:
+  ativo: true
+  pasta: efeitos                   # biblioteca do canal, cada som gerado é reaproveitado nos próximos vídeos
+  volume_db: -9                    # em relação à narração
+  orientacao: >-
+    No máximo um efeito a cada 45 segundos de narração, só em momentos que pedem som de verdade.
+
+abertura:                          # prévia sem fala, com cenas do próprio vídeo passando rápido
+  ativo: true
+  duracao: 6                       # segundos
+  corte: 0.4                       # segundos de cada cena
+  flash: true                      # clarão rápido em cada corte
+  musica: musicas/livro-selado     # arquivo ou pasta. A fábrica usa o trecho mais intenso da faixa
+  volume_db: 0                     # sem fala por cima, a música pode vir no volume da narração
+
+legenda_na_tela: true
+musica: musicas/livro-selado       # pasta com as trilhas do canal, tocadas em sequência com transição suave
+volume_musica_db: -16

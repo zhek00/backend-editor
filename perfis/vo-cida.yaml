@@ -1,0 +1,44 @@
+# Perfil de exemplo. Copie este arquivo para criar outro canal.
+nome: Vó Cida, cozinha da roça
+
+voz:
+  voice_id: COLE_AQUI_O_VOICE_ID       # na ElevenLabs, em Voices, botão Copy voice ID
+  modelo: eleven_multilingual_v2
+  estabilidade: 0.55
+  similaridade: 0.75
+  estilo: 0.2
+  velocidade: 0.95
+  voz_offline: "Grandma (Português (Brasil))"   # voz do Mac usada nos testes sem custo
+
+ritmo:
+  segundos_por_cena: 6
+  maximo_segundos_por_cena: 10
+
+imagens:
+  provedor: google                   # google ou fal
+  modelo: gemini-3.1-flash-image     # Nano Banana 2
+  proporcao: "16:9"
+  resolucao: 1K                      # 1K custa US$ 0,067 e 2K custa US$ 0,101
+  estilo: >-
+    Photorealistic photograph, natural window light, warm tones, shallow depth of field,
+    rustic farmhouse kitchen in the countryside of Minas Gerais, Brazil, wood-fired stove,
+    clay pots, enamel mugs, checkered cloth, 1970s atmosphere, shot on 35mm film.
+  evitar: >-
+    text, letters, logos, watermarks, modern appliances, plastic packaging, deformed hands, extra fingers.
+
+personagem:
+  nome: Vó Cida
+  descricao: >-
+    a Brazilian grandmother about 85 years old, short curly white hair, kind wrinkled face,
+    brown eyes, small round glasses, simple floral cotton dress, light blue cardigan and an apron.
+  referencias: []   # depois de rodar fabrica personagem, coloque aqui o caminho da foto escolhida
+  frequencia: >-
+    She appears in about one of every five scenes, usually when a new topic starts.
+    In the other scenes show her hands, the food, the utensils, the kitchen or the farm, without a face.
+
+diretrizes: >-
+  Mostre utensílios e ingredientes de roça brasileira dos anos 70.
+  Prefira closes de mãos trabalhando e da comida em preparo.
+
+musica:              # arquivo ou pasta de músicas, por exemplo musicas/viola
+volume_musica_db: -14

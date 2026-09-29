@@ -1,0 +1,2 @@
+Coloque aqui a trilha ambiente da prática guiada, em mp3 ou wav.
+Se a faixa pedir crédito, deixe um .txt com o mesmo nome ao lado, como na pasta livro-selado.

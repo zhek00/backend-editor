@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+projetos/
+personagens/candidatos/
+vozes_criadas/
+vozes*.html
+vozes_candidatas*.json
+
+.vercel
+
+# registros da fábrica
+fabrica.log
+fabrica.log.erros
+*.log
+*.pyc

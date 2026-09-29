@@ -1,0 +1,3 @@
+pausa.png é um símbolo provisório desenhado pelo sistema.
+Troque pelo símbolo escolhido, em PNG com fundo transparente, mantendo o nome
+ou apontando o novo caminho em simbolo.imagem no perfil.

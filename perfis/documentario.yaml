@@ -1,0 +1,5 @@
+# Documentário genérico: o perfil padrão do site, para qualquer assunto (animais, ciência, história, mistério).
+# Herda tudo de base-documentario.yaml. Um canal com identidade própria copia este arquivo e escreve as regras dele.
+base: base-documentario.yaml
+
+nome: Documentário

@@ -1,0 +1,73 @@
+# Perfil de documentário de contagem regressiva sobre animais perigosos, sem personagem fixo.
+# Baseado no perfil validado que o roteiro do "palhano" (litoral brasileiro, animais que picam/envenenam)
+# usava de verdade na pasta antiga, com o reforço de alinhamento cena-roteiro pedido depois do
+# vídeo "aas-8-piores-picadas-de-insetos-do-mundo-em-ordem-de-perigo".
+nome: Perigos do Litoral Brasileiro
+
+voz:
+  provedor: edge-tts                   # voz gratuita da Microsoft, sem custo. Troque pra elevenlabs se quiser mais realismo
+  voz_edge: pt-BR-AntonioNeural
+  velocidade_edge: "+0%"
+  voice_id: COLE_AQUI_O_VOICE_ID        # só usado se trocar provedor pra elevenlabs
+  modelo: eleven_turbo_v2_5
+  estabilidade: 0.5
+  similaridade: 0.75
+  estilo: 0.0
+  velocidade: 1.0
+
+ritmo:
+  caracteres_por_minuto: 524           # ajuste depois de medir com a voz real deste canal
+
+midia_real:
+  fontes_foto: [pixabay, pexels, wikimedia]
+  fontes_video: [pixabay, pexels]
+  aceitar_cc_by: true
+  aceitar_cc_by_sa: false
+  orientacao: >-
+    Use foto_real e video_real para a maioria das cenas: vídeos e fotos reais de banco de dados mostrando
+    cada animal citado nominalmente pela narração naquele trecho exato, além de praias, mar, recifes,
+    equipamentos de mergulho, hospitais, pesquisadores e mapas quando fizer sentido. Use ia só para os
+    momentos mais cinematográficos e difíceis de achar em banco de imagens real.
+
+    Regra obrigatória de congruência, sem exceção: cada cena mostra literalmente o animal, lugar ou objeto
+    que a narração está citando naquele momento específico. Se a narração diz "peixe-leão", a busca ou o
+    prompt daquela cena tem que ser sobre peixe-leão — nunca outro animal, nunca um termo genérico como
+    "perigo do mar" ou "vida marinha". O mesmo vale pra qualquer elemento citado pelo nome: rato é rato,
+    pirâmide é pirâmide, cobra é cobra. Nunca reaproveite a busca de uma cena anterior ou seguinte só porque
+    o tema é parecido.
+
+imagens:
+  provedor: kie                        # Kie.ai, já testado e funcionando nesta instalação
+  modelo: grok-imagine-image-2-0/text-to-image
+  proporcao: "16:9"
+  estilo: >-
+    Hyper-realistic, 8k resolution, IMAX film aesthetic, National Geographic documentary wildlife photography,
+    cinematic lighting, photorealistic, ultra-detailed skin, scales, and eyes, Unreal Engine 5 render --ar 16:9 --style raw
+  evitar: >-
+    text, letters, logos, watermarks, cartoon style, illustration, 3d render, blurry, deformed limbs, extra limbs
+
+diretrizes: >-
+  O canal narra contagens regressivas de animais perigosos com tom sério e documental, como um
+  National Geographic, sempre baseado em casos e pesquisas reais citados no roteiro, sem exagero de filme
+  de terror.
+
+  Alinhamento cena-roteiro é obrigatório e vem antes de qualquer outra prioridade: nenhuma cena pode mostrar
+  um animal, lugar ou objeto diferente do que a narração está citando naquele exato trecho. Cada elemento
+  citado pelo nome precisa aparecer de forma literal e reconhecível na cena correspondente a ele, nunca numa
+  cena vizinha.
+
+textos_na_tela:
+  ativo: true
+  orientacao: >-
+    Use destaque para dados de impacto (como "15 MORTES POR ANO", "3 METROS"). Use rotulo ao citar o nome
+    do animal ou o lugar (como "PEIXE-LEÃO", "FERNANDO DE NORONHA"). Use lista quando a narração enumerar
+    itens da contagem regressiva.
+  tema: documentario
+
+abertura:
+  ativo: false
+
+titulos:
+  duracao: 5
+
+legenda_na_tela: true

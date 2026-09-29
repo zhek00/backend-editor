@@ -1,0 +1,39 @@
+# Canal de contagem regressiva sobre insetos e artrópodes perigosos.
+# Herda tudo de base-documentario.yaml e só escreve o que é deste nicho.
+base: base-documentario.yaml
+
+nome: Os Mais Perigosos
+
+midia_real:
+  orientacao: >-
+    Deste nicho: quando a narração cita um inseto, aranha, lagarta ou vespa pelo nome, a busca é o nome
+    daquele bicho em inglês, nunca "insect" ou "bug" genéricos. Vespa-do-papel é paper wasp, formiga-de-fogo
+    é fire ant, formiga-bala é bullet ant, taturana-gatinho é puss caterpillar, vespa-gigante-asiática é
+    asian giant hornet, lagarta-assassina é lonomia caterpillar, e mosquito é mosquito ou anopheles.
+    Alterne os tipos de plano ao longo do vídeo, para não ficar quinze fotos seguidas do mesmo bicho:
+    o animal em close, o ninho ou a colmeia, o habitat, a picada ou a lesão na pele, hospital e atendimento,
+    pesquisadores e laboratório, mapas de distribuição. Nos trechos de toxicologia, sintomas e ciência, mostre
+    o contexto humano ou o laboratório, em vez de forçar mais uma foto do bicho.
+    Não use imagem de ferimento aberto, sangue ou necrose em close.
+
+    Neste roteiro há muita comparação, e nenhuma delas é o assunto da cena. "Ferro em brasa", "tambores
+    de guerra", "cartão de visitas", "balsas vivas", "agulha voadora", "exército" e "escada da evolução"
+    descrevem o bicho, a dor ou o ataque daquele trecho, e é isso que deve aparecer. Nas partes de
+    toxicologia e sintomas, mostre a vítima, o hospital, o laboratório ou o próprio animal, nunca um
+    objeto tirado da comparação.
+
+imagens:
+  estilo: >-
+    Macro wildlife photography, extreme detail on chitin, hairs and stingers, natural light with dramatic
+    falloff, shallow depth of field, National Geographic documentary look, photorealistic.
+
+diretrizes: >-
+  O canal narra contagens regressivas de criaturas perigosas com tom sério e documental, como um
+  National Geographic, sempre a partir dos casos e das pesquisas citados no roteiro, sem exagero de filme
+  de terror. O perigo aparece pelo contexto e pela escala, nunca por imagem chocante.
+
+textos_na_tela:
+  orientacao: >-
+    Deste nicho: use rotulo com o nome popular do bicho quando ele é apresentado, em maiúsculas
+    (VESPA-DO-PAPEL, FORMIGA-BALA). Use destaque em números fortes, como 500 MIL MORTES POR ANO ou
+    NÍVEL 4 NA ESCALA SCHMIDT. Use capitulo no cartão de cada posição da contagem.

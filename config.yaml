@@ -1,0 +1,127 @@
+# Configuração geral da fábrica. Cada canal tem seu perfil na pasta perfis.
+
+precos:                                # usados só para estimar o gasto, atualize quando mudarem
+  elevenlabs_por_mil_caracteres: 0.10  # tarifa avulsa da API em US$
+  imagem: 0.067                        # Nano Banana 2 direto no Google em 1K (2K custa 0.101)
+  imagem_lote: 0.034                   # a mesma imagem pelo modo lote do Google, metade do preço
+  imagem_kie: 0.02                     # Grok Imagine 2.0 via Kie.ai
+  efeito_por_minuto: 0.12              # efeitos sonoros da ElevenLabs, por minuto de som gerado
+  claude_entrada_por_milhao: 5.00
+  claude_saida_por_milhao: 25.00
+  claude_escolha_por_cena: 0.02        # Claude olhando as fotos e vídeos candidatos de uma cena
+  correcao_por_cena: 0.0005            # conferir uma cena: o modelo de visão descreve e o Jev julga
+  gemini_entrada_por_milhao: 0.75      # gemini-3.8-flash: tokens lidos
+  gemini_saida_por_milhao: 3.75        # tokens escritos, o pensamento conta aqui
+  mimo_entrada_por_milhao: 0            # agente pelo modelo principal (Space Bunny, hoje gratuito)
+  mimo_saida_por_milhao: 0
+
+# O que você paga por mês, para saber quanto de assinatura cada vídeo consome. O preço por unidade sai
+# de preco_mensal / incluido_no_mes, e é ele que entra na conta do vídeo. Quem não assina deixa
+# preco_mensal em 0, e aí vale a tarifa avulsa de precos acima.
+assinaturas:
+  elevenlabs:
+    plano: Creator                     # só para aparecer no relatório
+    preco_mensal: 22.00                # US$ por mês
+    incluido_no_mes: 100000            # caracteres de narração inclusos no plano
+    excedente_por_mil: 0.15            # US$ por mil caracteres depois de acabar a franquia
+
+cenas:
+  provedor: groq              # ignorado: cenas, textos e buscas usam openrouter.modelo_principal
+  reserva: gemini             # entra sozinho quando o Groq falha ou a cota de 24h enche. groq, gemini ou vazio
+
+gemini:
+  modelo: gemini-3.8-flash    # US$ 0,75 por milhão de tokens lidos e US$ 3,75 por milhão escritos (pensamento conta como escrito)
+  modelo_visao: gemini-3.8-flash  # olha as miniaturas ao escolher material real. gemini-3.1-flash-lite sai bem mais barato
+  tokens_por_minuto: 8000    # limite do plano gratuito por conta. A reserva para a resposta sai daqui
+  saida_minima: 700          # abaixo disso o pedido é grande demais e quem chamou divide em dois
+  raciocinio: low             # minimal, low, medium ou high. O pensamento conta como token escrito e era 60% do gasto
+  cenas_por_lote: 20
+  tentativas: 6
+
+corrigir:
+  provedor: jev            # jev: o modelo de visão descreve a imagem e o Jev julga (muito mais barato).
+                           # openrouter/groq/gemini: um modelo de visão só olha e julga de uma vez
+  modelo_descricao: mimo   # quem descreve as imagens para o Jev: openrouter.modelo_principal
+  modelo_descricao_reserva: gemini  # entra sozinho quando o MiMo e a cota do Groq falham
+  cenas_por_descricao: 1   # cenas por chamada ao descrever. Mais que 1 e o modelo troca as legendas entre elas
+  cenas_por_chamada: 5    # cenas conferidas numa chamada só. 1 gasta mais, porque repete as instruções
+  automatico: true         # roda sozinho no "tudo", depois do acervo e antes das imagens de IA
+  rodadas: 3               # vezes que tenta outro material real numa cena que não combina
+  nota_para_trocar: 20     # abaixo disso o sistema troca sozinho. Entre este e o nota_minima ele só aponta
+  nota_minima: 40          # no jev a nota é a probabilidade do Jev, que fica mais baixa: 55 pega o que está errado
+                           # mesmo. Nos outros provedores, que dão nota de 0 a 100, use 80
+  modelo:                  # só nos provedores groq/gemini/openrouter. Vazio usa o modelo de visão do provedor
+
+# O OpenRouter serve só para falar com o Jev, que não tem API própria. Todo o resto roda no Groq, com o
+# Gemini de reserva: o roteador jev-router escolhe modelos caros sozinho (já chegou a usar o Claude Sonnet).
+openrouter:
+  modelo: typesafe/jev-router   # usado só se alguma etapa chamar o OpenRouter sem dizer o modelo
+  tentativas: 5
+  max_tokens: 10000             # espaço para a resposta de um lote de 20 cenas, mais o raciocínio do modelo
+  max_tokens_teto: 24000
+  # modelo de texto e de visão de TODA a fábrica (agente, cenas, textos na tela, escolha das fotos, descrição das
+  # imagens). MiMo, Groq e Gemini não são mais usados. O Jev continua sendo o juiz.
+  modelo_principal: stealth/space-bunny-alpha
+  raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high
+    xiaomi/mimo: nenhum         # com o raciocínio ligado, alguns lotes de cenas gastavam tudo pensando e voltavam vazios
+    stealth/: low               # o Space Bunny pensa antes de responder: sem limite, gastava tudo pensando numa descrição
+
+groq:
+  modelo: openai/gpt-oss-120b  # aceita esquema JSON estrito. Alternativa: llama-3.3-70b-versatile
+  raciocinio: medium         # low, medium ou high, só nos modelos gpt-oss
+  tokens_por_minuto: 8000    # limite do plano gratuito, por conta. O Groq conta a reserva da resposta aqui dentro
+  saida_minima: 700          # se sobrar menos que isso para a resposta, o pedido é dividido em dois
+  modelo_visao: qwen/qwen3.8-27b  # olha as miniaturas ao escolher material real
+  cenas_por_lote: 20         # cenas decididas por chamada. Menos cenas gasta menos do limite por minuto
+  contexto_antes: 3          # cenas anteriores mostradas só para dar contexto
+  contexto_depois: 2         # cenas seguintes mostradas só para dar contexto
+
+ia:
+  ativa: false               # false: vídeo só com banco de imagens, nenhuma imagem de IA é gerada. true volta a usar IA
+
+roteirista:
+  # O agente de roteiro lê o roteiro inteiro (fabrica mapa) e decide as cenas bloco a bloco, com o assunto
+  # de cada bloco e as armadilhas de busca. Os cortes de 3 a 5 segundos continuam sendo os do código.
+  # Não entra em perfis com personagem ou com efeitos sonoros, que seguem pelo caminho antigo.
+  ativo: true
+  provedor: mimo             # o agente usa openrouter.modelo_principal (Space Bunny); sem MiMo, Groq e Gemini
+  cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
+  paralelo: 4                # blocos do roteiro decididos ao mesmo tempo. Cada pedido ao MiMo leva uns 20 segundos
+
+claude:
+  via: assinatura           # assinatura usa o Claude Code do Mac. api usa créditos da ANTHROPIC_API_KEY
+  modelo_assinatura: opus    # opus ou sonnet, pela assinatura
+  modelo: claude-opus-5      # usado só quando via for api
+  esforco: high              # planejamento das cenas. low, medium, high, xhigh ou max
+  esforco_escolha: medium    # escolha entre fotos e vídeos candidatos
+  unidades_por_lote: 120     # frases enviadas por chamada
+  processos: 2               # chamadas ao Claude ao mesmo tempo
+
+midia:
+  escolha: mimo            # quem escolhe as fotos: openrouter.modelo_principal (Space Bunny, enxerga imagens)
+  reserva: gemini          # entra sozinho quando a cota de 24 horas do Groq acaba no meio da escolha
+  conferir_na_captura: true  # o Jev confere cada candidato antes de baixar, pela frase que o modelo escreveu do que vê nele.
+                           # Sem custo de visão a mais: a frase sai da mesma chamada da escolha. false volta ao jeito antigo
+  nota_minima_captura: 30    # abaixo disso o candidato é descartado e o próximo da lista é testado
+  candidatos_conferidos: 3   # quantos candidatos testar por cena. Se nenhum passar, fica o de maior nota, sob suspeita
+  contato: "jonathansantost99@gmail.com"   # o Wikimedia só libera buscas com um contato no pedido
+  processos: 4               # cenas buscando material real ao mesmo tempo
+  candidatos: 12             # fotos ou vídeos mostrados ao modelo por cena (com 9 bancos, 8 era pouco)
+  cenas_por_escolha: 6       # cenas mostradas ao Claude em cada rodada de escolha
+  espera_maxima: 3600        # segundos que a fábrica espera quando uma fonte atinge o limite de buscas
+
+imagens:
+  lote: true                 # manda as imagens em lote ao Google, metade do preço, pronto em minutos ou horas
+  minimo_lote: 8             # com menos imagens que isso gera na hora, como no refazer
+  espera_lote_horas: 24
+  processos: 6               # imagens de IA geradas ao mesmo tempo, fora do lote
+  tentativas: 3
+
+render:
+  largura: 1920
+  altura: 1080
+  fps: 30
+  superamostragem: 3         # maior deixa o movimento mais suave e o render mais lento
+  zoom_maximo: 1.12
+  crf: 18                    # menor dá mais qualidade e arquivo maior
+  processos: 0               # 0 usa metade dos núcleos do Mac

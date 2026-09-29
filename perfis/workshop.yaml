@@ -1,0 +1,87 @@
+# Perfil do workshop. Aula gravada com o avatar num quadro no canto e imagens na tela inteira.
+nome: Workshop O Poder do Agora
+
+voz:
+  voice_id: COLE_AQUI_O_VOICE_ID       # a mesma voz do canal
+  modelo: eleven_v3
+  estabilidade: 0.5
+  similaridade: 0.8
+  estilo: 0.15
+  voz_offline: "Reed (Português (Brasil))"
+
+ritmo:
+  caracteres_por_minuto: 524
+  segundos_por_cena: 12              # aula calma, a imagem fica mais tempo na tela
+  minimo_segundos_por_cena: 5
+  maximo_segundos_por_cena: 20
+
+midia_real:
+  proporcao: 0.7                     # a aula vive bem com paisagem, natureza e pessoas em silêncio
+  fontes_foto: [wikimedia, pexels, pixabay]
+  fontes_video: [pexels, pixabay]
+  aceitar_cc_by: true
+  aceitar_cc_by_sa: false
+  orientacao: >-
+    Use video_real para natureza em silêncio, como floresta, mar calmo, montanhas, céu, rio, chuva,
+    vela acesa, nascer do sol, e para pessoas em atitude serena, como alguém respirando de olhos fechados,
+    caminhando devagar ou sentado em silêncio. Use foto_real para lugares e objetos que existem.
+    Use ia para metáforas, para o que se passa dentro da pessoa, como a voz na cabeça, o corpo interior,
+    o observador, e para cenas que não existem em foto.
+  buscas_de_teste: [calm forest, ocean waves slow, candle flame, mountain sunrise, person meditating]
+
+imagens:
+  provedor: google
+  modelo: gemini-3.1-flash-image
+  proporcao: "16:9"
+  resolucao: 1K
+  estilo: >-
+    Quiet cinematic photograph, soft natural light, gentle warm tones, calm and contemplative mood,
+    shallow depth of field, subtle film grain. Realistic and simple, never busy.
+  evitar: >-
+    text, letters, logos, watermarks, cartoon style, religious symbols, book covers, faces of real people,
+    deformed hands, extra fingers.
+
+diretrizes: >-
+  Aula sobre presença, mente, corpo e o momento presente. Tom sereno, sem pressa. Não mostre livros,
+  capas nem autores. A pessoa que aparece nas imagens é anônima, nunca a mesma em duas cenas seguidas.
+  O avatar já ocupa o canto inferior direito da tela, então evite detalhes importantes nesse canto.
+
+textos_na_tela:
+  ativo: true
+  orientacao: >-
+    Use lista quando a narração enumerar passos, sinais ou perguntas. Use destaque em frases centrais,
+    no máximo uma a cada 60 segundos. Não use capitulo nem rotulo.
+  tema: selado
+  lista_lado: esquerda               # o cartão de lista fica à esquerda, longe do avatar
+  cor_ouro: "#C9A45C"
+  cor_texto: "#F2E8D5"
+  cor_painel: "#0C0906"
+
+simbolo:
+  imagem: simbolos/pausa.png         # o § do livro, PNG com fundo transparente
+  duracao: 6                         # segundos na tela
+  transicao: 0.8                     # surge e some nesse tempo
+  largura: 0.11                      # fração da largura da tela
+  posicao: centro                    # centro, superior-esquerdo, superior-direito, inferior-esquerdo, inferior-direito
+
+titulos:                             # cada [TITULO] do roteiro vira um cartão centralizado, sem narração
+  duracao: 7
+  transicao: 0.8
+  numerar: true                      # escreve PARTE I, PARTE II... acima do título
+
+avatar:
+  ativo: true
+  forma: retangulo                   # retangulo com cantos arredondados ou circulo
+  proporcao: "3:4"                   # o HeyGen entrega em paisagem, e o quadro recorta em pé no rosto
+  centro_rosto: 0.42                 # altura do rosto no vídeo do HeyGen, de 0 no topo a 1 embaixo
+  largura: 0.17                      # fração da largura da tela
+  posicao: inferior-direito
+  margem: 48
+  raio: 28
+  borda: 3
+  cor_borda: "#C9A45C"
+  limite_minutos: 29.5               # o HeyGen aceita vídeos de até 30 minutos
+
+legenda_na_tela: true                # a legenda desvia sozinha do quadro do avatar
+musica: musicas/livro-selado
+volume_musica_db: -22
