@@ -5,10 +5,10 @@
 nome: Perigos do Litoral Brasileiro
 
 voz:
-  provedor: edge-tts                   # voz gratuita da Microsoft, sem custo. Troque pra elevenlabs se quiser mais realismo
+  provedor: edge-tts                   # voz gratuita da Microsoft, sem custo. Troque pra genaipro se quiser mais realismo
   voz_edge: pt-BR-AntonioNeural
   velocidade_edge: "+0%"
-  voice_id: COLE_AQUI_O_VOICE_ID        # só usado se trocar provedor pra elevenlabs
+  voice_id: COLE_AQUI_O_VOICE_ID        # só usado se trocar provedor pra genaipro
   modelo: eleven_turbo_v2_5
   estabilidade: 0.5
   similaridade: 0.75

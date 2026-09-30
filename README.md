@@ -4,7 +4,7 @@ Roteiro pronto entra, vídeo narrado sai, misturando fotos e vídeos reais com i
 
 ## Como funciona
 
-1. A ElevenLabs gera a narração com o tempo de cada letra falada.
+1. A GenAIPro gera a narração com as vozes da ElevenLabs, e a fábrica tira o tempo de cada palavra falada da legenda que ela devolve.
 2. O Claude divide a narração em cenas. Para cada cena ele decide se vai foto real, vídeo real ou imagem de IA, escreve os termos de busca e a descrição da imagem.
 3. Nas cenas reais o sistema busca candidatos no Wikimedia Commons, no Pexels e no Pixabay. O Claude olha as miniaturas e escolhe a que combina com a narração. Se nenhuma servir, a cena vira imagem de IA.
 4. O Google gera as imagens de IA com o Nano Banana 2. Nas cenas com a personagem ele usa a foto de referência para manter o mesmo rosto.
@@ -15,7 +15,8 @@ Cada etapa salva o que fez. Se algo falhar no meio, o mesmo comando continua de 
 ## Preparação, uma vez só
 
 1. Crie uma chave de API em cada serviço.
-   - ElevenLabs em https://elevenlabs.io, num plano pago, que libera uso comercial. Na criação da chave marque Acesso em Text to Speech e Escrita em Vozes.
+   - GenAIPro em https://genaipro.io, na parte de API. Vai no `.env` como `GENAIPRO_API`. Todos os modelos gastam 1 crédito por caractere.
+   - ElevenLabs em https://elevenlabs.io, opcional, só para efeitos sonoros, música e voz por descrição.
    - Google em https://aistudio.google.com/apikey, com faturamento ativado no projeto, porque o modelo de imagem não tem plano grátis
    - Pexels em https://www.pexels.com/api, grátis
    - Pixabay em https://pixabay.com/api/docs, grátis
@@ -94,7 +95,7 @@ Com `avatar.modo: trechos`, o personagem só aparece onde o roteiro marca `[AVAT
 
 ## Efeitos sonoros
 
-Com `efeitos.ativo: true` no perfil, o Claude marca as cenas em que a narração mostra algo com som de verdade, como trovão, trombeta ou fogo, e diz em que palavra o som bate. `uv run fabrica efeitos NOME` gera na ElevenLabs só os sons que ainda não existem na biblioteca `efeitos/`, e o render encaixa cada um na palavra certa, por baixo da narração. O mesmo som é reaproveitado em qualquer vídeo que peça ele. O volume fica em `efeitos.volume_db`.
+Com `efeitos.ativo: true` no perfil, o Claude marca as cenas em que a narração mostra algo com som de verdade, como trovão, trombeta ou fogo, e diz em que palavra o som bate. `uv run fabrica efeitos NOME` gera na ElevenLabs direta (opcional, precisa de `ELEVENLABS_API_KEY`) só os sons que ainda não existem na biblioteca `efeitos/`, e o render encaixa cada um na palavra certa, por baixo da narração. O mesmo som é reaproveitado em qualquer vídeo que peça ele. O volume fica em `efeitos.volume_db`.
 
 ## Abertura sem fala
 
@@ -106,7 +107,7 @@ Com `imagens.lote: true` no `config.yaml`, as imagens de IA vão de uma vez para
 
 ## Prática guiada, só áudio
 
-Para uma meditação guiada, em que a voz fala pouco e o silêncio é longo, o roteiro é texto comum com a marcação `[SILENCIO 90]` numa linha própria. O tempo vai em segundos ou em minutos e segundos, como `[SILENCIO 1:30]`. A ElevenLabs grava só as falas, uma por vez, e o silêncio vem do FFmpeg, sem custo. A música do perfil entra baixa por baixo de tudo.
+Para uma meditação guiada, em que a voz fala pouco e o silêncio é longo, o roteiro é texto comum com a marcação `[SILENCIO 90]` numa linha própria. O tempo vai em segundos ou em minutos e segundos, como `[SILENCIO 1:30]`. A GenAIPro grava só as falas, uma por vez, e o silêncio vem do FFmpeg, sem custo. A música do perfil entra baixa por baixo de tudo.
 
 ```bash
 uv run fabrica meditacao pratica --roteiro roteiros/pratica.txt --perfil perfis/meditacao.yaml
@@ -114,22 +115,26 @@ uv run fabrica meditacao pratica --roteiro roteiros/pratica.txt --perfil perfis/
 
 O resultado fica em `projetos/pratica/meditacao.mp3`. Com `--imagem capa.png` sai também um `meditacao.mp4` com a imagem parada, para plataforma que só aceita vídeo. Cada fala gravada fica guardada, então mudar uma frase e rodar de novo só regrava aquela fala. Para testar sem custo, acrescente `--offline` na primeira vez.
 
-A trilha ambiente pode ser gerada na ElevenLabs Music, que libera uso comercial nos planos pagos. Cada geração rende até 5 minutos, e a fábrica emenda a faixa com transição suave até cobrir o áudio inteiro.
+A trilha ambiente pode ser gerada na ElevenLabs Music (opcional, precisa de `ELEVENLABS_API_KEY`), que libera uso comercial nos planos pagos. Cada geração rende até 5 minutos, e a fábrica emenda a faixa com transição suave até cobrir o áudio inteiro.
 
 ```bash
 uv run fabrica musica-gerar "Slow ambient meditation pad, soft warm drones, no melody, no percussion, very calm" --minutos 5 --nome ambiente-1
 ```
 
-## Voz da biblioteca da ElevenLabs
+## Voz da biblioteca da GenAIPro
 
-Procure pelo nome, ouça as amostras e copie a escolhida para a sua conta. O comando mostra o código que vai em `voz.voice_id`.
+Procure pelo nome, ouça as amostras e copie o código da escolhida para `voz.voice_id` no perfil. Não precisa adicionar a voz a nenhuma conta. O editor mostra a mesma biblioteca, com botão para ouvir cada voz.
 
 ```bash
-uv run fabrica vozes "bibo bolseiro"
-uv run fabrica vozes "bibo bolseiro" --adicionar 1
+uv run fabrica vozes "narrador" --idioma pt
+uv run fabrica creditos
 ```
 
+O segundo comando mostra o saldo da GenAIPro e quando os créditos vencem, sem gastar nada.
+
 ## Criar uma voz original
+
+Opcional, pela ElevenLabs direta (precisa de `ELEVENLABS_API_KEY`). A GenAIPro só narra com vozes da biblioteca pública, então a voz criada aqui só serve na fábrica depois de compartilhada na Voice Library da ElevenLabs.
 
 O Voice Design da ElevenLabs cria uma voz nova a partir de uma descrição. Cada rodada gera 3 prévias lendo um texto de teste, e todas aparecem numa página para ouvir.
 

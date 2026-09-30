@@ -1,10 +1,14 @@
-"""Efeitos sonoros curtos, gerados na ElevenLabs e guardados numa biblioteca do canal.
+"""Efeitos sonoros curtos, gerados na ElevenLabs direta (opcional) e guardados numa biblioteca do canal.
+
+A GenAIPro, que faz a narração, não gera efeitos. Sem ELEVENLABS_API_KEY no .env os efeitos novos ficam de
+fora e o vídeo sai só com os que já estão na biblioteca.
 
 O Claude marca nas cenas onde bate um som e descreve esse som em inglês. Cada descrição
 vira um arquivo na biblioteca e volta a ser usada em qualquer vídeo que peça o mesmo som,
 então o custo cai com o tempo. No modo offline o som é um ruído de teste feito no FFmpeg.
 """
 import hashlib
+import os
 import re
 
 import httpx
@@ -54,6 +58,10 @@ def gerar(projeto, log=print) -> int:
     lista = pendentes(projeto)
     if not lista:
         log("  nenhum efeito novo, os que o vídeo pede já estão na biblioteca")
+        return 0
+    if not projeto.offline and not os.environ.get("ELEVENLABS_API_KEY", "").strip():
+        log(f"  {len(lista)} efeito(s) novo(s) ficaram de fora: a GenAIPro não faz efeitos, e eles só saem com "
+            "ELEVENLABS_API_KEY no .env (opcional)")
         return 0
     cfg = projeto.perfil.get("efeitos") or {}
     for i, (efeito, destino) in enumerate(lista, 1):

@@ -2,7 +2,7 @@
 nome: Prática guiada
 
 voz:
-  voice_id: COLE_AQUI_O_VOICE_ID       # Aninha, Warm, Calm and Soothing, da biblioteca da ElevenLabs
+  voice_id: COLE_AQUI_O_VOICE_ID       # Aninha, Warm, Calm and Soothing: ache o código com uv run fabrica vozes Aninha
   modelo: eleven_v3
   estabilidade: 1                      # no v3 os valores aceitos são 0, 0.5 e 1. Em 1 a leitura fica firme e regular
   similaridade: 0.8

@@ -9,11 +9,11 @@ Quem chegou aqui provavelmente recebeu esta pasta de um amigo e nunca usou o sis
 Faça um passo de cada vez e confirme antes de seguir.
 
 1. **Instalação.** Confira se `uv` e `ffmpeg` existem com `uv --version` e `ffmpeg -version`. Se faltar, instale com `brew install uv ffmpeg`. Depois rode `uv sync` na pasta do projeto.
-2. **Chaves.** Confira se existe um `.env`. Se não existir, crie a partir do `.env.exemplo` e peça para a pessoa colar as chaves **no arquivo, nunca no chat**. As obrigatórias são `ELEVENLABS_API_KEY`, `GEMINI_API_KEY`, `PEXELS_API_KEY` e `PIXABAY_API_KEY`. Teste cada uma com uma chamada barata antes de seguir.
+2. **Chaves.** Confira se existe um `.env`. Se não existir, crie a partir do `.env.exemplo` e peça para a pessoa colar as chaves **no arquivo, nunca no chat**. As obrigatórias são `GENAIPRO_API`, `GEMINI_API_KEY`, `PEXELS_API_KEY` e `PIXABAY_API_KEY`. Teste cada uma com uma chamada barata antes de seguir (a da GenAIPro se testa de graça com `uv run fabrica creditos`). A `ELEVENLABS_API_KEY` é opcional: só serve para efeitos sonoros, música e voz por descrição.
 3. **Contato do Wikimedia.** Troque `SEU_EMAIL_AQUI` no `config.yaml` pelo e-mail da pessoa. Sem isso o Wikimedia recusa as buscas.
 4. **Claude da fábrica.** A divisão em cenas roda pela assinatura do Claude Code, com `claude -p`. Confirme que o terminal está logado. Se não estiver, peça para rodar `claude` e digitar `/login`.
 5. **Teste sem custo.** Rode o exemplo em modo offline, que usa a voz do Mac e imagens de teste. Só depois disso fale em gastar dinheiro.
-6. **Voz.** Ajude a escolher uma voz com `fabrica vozes` ou a criar uma com `fabrica voz-desenhar` e `fabrica voz-salvar`. Cole o código em `voz.voice_id` no perfil.
+6. **Voz.** Ajude a escolher uma voz da biblioteca da GenAIPro com `fabrica vozes TERMO --idioma pt` (ou no editor, que toca a prévia). Qualquer voz da lista serve direto: cole o código em `voz.voice_id` no perfil. As vozes padrão da ElevenLabs (George, Rachel...) são recusadas pela GenAIPro.
 7. **Perfil do canal.** Copie um perfil de `perfis/` com outro nome e ajuste voz, estilo das imagens, proporção de material real e diretrizes. Explique que o perfil é a identidade do canal.
 
 ## Regras que valem sempre
@@ -42,7 +42,7 @@ uv run fabrica status NOME        # o que já está pronto
 uv run fabrica estimar roteiro.txt --perfil perfis/canal.yaml   # duração, sem gastar
 ```
 
-Há também `personagem`, `vozes`, `voz-desenhar`, `voz-salvar`, `avatar-partes`, `avatar` e `meditacao`. Rode `uv run fabrica --help` para a lista completa.
+Há também `personagem`, `vozes`, `creditos` (saldo da GenAIPro, grátis), `voz-desenhar` e `voz-salvar` (ElevenLabs direta, opcionais), `avatar-partes`, `avatar` e `meditacao`. Rode `uv run fabrica --help` para a lista completa.
 
 ## Regras fixas do corte de cenas (valem para qualquer perfil e roteiro)
 
@@ -84,7 +84,7 @@ O que o agente decide segue adiante: `mostrar` (a descrição) vai para a escolh
 
 Cada projeto vive em `projetos/NOME`. As etapas são estas.
 
-1. **Narração.** A ElevenLabs devolve o áudio e o tempo de cada letra falada. Isso sustenta a legenda e os textos animados. O áudio bruto de cada bloco fica guardado, então mudar ritmo ou pausa não custa nada.
+1. **Narração.** A GenAIPro (`fabrica/genaipro.py`) grava cada bloco como uma tarefa, 4 blocos ao mesmo tempo. O tempo de cada palavra vem da legenda que ela gera com um caractere por linha (uma palavra por bloco da legenda), e o fim de cada palavra é encostado no silêncio real do áudio (`narracao._encostar_nas_pausas`), porque na legenda a pausa depois do ponto fica dentro da palavra anterior. Isso sustenta a legenda e os textos animados. A tarefa criada fica anotada em `bloco_NNN.mp3.tarefa.json` antes da espera: se a fábrica cair, rodar de novo retoma a mesma tarefa sem pagar outra vez. O áudio bruto de cada bloco fica guardado, então mudar ritmo ou pausa não custa nada.
 2. **Cenas.** O Claude recebe as frases com a duração e devolve grupos, dizendo se cada cena é foto real, vídeo real ou imagem de IA, com os termos de busca e o prompt.
 3. **Material real.** Busca no Wikimedia, no Pexels e no Pixabay, o Claude escolhe pelas miniaturas e o sistema grava `creditos.txt`, que vai na descrição do vídeo.
 4. **Imagens.** O Google gera as que faltam, por padrão no modo lote, que custa metade e pode demorar horas.
@@ -107,7 +107,9 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 |---|---|
 | Wikimedia devolve 403 | falta o e-mail em `midia.contato` no `config.yaml` |
 | Google recusa com 429 e fala em cota | falta ativar o faturamento no Google AI Studio, ou o crédito acabou |
-| ElevenLabs devolve 401 | chave errada, ou sem permissão de Text to Speech e de escrita em Vozes |
+| GenAIPro recusa a chave (401 ou 403) | chave errada em `GENAIPRO_API` no `.env`. Confira com `uv run fabrica creditos` |
+| GenAIPro diz `invalid_voice_id` | a voz não está na biblioteca pública. Escolha outra com `uv run fabrica vozes TERMO` |
+| GenAIPro diz que a velocidade é inválida | `voz.velocidade` só vai de 0,7 a 1,2 (a fábrica já limita) |
 | Claude Code diz que não está logado | rodar `claude` no terminal e digitar `/login` |
 | Lote do Google demora demais | é normal, pode levar horas. O mesmo comando retoma o lote sem pagar de novo |
 | Pexels ou Pixabay atingem o limite | a fábrica espera sozinha e continua |
@@ -151,6 +153,6 @@ entram, porque não geraram cobrança nova. Os modelos de texto gravam os própr
 
 ## Custo real, para calibrar
 
-Um vídeo de 36 minutos com 250 cenas, 60% de material real e 94 imagens saiu por uns US$ 5,60, algo como US$ 0,16 por minuto. A narração foi US$ 1,91 e o resto foi imagem. O Claude pela assinatura não custa nada além da mensalidade.
+Um vídeo de 36 minutos com 250 cenas, 60% de material real e 94 imagens saiu por uns US$ 5,60, algo como US$ 0,16 por minuto. A narração foi US$ 1,91 na ElevenLabs; na GenAIPro (US$ 22 por 1 milhão de caracteres, `assinaturas.genaipro` no `config.yaml`) a mesma narração sai por volta de US$ 0,70, uns US$ 0,02 por minuto. O resto foi imagem. O Claude pela assinatura não custa nada além da mensalidade.
 
 Sempre informe o custo total **e o custo por minuto** quando falar de dinheiro.

@@ -2,7 +2,7 @@
 nome: Vó Cida, cozinha da roça
 
 voz:
-  voice_id: COLE_AQUI_O_VOICE_ID       # na ElevenLabs, em Voices, botão Copy voice ID
+  voice_id: COLE_AQUI_O_VOICE_ID       # ache o código com uv run fabrica vozes TERMO --idioma pt
   modelo: eleven_multilingual_v2
   estabilidade: 0.55
   similaridade: 0.75

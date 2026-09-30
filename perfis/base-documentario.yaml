@@ -14,10 +14,10 @@
 nome: Documentário (base)
 
 voz:
-  provedor: edge-tts                 # voz gratuita da Microsoft. Troque para elevenlabs se quiser mais realismo
+  provedor: edge-tts                 # voz gratuita da Microsoft. Troque para genaipro se quiser mais realismo
   voz_edge: pt-BR-AntonioNeural      # vozes em pt-BR: AntonioNeural (homem), FranciscaNeural (mulher)
   velocidade_edge: "+0%"
-  voice_id: COLE_AQUI_O_VOICE_ID     # só usado com provedor elevenlabs
+  voice_id: COLE_AQUI_O_VOICE_ID     # só usado com provedor genaipro. Ache um com uv run fabrica vozes TERMO
   modelo: eleven_turbo_v2_5
   estabilidade: 0.5
   similaridade: 0.75

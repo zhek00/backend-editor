@@ -1,11 +1,11 @@
 # Configuração geral da fábrica. Cada canal tem seu perfil na pasta perfis.
 
 precos:                                # usados só para estimar o gasto, atualize quando mudarem
-  elevenlabs_por_mil_caracteres: 0.10  # tarifa avulsa da API em US$
+  genaipro_por_mil_caracteres: 0.022   # narração na GenAIPro, US$ 22 por 1 milhão de créditos (1 crédito por caractere)
   imagem: 0.067                        # Nano Banana 2 direto no Google em 1K (2K custa 0.101)
   imagem_lote: 0.034                   # a mesma imagem pelo modo lote do Google, metade do preço
   imagem_kie: 0.02                     # Grok Imagine 2.0 via Kie.ai
-  efeito_por_minuto: 0.12              # efeitos sonoros da ElevenLabs, por minuto de som gerado
+  efeito_por_minuto: 0.12              # efeitos sonoros da ElevenLabs direta (opcional), por minuto de som gerado
   claude_entrada_por_milhao: 5.00
   claude_saida_por_milhao: 25.00
   claude_escolha_por_cena: 0.02        # Claude olhando as fotos e vídeos candidatos de uma cena
@@ -15,15 +15,18 @@ precos:                                # usados só para estimar o gasto, atuali
   mimo_entrada_por_milhao: 0            # agente pelo modelo principal (Space Bunny, hoje gratuito)
   mimo_saida_por_milhao: 0
 
-# O que você paga por mês, para saber quanto de assinatura cada vídeo consome. O preço por unidade sai
-# de preco_mensal / incluido_no_mes, e é ele que entra na conta do vídeo. Quem não assina deixa
-# preco_mensal em 0, e aí vale a tarifa avulsa de precos acima.
+# O que você paga pela narração, para saber quanto cada vídeo consome. O preço por caractere sai de
+# preco_mensal / incluido_no_mes, e é ele que entra na conta do vídeo. Deixe preco_mensal em 0 para
+# usar a tarifa avulsa de precos acima.
 assinaturas:
-  elevenlabs:
-    plano: Creator                     # só para aparecer no relatório
-    preco_mensal: 22.00                # US$ por mês
-    incluido_no_mes: 100000            # caracteres de narração inclusos no plano
-    excedente_por_mil: 0.15            # US$ por mil caracteres depois de acabar a franquia
+  genaipro:
+    plano: GenAIPro 1 milhão          # só para aparecer no relatório
+    preco_mensal: 22.00                # US$ pagos pelo pacote
+    incluido_no_mes: 1000000           # créditos do pacote. Todos os modelos gastam 1 crédito por caractere
+
+# Narração. A chave fica no .env, em GENAIPRO_API. O saldo aparece no editor e em uv run fabrica creditos.
+genaipro:
+  url: https://genaipro.io/api
 
 cenas:
   provedor: groq              # ignorado: cenas, textos e buscas usam openrouter.modelo_principal

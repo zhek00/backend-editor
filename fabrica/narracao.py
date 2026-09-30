@@ -1,12 +1,12 @@
 """Narração do roteiro e tempo de cada frase.
 
-Com a ElevenLabs a API devolve o tempo exato de cada caractere falado.
+A voz vem da GenAIPro (vozes e modelos da ElevenLabs), e o tempo de cada palavra sai da legenda que ela gera,
+com o fim de cada palavra encostado no silêncio real do áudio. O Edge-TTS também informa o tempo das palavras.
 No modo offline a voz vem do próprio Mac e o tempo é distribuído pelo tamanho do texto.
 
 O áudio bruto de cada bloco fica guardado. O ajuste de ritmo, com pausas mais curtas e
 fala mais rápida, é refeito a partir dele sem gastar créditos.
 """
-import base64
 import difflib
 import json
 import os
@@ -18,14 +18,13 @@ import wave
 
 import httpx
 
-from . import custos_reais
+from . import custos_reais, genaipro
 from . import texto as tx
-from .config import chave
 from .util import duracao_audio, rodar
 
-URL = "https://api.elevenlabs.io/v1/text-to-speech/{voz}/with-timestamps"
 TAXA = 44100
 PAUSA_ENTRE_BLOCOS = 0.4
+BLOCOS_AO_MESMO_TEMPO = 4  # tarefas na GenAIPro em paralelo
 LETRA_LONGA = 0.35  # letra "falada" por mais tempo que isso está carregando a pausa anterior
 
 TEXTO_TESTE_VOZ = (
@@ -46,30 +45,69 @@ def narrar(projeto, log=print) -> float:
     tempos_fim = [None] * len(roteiro)
     wavs, deslocamento = [], 0.0
 
-    for i, bloco in enumerate(blocos):
+    def arquivos(i):
         bruto = projeto.caminho("narracao", f"bloco_{i:03d}_bruto.wav")
-        arquivo_alinhamento = bruto.with_name(f"bloco_{i:03d}.json")
+        return bruto, bruto.with_name(f"bloco_{i:03d}.json")
+
+    # um bloco só é narrado de novo se o texto dele mudou desde a última vez
+    pendentes = []
+    for i, bloco in enumerate(blocos):
+        bruto, arquivo_alinhamento = arquivos(i)
         _migrar_bloco_antigo(bruto, arquivo_alinhamento)
-        # um bloco só é narrado de novo se o texto dele mudou desde a última vez
         if not (arquivo_alinhamento.exists() and bruto.exists() and _mesmo_texto(arquivo_alinhamento, bloco.texto)):
+            pendentes.append(i)
+
+    def gravar(i):
+        bloco = blocos[i]
+        bruto, arquivo_alinhamento = arquivos(i)
+        if projeto.offline:
+            alinhamento = _voz_do_mac(bloco.texto, voz, bruto)
+        elif voz.get("provedor") == "edge-tts":
+            alinhamento = _edge_tts(bloco.texto, voz, bruto)
+        else:
+            alinhamento = _genaipro(bloco.texto, voz, bruto, lambda *_: None)
+        alinhamento["texto"] = bloco.texto
+        arquivo_alinhamento.write_text(json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8")
+
+    def cobrar(i):
+        # só o que a API cobrou agora entra na conta: bloco reaproveitado do cache não paga de novo
+        texto = blocos[i].texto
+        por_caractere, origem = custos_reais.preco_por_caractere(projeto.config)
+        custos_reais.registrar(
+            projeto, "narracao", f"bloco {i + 1} de {len(blocos)} narrado na GenAIPro",
+            len(texto) * por_caractere, unidades=len(texto),
+            detalhes={"caracteres": len(texto), "voz": voz.get("voice_id", ""),
+                      "modelo": voz.get("modelo", ""), "provedor": "genaipro", "preco": origem})
+
+    pago = not projeto.offline and voz.get("provedor") != "edge-tts"
+    if pago and len(pendentes) > 1:
+        # a GenAIPro trabalha por tarefa, então vários blocos são gravados ao mesmo tempo
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        log(f"  narrando {len(pendentes)} blocos na GenAIPro, {BLOCOS_AO_MESMO_TEMPO} de cada vez")
+        with ThreadPoolExecutor(max_workers=BLOCOS_AO_MESMO_TEMPO) as grupo:
+            tarefas = {grupo.submit(gravar, i): i for i in pendentes}
+            prontos, erro = 0, None
+            for tarefa in as_completed(tarefas):
+                i = tarefas[tarefa]
+                try:
+                    tarefa.result()
+                except (Exception, SystemExit) as e:
+                    erro = erro or e
+                    continue
+                cobrar(i)
+                prontos += 1
+                log(f"  bloco {i + 1} pronto ({prontos} de {len(pendentes)})")
+        if erro:
+            raise erro
+    else:
+        for i in pendentes:
             log(f"  narrando bloco {i + 1} de {len(blocos)}")
-            if projeto.offline:
-                alinhamento = _voz_do_mac(bloco.texto, voz, bruto)
-            elif voz.get("provedor") == "edge-tts":
-                alinhamento = _edge_tts(bloco.texto, voz, bruto)
-            else:
-                anterior = blocos[i - 1].texto[-400:] if i > 0 else None
-                seguinte = blocos[i + 1].texto[:400] if i + 1 < len(blocos) else None
-                alinhamento = _elevenlabs(bloco.texto, anterior, seguinte, voz, bruto)
-                # só o que a API cobrou agora entra na conta: bloco reaproveitado do cache não paga de novo
-                por_caractere, origem = custos_reais.preco_por_caractere(projeto.config)
-                custos_reais.registrar(
-                    projeto, "narracao", f"bloco {i + 1} de {len(blocos)} narrado na ElevenLabs",
-                    len(bloco.texto) * por_caractere, unidades=len(bloco.texto),
-                    detalhes={"caracteres": len(bloco.texto), "voz": voz.get("voice_id", ""),
-                              "modelo": voz.get("modelo", ""), "preco": origem})
-            alinhamento["texto"] = bloco.texto
-            arquivo_alinhamento.write_text(json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8")
+            gravar(i)
+            if pago:
+                cobrar(i)
+
+    for i, bloco in enumerate(blocos):
+        bruto, arquivo_alinhamento = arquivos(i)
         alinhamento = json.loads(arquivo_alinhamento.read_text(encoding="utf-8"))
         wav = bruto.with_name(f"bloco_{i:03d}.wav")
         alinhamento = _ajustar_ritmo(bruto, wav, alinhamento, voz)
@@ -240,7 +278,7 @@ def _abrir_espaco_dos_insertos(projeto, narracao, total, tempos_ini, tempos_fim)
 
 
 def _migrar_bloco_antigo(bruto, arquivo_alinhamento):
-    """Projetos antigos guardavam só o mp3 da ElevenLabs ou o wav já pronto."""
+    """Projetos antigos guardavam só o mp3 da voz ou o wav já pronto."""
     if not arquivo_alinhamento.exists() or bruto.exists():
         return
     mp3 = bruto.with_name(bruto.name.replace("_bruto.wav", ".mp3"))
@@ -316,36 +354,21 @@ def _descontar(t, cortes):
 
 
 def buscar_vozes(termo, idioma=None, quantidade=15):
-    """Procura vozes na biblioteca pública da ElevenLabs."""
-    cabecalho = {}
-    chave_api = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-    if chave_api:
-        cabecalho["xi-api-key"] = chave_api
-    parametros = {"search": termo, "page_size": quantidade}
-    if idioma:
-        parametros["language"] = idioma
-    r = httpx.get("https://api.elevenlabs.io/v1/shared-voices", params=parametros, headers=cabecalho, timeout=30)
-    if r.status_code in (401, 403):
-        raise SystemExit("A ElevenLabs pediu uma chave válida. Confira ELEVENLABS_API_KEY no .env.")
-    r.raise_for_status()
-    return r.json().get("voices", [])
+    """Procura vozes na biblioteca da GenAIPro. Qualquer uma delas serve direto no perfil, sem copiar para a conta."""
+    return genaipro.vozes(busca=termo, idioma=idioma, quantidade=quantidade)
 
 
-def adicionar_voz(voz):
-    """Copia uma voz da biblioteca para a sua conta e devolve o voice_id que vai no perfil."""
-    r = httpx.post(
-        f"https://api.elevenlabs.io/v1/voices/add/{voz['public_owner_id']}/{voz['voice_id']}",
-        headers={"xi-api-key": chave("ELEVENLABS_API_KEY")},
-        json={"new_name": voz["name"][:100]},
-        timeout=30,
-    )
-    if r.status_code != 200:
-        raise SystemExit(f"A ElevenLabs recusou adicionar a voz ({r.status_code}). {r.text[:300]}")
-    return r.json()["voice_id"]
+def _chave_elevenlabs():
+    """Criar voz por descrição é da ElevenLabs direta, opcional: a GenAIPro só narra."""
+    valor = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    if not valor:
+        raise SystemExit("Criar voz por descrição só existe na ElevenLabs direta, que é opcional. A GenAIPro não cria "
+                         "vozes. Se quiser usar, coloque ELEVENLABS_API_KEY no .env.")
+    return valor
 
 
 def desenhar_voz(descricao, texto=TEXTO_TESTE_VOZ, modelo="eleven_ttv_v3"):
-    """Cria prévias de uma voz nova a partir de uma descrição, pelo Voice Design da ElevenLabs."""
+    """Cria prévias de uma voz nova a partir de uma descrição, pelo Voice Design da ElevenLabs direta (opcional)."""
     if not 20 <= len(descricao) <= 1000:
         raise SystemExit("A descrição da voz precisa ter entre 20 e 1000 caracteres.")
     if not 100 <= len(texto) <= 1000:
@@ -353,7 +376,7 @@ def desenhar_voz(descricao, texto=TEXTO_TESTE_VOZ, modelo="eleven_ttv_v3"):
     r = httpx.post(
         "https://api.elevenlabs.io/v1/text-to-voice/design",
         params={"output_format": "mp3_44100_128"},
-        headers={"xi-api-key": chave("ELEVENLABS_API_KEY")},
+        headers={"xi-api-key": _chave_elevenlabs()},
         json={"voice_description": descricao, "text": texto, "model_id": modelo},
         timeout=300,
     )
@@ -365,10 +388,13 @@ def desenhar_voz(descricao, texto=TEXTO_TESTE_VOZ, modelo="eleven_ttv_v3"):
 
 
 def salvar_voz_criada(generated_voice_id, nome, descricao):
-    """Transforma a prévia escolhida numa voz da sua conta e devolve o voice_id."""
+    """Transforma a prévia escolhida numa voz da conta da ElevenLabs e devolve o voice_id.
+
+    A GenAIPro só narra com vozes da biblioteca pública: para usar esta voz na fábrica, compartilhe-a na
+    biblioteca da ElevenLabs (Voice Library) e depois ache pelo nome com fabrica vozes."""
     r = httpx.post(
         "https://api.elevenlabs.io/v1/text-to-voice",
-        headers={"xi-api-key": chave("ELEVENLABS_API_KEY")},
+        headers={"xi-api-key": _chave_elevenlabs()},
         json={"voice_name": nome, "voice_description": descricao, "generated_voice_id": generated_voice_id},
         timeout=60,
     )
@@ -377,55 +403,35 @@ def salvar_voz_criada(generated_voice_id, nome, descricao):
     return r.json()["voice_id"]
 
 
-def _elevenlabs(texto, anterior, seguinte, voz, wav):
-    voice_id = str(voz.get("voice_id") or "")
-    if not voice_id or "COLE" in voice_id:
-        raise SystemExit("Defina voz.voice_id no perfil do canal.")
-    modelo = voz.get("modelo", "eleven_multilingual_v2")
-    ajustes = {"stability": voz.get("estabilidade", 0.5), "similarity_boost": voz.get("similaridade", 0.75),
-               "style": voz.get("estilo", 0.0), "use_speaker_boost": True}
-    if not modelo.startswith("eleven_v3"):
-        ajustes["speed"] = voz.get("velocidade", 1.0)  # o v3 ignora a velocidade
-    corpo = {"text": texto, "model_id": modelo, "voice_settings": ajustes}
-    # o texto vizinho mantém a entonação contínua entre blocos
-    if voz.get("continuidade", not modelo.startswith("eleven_v3")):
-        if anterior:
-            corpo["previous_text"] = anterior
-        if seguinte:
-            corpo["next_text"] = seguinte
-
-    erro = ""
-    for tentativa in range(4):
-        try:
-            r = httpx.post(
-                URL.format(voz=voice_id),
-                params={"output_format": "mp3_44100_128"},
-                headers={"xi-api-key": chave("ELEVENLABS_API_KEY")},
-                json=corpo,
-                timeout=300,
-            )
-        except httpx.TransportError as e:
-            erro = str(e)
-        else:
-            if r.status_code == 200:
-                break
-            if r.status_code not in (429, 500, 502, 503, 504):
-                raise SystemExit(f"A ElevenLabs recusou o pedido ({r.status_code}). {r.text[:500]}")
-            erro = r.text
-        time.sleep(5 * (tentativa + 1))
-    else:
-        raise SystemExit(f"A ElevenLabs falhou depois de 4 tentativas. {erro[:300]}")
-
-    dados = r.json()
-    mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3"))
-    mp3.write_bytes(base64.b64decode(dados["audio_base64"]))
+def _genaipro(texto, voz, wav, log=print):
+    """Grava o texto na GenAIPro e devolve o tempo de cada letra, montado a partir do tempo de cada palavra."""
+    mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") else wav.with_suffix(".mp3")
+    palavras = genaipro.narrar(texto, voz, mp3, log)
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
-    a = dados.get("alignment") or dados["normalized_alignment"]
-    return {
-        "caracteres": a["characters"],
-        "inicio": a["character_start_times_seconds"],
-        "fim": a["character_end_times_seconds"],
-    }
+    palavras = _encostar_nas_pausas(palavras, _silencios(wav))
+    return _alinhar_pelas_palavras(texto, palavras, duracao_audio(wav))
+
+
+def _silencios(wav, minimo=0.15):
+    r = rodar(["ffmpeg", "-hide_banner", "-i", wav, "-af", f"silencedetect=noise=-40dB:d={minimo}", "-f", "null", "-"])
+    inicios = [float(x) for x in re.findall(r"silence_start: ([\d.]+)", r.stderr)]
+    fins = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    return list(zip(inicios, fins))
+
+
+def _encostar_nas_pausas(palavras, silencios):
+    """Na legenda da GenAIPro uma palavra vai até a seguinte começar, então a pausa depois de um ponto fica
+    dentro da palavra anterior ("explodiu." ia até 4,67 s, e a fala parava em 4,17 s). A palavra passa a
+    terminar onde o silêncio começa e a começar onde ele acaba. Silêncio no meio da palavra não mexe nela."""
+    ajustadas = []
+    for palavra, t0, t1 in palavras:
+        for a, b in silencios:
+            if t0 + 0.05 < a < t1 <= b + 0.05:
+                t1 = a
+            elif a <= t0 < b < t1 - 0.05:
+                t0 = b
+        ajustadas.append((palavra, t0, max(t1, t0 + 0.02)))
+    return ajustadas
 
 
 def _edge_tts(texto, voz, wav):

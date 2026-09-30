@@ -1,16 +1,17 @@
 """Áudio de meditação guiada. Fala curta, silêncio longo e música baixa.
 
 O roteiro é texto comum com a marcação [SILENCIO 90] numa linha própria. O tempo vai em
-segundos, ou em minutos e segundos como [SILENCIO 1:30]. A ElevenLabs narra só as falas,
+segundos, ou em minutos e segundos como [SILENCIO 1:30]. A GenAIPro narra só as falas,
 uma chamada por fala, e o silêncio vem do FFmpeg, sem custo. Cada fala gravada fica
 guardada pelo texto e pela voz, então mudar uma fala só regrava aquela.
 """
 import hashlib
 import re
 
+from . import custos_reais
 from . import texto as tx
 from .config import caminho_relativo
-from .narracao import TAXA, _elevenlabs, _voz_do_mac
+from .narracao import TAXA, _genaipro, _voz_do_mac
 from .render import EXTENSOES_AUDIO, _musica, _normalizar
 from .util import duracao_audio, rodar
 
@@ -57,7 +58,7 @@ def estimar(projeto) -> dict:
     caracteres = sum(len(f) for f in falas)
     silencio = sum(t["segundos"] for t in lista if t["tipo"] == "silencio")
     por_minuto = (projeto.perfil.get("ritmo") or {}).get("caracteres_por_minuto") or 500
-    preco = (projeto.config.get("precos") or {}).get("elevenlabs_por_mil_caracteres", 0.10)
+    preco = custos_reais.preco_por_caractere(projeto.config)[0] * 1000
     faltam = sum(not _arquivo_fala(projeto, f, voz).exists() for f in falas)
     return {
         "falas": len(falas),
@@ -89,7 +90,7 @@ def gerar(projeto, imagem=None, log=print):
             if projeto.offline:
                 _voz_do_mac(texto, voz, wav)
             else:
-                _elevenlabs(texto, None, None, voz, wav)
+                _genaipro(texto, voz, wav, log)
         wavs.append(wav)
 
     emendada = _juntar(projeto, wavs)

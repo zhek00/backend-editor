@@ -28,12 +28,12 @@ cp .env.exemplo .env
 
 | Chave | Onde criar | Custo |
 |---|---|---|
-| `ELEVENLABS_API_KEY` | elevenlabs.io, num plano pago, que libera uso comercial | uns US$ 0,10 por mil caracteres |
+| `GENAIPRO_API` | genaipro.io, na parte de API | US$ 22 por 1 milhão de caracteres, uns US$ 0,02 por minuto de vídeo |
 | `GEMINI_API_KEY` | aistudio.google.com/apikey, com faturamento ativo | US$ 0,034 por imagem no modo lote |
 | `PEXELS_API_KEY` | pexels.com/api | grátis |
 | `PIXABAY_API_KEY` | pixabay.com/api/docs | grátis |
 
-Na chave da ElevenLabs, marque acesso de leitura em Text to Speech e de escrita em Vozes.
+Para conferir a chave da GenAIPro sem gastar nada, rode `uv run fabrica creditos`. A `ELEVENLABS_API_KEY` é opcional e só serve para efeitos sonoros, música e voz por descrição.
 
 O `DREAMAPI_KEY` e o `FAL_KEY` são opcionais e só servem para caminhos alternativos.
 
@@ -69,12 +69,8 @@ O modo offline usa a voz do próprio Mac e imagens de teste. As fotos reais do W
 Antes, crie a sua voz e o seu perfil de canal.
 
 ```bash
-# procurar uma voz pronta na biblioteca da ElevenLabs
-uv run fabrica vozes "narrador grave"
-
-# ou criar uma voz original a partir de uma descrição
-uv run fabrica voz-desenhar "Elderly man with a deep, gravelly voice" --rotulo "grave"
-uv run fabrica voz-salvar 2 --nome "Narrador do canal"
+# procurar uma voz pronta na biblioteca da GenAIPro, sem gastar nada
+uv run fabrica vozes "narrador grave" --idioma pt
 ```
 
 Copie o código que aparece para `voz.voice_id` no perfil. Depois copie um dos arquivos de `perfis/` com outro nome e ajuste voz, estilo das imagens, proporção de material real e diretrizes.

@@ -1,6 +1,6 @@
-"""Trilha instrumental gerada na ElevenLabs Music.
+"""Trilha instrumental gerada na ElevenLabs Music, opcional: a GenAIPro, que faz a narração, não faz música.
 
-Cada geração consome créditos do plano da ElevenLabs e rende um trecho de até 5 minutos.
+Precisa de ELEVENLABS_API_KEY no .env. Cada geração consome créditos do plano da ElevenLabs e rende um trecho de até 5 minutos.
 A fábrica emenda faixas com transição suave, então um trecho curto cobre um áudio longo.
 O arquivo de texto salvo ao lado da faixa entra nos créditos do projeto.
 """

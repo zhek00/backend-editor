@@ -1,5 +1,5 @@
 """Estimativa de gasto antes de chamar as APIs pagas."""
-from . import efeitos
+from . import custos_reais, efeitos
 from . import texto as tx
 from .util import mmss
 
@@ -31,9 +31,9 @@ def estimar(projeto) -> dict:
         cenas = max(1, round(duracao / alvo))
         reais = round(cenas * proporcao)
 
-    # o edge-tts é a voz gratuita da Microsoft: só a ElevenLabs cobra por caractere
-    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "elevenlabs") == "edge-tts"
-    voz = 0.0 if gratuita else caracteres / 1000 * precos.get("elevenlabs_por_mil_caracteres", 0.10)
+    # o edge-tts é a voz gratuita da Microsoft: só a GenAIPro cobra por caractere, pelo preço do pacote
+    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "genaipro") == "edge-tts"
+    voz = 0.0 if gratuita else caracteres * custos_reais.preco_por_caractere(projeto.config)[0]
     # sem as cenas prontas, conta um efeito de 3 segundos por minuto de vídeo, antes do reaproveitamento
     if not efeitos.ativo(projeto.perfil):
         segundos_efeito = 0.0

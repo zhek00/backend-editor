@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cenas, corrigir, custos, custos_reais, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import cenas, corrigir, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -73,41 +73,18 @@ IDIOMAS_VOZ = getattr(narracao, "IDIOMAS_VOZ", [
     {"id": "en", "nome": "English", "bandeira": "🇺🇸"},
 ])
 
-VOZES_POR_IDIOMA = getattr(narracao, "VOZES_POR_IDIOMA", {
-    "pt": [
-        {"voice_id": "0YziWIrqiRTHCxeg1lyc", "nome": "Will", "genero": "masculina",
-         "descricao": "Nativa de São Paulo, grave e envolvente. Taxa 3x (plano pago)."},
-        {"voice_id": "JBFqnCBsd6RMkjVDRZzb", "nome": "George", "genero": "masculina",
-         "descricao": "Calorosa, de meia-idade, boa para narração mais emocional."},
-        {"voice_id": "21m00Tcm4TlvDq8ikWAM", "nome": "Rachel", "genero": "feminina",
-         "descricao": "Calma e clara, versátil pra qualquer tema."},
-    ],
-    "es": [
-        {"voice_id": "HbJt0yomFFBFMBQ7I69w", "nome": "Agustin", "genero": "masculina",
-         "descricao": "Sotaque latino-americano, grave e ressonante, tom de audiolivro e documentário."},
-        {"voice_id": "WWVK6dYMrl0ZHnHT7cRj", "nome": "Alejandro Castellanos", "genero": "masculina",
-         "descricao": "Sotaque da Espanha, claro e confiante, tom profissional."},
-        {"voice_id": "icze3UzEOxn2jtNGx4ZM", "nome": "Amanda", "genero": "feminina",
-         "descricao": "Sotaque argentino, calorosa."},
-    ],
-    "en": [
-        {"voice_id": "onwK4e9ZLuTAKqWW03F9", "nome": "Daniel", "genero": "masculina",
-         "descricao": "Britânico autoritário, ótimo pra história e mistério."},
-        {"voice_id": "JBFqnCBsd6RMkjVDRZzb", "nome": "George", "genero": "masculina",
-         "descricao": "Americano maduro, tom documental clássico."},
-        {"voice_id": "21m00Tcm4TlvDq8ikWAM", "nome": "Rachel", "genero": "feminina",
-         "descricao": "Americana profissional e confiável."},
-    ],
-})
-
-MODELOS_NARRACAO = getattr(narracao, "MODELOS_NARRACAO", [
-    {"id": "eleven_flash_v2_5", "nome": "Flash v2.5",
-     "custo": "o mais barato (~metade dos créditos do padrão)", "recomendado": False},
+# Os quatro modelos que a GenAIPro aceita. Todos gastam 1 crédito por caractere (medido em 30/09/2026),
+# então o que muda entre eles é só o jeito de falar.
+MODELOS_NARRACAO = [
+    {"id": "eleven_multilingual_v2", "nome": "Multilingual v2",
+     "descricao": "o mais natural e estável para narração longa", "recomendado": True},
+    {"id": "eleven_v3", "nome": "Eleven v3",
+     "descricao": "o mais expressivo e dramático, aceita tags como [whispers]; ignora a velocidade", "recomendado": False},
     {"id": "eleven_turbo_v2_5", "nome": "Turbo v2.5",
-     "custo": "custo reduzido (~metade dos créditos do padrão), bom equilíbrio", "recomendado": True},
-    {"id": "eleven_multilingual_v2", "nome": "Multilingual v2 (padrão)",
-     "custo": "preço cheio, o mais realista e expressivo", "recomendado": False},
-])
+     "descricao": "mais rápido de gerar, quase tão natural quanto o v2", "recomendado": False},
+    {"id": "eleven_flash_v2_5", "nome": "Flash v2.5",
+     "descricao": "o mais rápido de gerar, um pouco menos natural", "recomendado": False},
+]
 
 MODELO_GOOGLE = getattr(imagens, "MODELO_GOOGLE", "gemini-3.1-flash-lite-image")
 MODELO_KIE = getattr(imagens, "MODELO_KIE", "grok-imagine-image-2-0/text-to-image")
@@ -501,11 +478,16 @@ class CriarProjetoPayload(BaseModel):
     nome: str
     roteiro: str
     perfil: Optional[str] = "perfis/livro-de-enoque.yaml"
-    voz: Optional[str] = "pt-BR-AntonioNeural"  # nome de voz Edge-TTS, usado quando voz_provedor não é "elevenlabs"
-    voz_provedor: Optional[str] = None  # None/"edge-tts" usa a voz acima; "elevenlabs" usa os campos abaixo
+    voz: Optional[str] = "pt-BR-AntonioNeural"  # nome de voz Edge-TTS, usado quando voz_provedor não é "genaipro"
+    voz_provedor: Optional[str] = None  # None/"edge-tts" usa a voz acima; "genaipro" usa os campos abaixo
+    voz_id: Optional[str] = None
+    voz_modelo: Optional[str] = None
+    voz_idioma: Optional[str] = None  # "pt", "es" ou "en" — só pra lembrar a aba certa ao reabrir
+    voz_nome: Optional[str] = None  # nome da voz, pra mostrar no editor sem buscar de novo
+    # nomes antigos, de quando a narração era pela ElevenLabs direta: um editor desatualizado ainda manda assim
     voz_elevenlabs_id: Optional[str] = None
     voz_elevenlabs_modelo: Optional[str] = None
-    voz_elevenlabs_idioma: Optional[str] = None  # "pt", "es" ou "en" — só pra lembrar a aba certa ao reabrir
+    voz_elevenlabs_idioma: Optional[str] = None
     voz_estabilidade: Optional[float] = None
     voz_similaridade: Optional[float] = None
     voz_estilo: Optional[float] = None
@@ -527,9 +509,10 @@ class ImagensAjustesPayload(BaseModel):
 
 
 class VozAjustesPayload(BaseModel):
-    """Ajustes de voz só deste projeto (ElevenLabs ou Edge-TTS), sem tocar no perfil do canal."""
-    provedor: Optional[str] = None  # "elevenlabs" ou "edge-tts"
+    """Ajustes de voz só deste projeto (GenAIPro ou Edge-TTS), sem tocar no perfil do canal."""
+    provedor: Optional[str] = None  # "genaipro" ou "edge-tts" ("elevenlabs" é o nome antigo da GenAIPro)
     voice_id: Optional[str] = None
+    nome: Optional[str] = None
     idioma: Optional[str] = None  # "pt", "es" ou "en" — só pra lembrar a aba certa ao reabrir
     modelo: Optional[str] = None
     estabilidade: Optional[float] = None
@@ -847,12 +830,13 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
     # Ajuste de voz e de imagens só deste projeto, sem tocar no perfil do canal. Fica no projeto.json,
     # então vale também quando a criação é retomada depois de um reinício
     p = Projeto(nome)
-    if payload.voz_provedor == "elevenlabs":
+    if payload.voz_provedor in ("genaipro", "elevenlabs"):
         p.definir_voz_override({
-            "provedor": "elevenlabs",
-            "voice_id": payload.voz_elevenlabs_id,
-            "idioma": payload.voz_elevenlabs_idioma,
-            "modelo": payload.voz_elevenlabs_modelo,
+            "provedor": "genaipro",
+            "voice_id": payload.voz_id or payload.voz_elevenlabs_id,
+            "nome": payload.voz_nome,
+            "idioma": payload.voz_idioma or payload.voz_elevenlabs_idioma,
+            "modelo": payload.voz_modelo or payload.voz_elevenlabs_modelo,
             "estabilidade": payload.voz_estabilidade,
             "similaridade": payload.voz_similaridade,
             "estilo": payload.voz_estilo,
@@ -1000,16 +984,49 @@ def listar_vozes():
     return {"vozes": vozes}
 
 
-@app.get("/api/vozes/elevenlabs")
-def listar_vozes_elevenlabs(idioma: str = "pt"):
-    """Lista curada de vozes ElevenLabs pra narração de documentário."""
-    vozes = VOZES_POR_IDIOMA.get(idioma, VOZES_POR_IDIOMA["pt"])
-    return {
-        "vozes": vozes,
-        "modelos": MODELOS_NARRACAO,
-        "idiomas": IDIOMAS_VOZ,
-        "idioma_atual": idioma if idioma in VOZES_POR_IDIOMA else "pt",
-    }
+_CACHE_VOZES: Dict[tuple, tuple] = {}
+_CACHE_VOZES_SEGUNDOS = 3600
+
+
+@app.get("/api/vozes/genaipro")
+@app.get("/api/vozes/elevenlabs")  # nome antigo, pra editor desatualizado
+def listar_vozes_genaipro(idioma: str = "pt", busca: str = "", genero: str = "", pagina: int = 0):
+    """Vozes da biblioteca da GenAIPro, com prévia em áudio. Sem busca, traz as de narração mais usadas do idioma.
+
+    Não gasta créditos. A resposta fica guardada por uma hora pra não repetir a consulta."""
+    idioma = idioma if any(i["id"] == idioma for i in IDIOMAS_VOZ) else "pt"
+    genero = genero if genero in ("male", "female") else ""
+    busca = (busca or "").strip()[:60]
+    base = {"modelos": MODELOS_NARRACAO, "idiomas": IDIOMAS_VOZ, "idioma_atual": idioma,
+            "preco_por_mil": round(custos_reais.preco_por_caractere(config_geral())[0] * 1000, 4)}
+    if not genaipro.tem_chave():
+        return {**base, "vozes": [], "erro": "Falta a chave da GenAIPro. Cole em GENAIPRO_API no .env."}
+    chave_cache = (idioma, busca.lower(), genero, pagina)
+    guardado = _CACHE_VOZES.get(chave_cache)
+    if guardado and time.time() - guardado[0] < _CACHE_VOZES_SEGUNDOS:
+        return {**base, "vozes": guardado[1]}
+    try:
+        vozes = genaipro.vozes(busca=busca or None, idioma=idioma, genero=genero or None,
+                               uso=None if busca else "narrative_story", quantidade=30, pagina=pagina)
+    except SystemExit as e:
+        return {**base, "vozes": [], "erro": str(e)}
+    _CACHE_VOZES[chave_cache] = (time.time(), vozes)
+    return {**base, "vozes": vozes}
+
+
+@app.get("/api/genaipro/creditos")
+def creditos_genaipro():
+    """Saldo da GenAIPro, quando vence e quanto isso rende em minutos de narração. Não gasta nada."""
+    if not genaipro.tem_chave():
+        return {"configurada": False, "creditos": 0, "pacotes": []}
+    try:
+        conta = genaipro.conta()
+    except SystemExit as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    por_caractere, origem = custos_reais.preco_por_caractere(config_geral())
+    ritmo = 900  # caracteres por minuto de uma narração típica
+    return {**conta, "configurada": True, "minutos_de_narracao": conta["creditos"] // ritmo,
+            "preco_por_minuto_usd": round(por_caractere * ritmo, 4), "origem_do_preco": origem}
 
 
 @app.get("/api/imagens/provedores")
@@ -1063,11 +1080,19 @@ def videos_do_canal_nicho(canal_id: str, pagina: Optional[str] = None):
 
 CHAVES_CONHECIDAS = [
     {
+        "env": "GENAIPRO_API",
+        "nome": "GenAIPro",
+        "para_que": "Narração com as vozes e os modelos da ElevenLabs, pagando por créditos.",
+        "obrigatoria": True,
+        "sem_ela": "Só dá pra narrar com a voz grátis do Edge-TTS.",
+        "onde": "genaipro.io",
+    },
+    {
         "env": "ELEVENLABS_API_KEY",
-        "nome": "ElevenLabs",
-        "para_que": "Narração com voz natural e efeitos sonoros.",
+        "nome": "ElevenLabs (opcional)",
+        "para_que": "Só efeitos sonoros e música, que a GenAIPro não faz.",
         "obrigatoria": False,
-        "sem_ela": "A narração cai para a voz grátis do Edge-TTS.",
+        "sem_ela": "Os vídeos saem sem efeitos sonoros novos.",
         "onde": "elevenlabs.io",
     },
     {
@@ -1610,7 +1635,7 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
         duracao = narracao.narrar(p, log=print)
         if p.existe("cenas.json"):
             cenas.atualizar_tempos(p)
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         raise HTTPException(status_code=500, detail=f"Falha ao gerar narração: {str(e)}")
 
     alinhamento = p.ler_json("alinhamento.json") if p.existe("alinhamento.json") else {}

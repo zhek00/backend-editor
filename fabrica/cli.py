@@ -3,6 +3,7 @@ import argparse
 import base64
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import avatar, cenas, claude_local, corrigir, custos, gemini_local, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
+from . import avatar, cenas, claude_local, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
 from . import custos_reais
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
@@ -206,7 +207,8 @@ def etapa_efeitos(p, a, aprovado=False):
     if not p.existe("cenas.json"):
         raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
     segundos = efeitos.segundos_pendentes(p)
-    if segundos and not (p.offline or aprovado):
+    sem_chave = not os.environ.get("ELEVENLABS_API_KEY", "").strip()  # sem ela os efeitos ficam de fora, sem custo
+    if segundos and not (p.offline or aprovado or sem_chave):
         valor = custos.dinheiro(segundos / 60 * p.config["precos"].get("efeito_por_minuto", 0.12))
         if not confirmar(f"Gerar {segundos:.0f} segundos de efeitos sonoros custa cerca de {valor}. Continuar?", a.sim):
             raise SystemExit("Cancelado.")
@@ -490,7 +492,7 @@ def cmd_meditacao(a):
         f"cerca de {mmss(e['duracao'])} no total")
     if e["faltam"] and not p.offline:
         valor = custos.dinheiro(e["voz"] * e["faltam"] / max(e["falas"], 1))
-        if not confirmar(f"Gravar {e['faltam']} fala(s) na ElevenLabs custa cerca de {valor}. Continuar?", a.sim):
+        if not confirmar(f"Gravar {e['faltam']} fala(s) na GenAIPro custa cerca de {valor}. Continuar?", a.sim):
             raise SystemExit("Cancelado.")
     log("Prática guiada")
     saida, duracao = meditacao.gerar(p, a.imagem, log)
@@ -498,7 +500,7 @@ def cmd_meditacao(a):
 
 
 def cmd_musica_gerar(a):
-    if not confirmar(f"Gerar {a.minutos:g} minuto(s) de música consome créditos do plano da ElevenLabs. Continuar?", a.sim):
+    if not confirmar(f"Gerar {a.minutos:g} minuto(s) de música consome créditos da ElevenLabs direta (opcional, fora da GenAIPro). Continuar?", a.sim):
         raise SystemExit("Cancelado.")
     log("Música")
     mp3 = musica.gerar(a.descricao, a.minutos, a.pasta, a.nome, a.modelo)
@@ -522,18 +524,25 @@ def cmd_vozes(a):
     if not vozes:
         raise SystemExit("Nenhuma voz encontrada com esse termo.")
     for i, v in enumerate(vozes, 1):
-        detalhes = " · ".join(x for x in (v.get("gender"), v.get("age"), v.get("accent"), v.get("language"), v.get("use_case")) if x)
-        log(f"{i:>2}. {v['name']}  ({detalhes})")
-        if v.get("description"):
-            log(f"    {v['description'][:140]}")
-        log(f"    ouvir em {v.get('preview_url')}")
-    if not a.adicionar:
-        log("Para usar uma delas, rode de novo com --adicionar NÚMERO")
-        return
-    if not 1 <= a.adicionar <= len(vozes):
-        raise SystemExit(f"Escolha um número entre 1 e {len(vozes)}.")
-    voice_id = narracao.adicionar_voz(vozes[a.adicionar - 1])
-    log(f"Voz adicionada à sua conta. Cole em voz.voice_id no perfil o código {voice_id}")
+        detalhes = " · ".join(x for x in (v["genero"], v["idade"], v["sotaque"], v["idioma"], v["uso"]) if x)
+        log(f"{i:>2}. {v['nome']}  ({detalhes})")
+        if v["descricao"]:
+            log(f"    {v['descricao'][:140]}")
+        log(f"    ouvir em {v['previa']}")
+        log(f"    código para voz.voice_id no perfil: {v['voice_id']}")
+    log("Qualquer uma serve direto: cole o código em voz.voice_id no perfil do canal.")
+
+
+def cmd_creditos(a):
+    c = genaipro.conta()
+    numero = lambda n: f"{n:,}".replace(",", ".")
+    por_caractere, origem = custos_reais.preco_por_caractere(config_geral())
+    log(f"GenAIPro, conta {c['usuario']}: {numero(c['creditos'])} créditos (1 crédito por caractere narrado)")
+    for pacote in c["pacotes"]:
+        log(f"  {numero(pacote['creditos'])} vencem em {(pacote['vence'] or '')[:10]}")
+    ritmo = 900  # caracteres por minuto de uma narração típica
+    log(f"  dá para cerca de {c['creditos'] // ritmo // 60} horas de narração, a {custos.dinheiro(por_caractere * ritmo)} "
+        f"por minuto ({origem})")
 
 
 VOZES_CRIADAS = RAIZ / "vozes_criadas"
@@ -541,7 +550,7 @@ VOZES_CRIADAS = RAIZ / "vozes_criadas"
 
 def cmd_voz_desenhar(a):
     texto = Path(a.texto).read_text(encoding="utf-8").strip() if a.texto else narracao.TEXTO_TESTE_VOZ
-    log("Criando prévias da voz na ElevenLabs")
+    log("Criando prévias da voz na ElevenLabs direta (opcional)")
     previas = narracao.desenhar_voz(a.descricao, texto, a.modelo)
     VOZES_CRIADAS.mkdir(exist_ok=True)
     arquivo_registro = VOZES_CRIADAS / "previas.json"
@@ -595,7 +604,9 @@ def cmd_voz_salvar(a):
         raise SystemExit(f"Escolha um número entre 1 e {len(registro)}.")
     previa = registro[a.numero - 1]
     voice_id = narracao.salvar_voz_criada(previa["id"], a.nome, previa["descricao"])
-    log(f"Voz salva na sua conta. Cole em voz.voice_id no perfil o código {voice_id}")
+    log(f"Voz salva na conta da ElevenLabs com o código {voice_id}.")
+    log("A GenAIPro só narra com vozes da biblioteca pública: compartilhe esta voz na Voice Library da ElevenLabs "
+        "e depois ache pelo nome com uv run fabrica vozes NOME.")
 
 
 def cmd_servidor(a):
@@ -641,7 +652,7 @@ def main():
         s.add_argument("nome")
         s.add_argument("--sim", action="store_true", help="aprova o gasto sem perguntar")
         s.add_argument("--forcar", action="store_true", help="refaz a etapa. Na narração, só refaz o ritmo, sem custo")
-        s.add_argument("--nova-voz", action="store_true", help="gera a narração de novo na ElevenLabs, com custo")
+        s.add_argument("--nova-voz", action="store_true", help="gera a narração de novo na GenAIPro, com custo")
         s.add_argument("--direto", action="store_true", help="gera as imagens na hora, sem o modo lote do Google")
         s.add_argument("--sem-avatar", action="store_true", help="monta o vídeo sem o quadro do avatar")
         s.add_argument("--sem-corrigir", action="store_true", help="pula a conferência das cenas antes de renderizar")
@@ -693,11 +704,11 @@ def main():
     s.add_argument("--perfil", help="na primeira vez, o perfil com a voz e a música")
     s.add_argument("--offline", action="store_true", help="teste sem custo, com a voz do Mac")
     s.add_argument("--imagem", help="gera também um mp4 com essa imagem parada, para plataforma que só aceita vídeo")
-    s.add_argument("--nova-voz", action="store_true", help="grava todas as falas de novo na ElevenLabs, com custo")
+    s.add_argument("--nova-voz", action="store_true", help="grava todas as falas de novo na GenAIPro, com custo")
     s.add_argument("--sim", action="store_true", help="aprova o gasto sem perguntar")
     s.set_defaults(funcao=cmd_meditacao)
 
-    s = sub.add_parser("musica-gerar", help="cria uma trilha instrumental na ElevenLabs Music e salva na pasta de músicas")
+    s = sub.add_parser("musica-gerar", help="cria uma trilha instrumental na ElevenLabs Music (opcional, precisa de ELEVENLABS_API_KEY)")
     s.add_argument("descricao", help="descrição da música, de preferência em inglês")
     s.add_argument("--minutos", type=float, default=5.0, help="duração da faixa, no máximo 5")
     s.add_argument("--pasta", default="musicas/meditacao", help="pasta onde a faixa é salva")
@@ -711,13 +722,15 @@ def main():
     s.add_argument("--perfil", required=True)
     s.set_defaults(funcao=cmd_estimar)
 
-    s = sub.add_parser("vozes", help="procura vozes na biblioteca da ElevenLabs")
+    s = sub.add_parser("vozes", help="procura vozes na biblioteca da GenAIPro, sem gastar")
     s.add_argument("termo")
     s.add_argument("--idioma", help="código do idioma, por exemplo pt")
-    s.add_argument("--adicionar", type=int, help="número da voz na lista para copiar para a sua conta")
     s.set_defaults(funcao=cmd_vozes)
 
-    s = sub.add_parser("voz-desenhar", help="cria prévias de uma voz nova a partir de uma descrição")
+    s = sub.add_parser("creditos", help="mostra os créditos da GenAIPro e quando vencem, sem gastar")
+    s.set_defaults(funcao=cmd_creditos)
+
+    s = sub.add_parser("voz-desenhar", help="cria prévias de uma voz nova a partir de uma descrição (ElevenLabs direta, opcional)")
     s.add_argument("descricao", help="descrição da voz, de preferência em inglês")
     s.add_argument("--rotulo", help="nome curto para reconhecer a variação na página")
     s.add_argument("--texto", help="arquivo com o texto de teste, entre 100 e 1000 caracteres")
@@ -725,7 +738,7 @@ def main():
     s.add_argument("--nao-abrir", action="store_true", help="não abre a página no navegador")
     s.set_defaults(funcao=cmd_voz_desenhar)
 
-    s = sub.add_parser("voz-salvar", help="guarda na sua conta uma voz criada no voz-desenhar")
+    s = sub.add_parser("voz-salvar", help="guarda na conta da ElevenLabs uma voz criada no voz-desenhar (opcional)")
     s.add_argument("numero", type=int)
     s.add_argument("--nome", required=True)
     s.set_defaults(funcao=cmd_voz_salvar)

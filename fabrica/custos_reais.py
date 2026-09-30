@@ -36,12 +36,22 @@ def preco_por_caractere(config) -> tuple:
     Com assinatura, o caractere vale o que a mensalidade cobra por ele (preço do plano dividido
     pela franquia do mês). Sem assinatura, vale a tarifa avulsa da API.
     """
-    plano = ((config.get("assinaturas") or {}).get("elevenlabs")) or {}
+    plano = plano_da_voz(config)
     mensal, incluido = plano.get("preco_mensal", 0) or 0, plano.get("incluido_no_mes", 0) or 0
     if mensal > 0 and incluido > 0:
-        return mensal / incluido, f"assinatura {plano.get('plano', 'ElevenLabs')}"
-    avulso = (config.get("precos") or {}).get("elevenlabs_por_mil_caracteres", 0.10)
-    return avulso / 1000, "tarifa avulsa da API"
+        return mensal / incluido, f"pacote {plano.get('plano', 'GenAIPro')}"
+    return preco_avulso_por_mil(config) / 1000, "tarifa avulsa da API"
+
+
+def plano_da_voz(config) -> dict:
+    """O pacote de créditos da GenAIPro. Config antiga só tinha a assinatura da ElevenLabs."""
+    assinaturas = config.get("assinaturas") or {}
+    return assinaturas.get("genaipro") or assinaturas.get("elevenlabs") or {}
+
+
+def preco_avulso_por_mil(config) -> float:
+    precos = config.get("precos") or {}
+    return precos.get("genaipro_por_mil_caracteres", precos.get("elevenlabs_por_mil_caracteres", 0.022))
 
 
 def registrar(projeto, categoria: str, motivo: str, valor_usd: float, detalhes: Optional[dict] = None,
@@ -138,7 +148,7 @@ def resumo(projeto) -> dict:
     cenas = len(projeto.ler_json("cenas.json").get("cenas", [])) if projeto.existe("cenas.json") else 0
 
     por_unidade, origem_narracao = preco_por_caractere(projeto.config)
-    plano = ((projeto.config.get("assinaturas") or {}).get("elevenlabs")) or {}
+    plano = plano_da_voz(projeto.config)
     caracteres = medidas.get("narracao", 0)
     return {
         "total_usd": round(total, 4),
