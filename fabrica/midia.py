@@ -516,6 +516,46 @@ def animal_da_cena(bloco: dict, cena: dict) -> set:
     return set(cabeca) | tipo | _generos_cientificos(cena.get("busca_alternativa") or "")
 
 
+_PALAVRAS_PT = {"de", "da", "do", "das", "dos", "na", "no", "nas", "nos", "com", "em", "um", "uma", "e", "ao", "aos",
+                "pela", "pelo", "sobre", "entre", "para"}
+_TRADUCOES = {}
+
+
+def busca_em_ingles(projeto, termo: str, log=print) -> str:
+    """O termo que a pessoa digitou, em inglês, a língua em que os bancos indexam as fotos.
+
+    "geada na grama" no Pexels sem idioma trazia um piquenique; em inglês vêm as fotos de geada. Quem traduz é o
+    modelo principal (hoje gratuito), uma vez por termo. Termo que já parece inglês, ou falha do modelo, volta igual."""
+    termo = (termo or "").strip()
+    if not termo or projeto.offline:
+        return termo
+    palavras = re.findall(r"[a-zà-ÿ]+", termo.lower())
+    if not (re.search(r"[ãõçáéíóúâêôà]", termo.lower()) or set(palavras) & _PALAVRAS_PT
+            or any(p.endswith(("ção", "ções", "ões", "inho", "inha")) for p in palavras) or len(palavras) <= 2):
+        return termo  # frase de três palavras ou mais, sem nada de português: já está em inglês
+    if termo.lower() in _TRADUCOES:
+        return _TRADUCOES[termo.lower()]
+    from . import openrouter_local
+
+    esquema = {"type": "object", "properties": {"ingles": {"type": "string"}}, "required": ["ingles"],
+               "additionalProperties": False}
+    try:
+        resposta = openrouter_local.perguntar(
+            projeto, "traduzir busca", "Você traduz termos de busca de banco de imagens para o inglês. Responda só o "
+            "JSON pedido. Se o termo já estiver em inglês, devolva igual. Mantenha nomes próprios. De 1 a 5 palavras, "
+            "substantivos concretos, como alguém digitaria no Pexels.",
+            f"Termo: {termo}", esquema, log=log, modelo=openrouter_local.principal(projeto), temperatura=0)
+        ingles = re.sub(r"\s+", " ", str(resposta.get("ingles") or "")).strip()[:80]
+    except (Exception, SystemExit) as erro:
+        log(f"  não consegui traduzir '{termo}' ({str(erro)[:80]}), buscando como foi escrito")
+        return termo
+    if ingles:
+        _TRADUCOES[termo.lower()] = ingles
+        if ingles.lower() != termo.lower():
+            log(f"  busca '{termo}' em inglês: '{ingles}'")
+    return ingles or termo
+
+
 def busca_com_contexto(bloco: dict, busca: str) -> str:
     """Junta o contexto do bloco só quando a busca fala do assunto do bloco.
 

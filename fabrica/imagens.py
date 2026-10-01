@@ -530,6 +530,9 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
     if invalidas:
         raise SystemExit(f"Essas cenas não existem: {', '.join(map(str, invalidas))}")
     carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # a busca digitada pela pessoa vale em inglês, que é a língua dos bancos ("geada na grama" -> "frost covered grass")
+    digitada = busca if busca and not prompt and not forcar_ia else None
+    busca = midia.busca_em_ingles(projeto, busca, log) if digitada else busca
     reais = []
     buscas_pedidas = {}
     anteriores = {}  # o que cada cena tinha, para devolver se a busca não achar nada
@@ -541,6 +544,8 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
         if c.get("midia"):
             c.setdefault("rejeitadas", []).append(f"{c['midia']['fonte']}:{c['midia']['id']}")
             c["midia"] = None
+        if digitada:
+            _a_busca_da_pessoa_manda(c, digitada, busca)
         if escolheu_real:
             c["tipo"] = tipo if tipo in midia.TIPOS_REAIS else (c.get("tipo") if c.get("tipo") in midia.TIPOS_REAIS else "foto_real")
             # uma cena que era de IA não tem busca: os termos saem do prompt ou do texto dela
@@ -581,6 +586,23 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
             raise RuntimeError(f"Não achei foto ou vídeo no acervo para {termos}. Tente outros termos de busca, em inglês.")
         return []
     return gerar(projeto, apenas=set(numeros), log=log)
+
+
+def _a_busca_da_pessoa_manda(cena, digitada, em_ingles):
+    """A pessoa digitou o que quer ver: isso passa a ser o assunto da cena, para a busca, a escolha e o Jev.
+
+    Antes só a busca mudava, e o resto continuava do agente: na cena 15 do ouro-da-serra-gaucha a pessoa pediu
+    "frosted plant", o sujeito antigo "campos com geada" pôs Campo Mourão, Campos dos Goytacazes e Campo Grande na
+    frente das fotos de geada, e o pedido "campos de uva da Serra Gaúcha" fez a planta com geada ser recusada.
+    O pedido do agente fica guardado em pedido_original, na primeira troca."""
+    cena.setdefault("pedido_original", {k: cena.get(k) for k in
+                                        ("busca", "busca_alternativa", "sujeito", "mostrar", "exato", "animal")})
+    cena["busca"] = em_ingles
+    cena["busca_alternativa"] = digitada if digitada.strip().lower() != em_ingles.strip().lower() else ""
+    cena["sujeito"] = em_ingles
+    cena["mostrar"] = digitada
+    cena["exato"] = ""
+    cena["busca_manual"] = digitada
 
 
 def _busca_da_cena(cena):
