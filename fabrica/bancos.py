@@ -234,6 +234,102 @@ def harvard(b, tipo, busca):
     return achados
 
 
+def nypl(b, tipo, busca):
+    """Biblioteca Pública de Nova York: fotos antigas, gravuras, mapas e cartões em domínio público.
+
+    A maior imagem que ela entrega tem 760 pixels de largura, então serve para material de época, não para
+    paisagem moderna. Precisa de um token grátis (api.repo.nypl.org)."""
+    from .midia import FonteIndisponivel
+
+    if tipo != "foto":
+        return []
+    chave = _chave("NYPL_API_KEY", "NYPL_API", "NYPL_TOKEN")
+    if not chave:
+        raise FonteIndisponivel("falta NYPL_API no .env (token grátis em api.repo.nypl.org)")
+    r = b.http.get("https://api.repo.nypl.org/api/v2/items/search",
+                   params={"q": busca, "publicDomainOnly": "true", "per_page": 25},
+                   headers={"Authorization": f'Token token="{chave}"'})
+    if r.status_code == 401:
+        raise FonteIndisponivel("o NYPL recusou o token (NYPL_API no .env)")
+    b._checar(r, "NYPL")
+    resultado = ((r.json().get("nyplAPI") or {}).get("response") or {}).get("result") or []
+    if isinstance(resultado, dict):  # com um resultado só, a API devolve o item solto em vez de uma lista
+        resultado = [resultado]
+    achados, vistos = [], set()
+    for item in resultado:
+        imagem = item.get("imageID")
+        # "text" é página de livro ou de jornal: não vira cena. A busca às vezes devolve a mesma imagem duas vezes
+        if not imagem or item.get("typeOfResource") != "still image" or imagem in vistos:
+            continue
+        vistos.add(imagem)
+        pagina = (item.get("itemLink") or "").replace("http://", "https://")
+        achados.append({
+            "fonte": "nypl", "id": str(imagem), "tipo": "foto",
+            "miniatura": f"https://images.nypl.org/index.php?id={imagem}&t=r",
+            "arquivo": f"https://images.nypl.org/index.php?id={imagem}&t=w",
+            "duracao": None, "pagina": pagina, "autor": "The New York Public Library",
+            "licenca": "Domínio público (NYPL)",
+            "descricao": _limpar(item.get("title") or ""),
+        })
+    return achados
+
+
+# licença do Te Papa -> código que _licenca_livre entende
+_LICENCAS_TEPAPA = {"no known copyright restrictions": "pd", "public domain": "pd", "cc0": "cc0",
+                    "cc by 4.0": "cc-by", "cc by-sa 4.0": "cc-by-sa"}
+
+
+def tepapa(b, tipo, busca):
+    """Te Papa, o museu nacional da Nova Zelândia: história natural, fotografia antiga, objetos e arte.
+
+    Só objetos com imagem liberada para download e licença que permite uso comercial (CC BY-NC e CC BY-ND
+    ficam de fora). Precisa de chave grátis (data.tepapa.govt.nz)."""
+    from .midia import FonteIndisponivel
+
+    if tipo != "foto":
+        return []
+    chave = _chave("TEPAPA_API_KEY", "TE_PAPA_API_KEY", "MUSEUM_NOVA_ZELANDIA_API")
+    if not chave:
+        raise FonteIndisponivel("falta TEPAPA_API_KEY no .env (chave grátis em data.tepapa.govt.nz)")
+    corpo = {"query": busca, "size": 25, "filters": [
+        {"field": "type", "keyword": "Object"},
+        {"field": "hasRepresentation.rights.allowsDownload", "keyword": "true"}]}
+    r = b.http.post("https://data.tepapa.govt.nz/collection/search", json=corpo,
+                    headers={"x-api-key": chave, "Accept": "application/json"})
+    if r.status_code in (401, 403):
+        raise FonteIndisponivel(f"o Te Papa recusou a chave ({r.status_code})")
+    b._checar(r, "Te Papa")
+    achados = []
+    for obra in r.json().get("results", []):
+        imagem = next((m for m in obra.get("hasRepresentation") or []
+                       if m.get("contentUrl") and (m.get("rights") or {}).get("allowsDownload")), None)
+        if not imagem:
+            continue
+        direito = ((imagem.get("rights") or {}).get("title") or "").strip()
+        if not _licenca_livre(b, _LICENCAS_TEPAPA.get(direito.lower(), "")):
+            continue
+        autores = ", ".join((p.get("contributor") or {}).get("title", "") for p in (obra.get("production") or [])[:2])
+        tema = " ".join(d.get("title", "") for d in (obra.get("depicts") or [])[:3])
+        achados.append({
+            "fonte": "tepapa", "id": str(imagem.get("id") or obra["id"]), "tipo": "foto",
+            "miniatura": imagem.get("previewUrl") or imagem.get("thumbnailUrl") or imagem["contentUrl"],
+            "arquivo": imagem["contentUrl"], "duracao": None,
+            "pagina": f"https://collections.tepapa.govt.nz/object/{obra['id']}",
+            "autor": _limpar(autores.strip(", ") or "Museum of New Zealand Te Papa Tongarewa", 120),
+            "licenca": f"{direito} (Te Papa)",
+            "descricao": _limpar(f"{obra.get('title', '')}. {tema}. {obra.get('caption') or ''}"),
+        })
+    return achados
+
+
+# Bancos de acervo (museus, arquivos e bibliotecas): devolvem pintura, gravura, objeto de vitrine e foto antiga.
+# Numa cena comum ("lince na neve") só ocupam vagas dos candidatos, então entram apenas em cena de acervo
+# (midia._e_de_acervo): assunto histórico, de arte, artefato, ou que o agente mandou buscar na Wikimedia.
+ACERVO = {"harvard", "europeana", "smithsonian", "nypl", "tepapa"}
+
+# O Biodiversity Heritage Library (biodiversitylibrary.org) ficou de fora de propósito: a API devolve livros e
+# artigos científicos inteiros, não imagens soltas, então não há o que pôr numa cena.
+
 # o que cada banco tem de melhor, dito ao Passo 2 para ele escrever a busca certa para cada um
 FORCAS = {
     "pexels": "fotos e vídeos modernos de banco de imagens, de gente, cidade, natureza e objetos do dia a dia",
@@ -245,6 +341,8 @@ FORCAS = {
     "smithsonian": "objetos de museu, ciência, história natural, tecnologia antiga (só o que é livre de direitos)",
     "europeana": "arquivo histórico europeu: fotos antigas, mapas, gravuras, manuscritos, arte",
     "harvard": "obras de arte de museu: pintura, gravura, escultura, sobretudo de séculos passados",
+    "nypl": "fotos antigas, gravuras, mapas e cartões-postais históricos em domínio público (baixa resolução)",
+    "tepapa": "museu da Nova Zelândia: espécimes de história natural, fotografia antiga, objetos e arte",
 }
 
 
@@ -254,6 +352,6 @@ def descrever(fontes):
     return "\n".join(linhas)
 
 
-# fonte -> função. NYPL, Biodiversity Heritage Library e Te Papa ainda não estão aqui.
+# fonte -> função
 FONTES = {"inaturalist": inaturalist, "nasa": nasa, "unsplash": unsplash, "smithsonian": smithsonian,
-          "europeana": europeana, "harvard": harvard}
+          "europeana": europeana, "harvard": harvard, "nypl": nypl, "tepapa": tepapa}

@@ -673,6 +673,15 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
             previa_url = f"/arquivos_previas/{projeto.nome}/tela/{n}.jpg?v={v}"
         except OSError:
             pass
+    # o vídeo de banco tem prévia leve própria: 480p, só o trecho que a cena usa
+    previa_video_url = None
+    video = _video_da_cena(projeto, cena)
+    if video is not None:
+        try:
+            v = f"{int(video.stat().st_mtime)}-{int(round((cena['fim'] - cena['ini']) * 10))}"
+            previa_video_url = f"/arquivos_previas/{projeto.nome}/video/{n}.mp4?v={v}"
+        except (OSError, KeyError, TypeError):
+            pass
 
     # A cena pode ter sido planejada como real e não ter achado material (sem_midia_real):
     # o tipo continua "foto_real"/"video_real" no cenas.json, mas o que aparece de fato é a
@@ -712,6 +721,7 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
         "url_midia": url_principal,
         "thumb_url": thumb_url,      # miniatura de 320px, para a timeline e a lista de cenas
         "previa_url": previa_url,    # prévia de 1280px, para o player mostrar fotos sem baixar o original
+        "previa_video_url": previa_video_url,  # vídeo de banco em 480p, só o trecho da cena, para o player
         "img_ia_url": img_ia_url,
         "img_ia_existe": img_ia_existe,
         "midia_url": midia_url,
@@ -1436,6 +1446,9 @@ def listar_cenas(nome: str):
     dados = p.ler_json("cenas.json")
     cenas_brutas = dados.get("cenas", [])
     cenas_enriquecidas = [enriquecer_cena(p, c) for c in cenas_brutas]
+    # o editor abriu o projeto: as prévias de vídeo que faltam começam a ser feitas, na ordem das cenas
+    if any(c.get("previa_video_url") for c in cenas_enriquecidas):
+        preparar_previas_video(nome)
 
     return {"cenas": cenas_enriquecidas, "sem_arquivo": sum(1 for c in cenas_enriquecidas if c["sem_arquivo"])}
 
@@ -2412,6 +2425,100 @@ def servir_previa(nome: str, tamanho: str, n: int):
                     # não deu para reduzir (formato estranho): serve o original, que ao menos aparece
                     return FileResponse(origem)
     return FileResponse(destino, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+EXTENSOES_VIDEO = (".mp4", ".mov", ".webm", ".m4v")
+ALTURA_PREVIA_VIDEO = 480
+_PREPARANDO_PREVIAS = set()  # projetos com as prévias de vídeo sendo feitas em segundo plano
+
+
+def _video_da_cena(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
+    m = cena.get("midia") or {}
+    arq = p.pasta / m["arquivo"] if m.get("arquivo") else None
+    return arq if arq and arq.exists() and arq.suffix.lower() in EXTENSOES_VIDEO else None
+
+
+def _destino_previa_video(p: Projeto, cena: Dict[str, Any], origem: Path) -> Path:
+    """O nome leva a data da origem e a duração da cena: mídia trocada ou corte mudado ganham prévia nova."""
+    decimos = int(round((cena["fim"] - cena["ini"]) * 10))
+    return p.pasta / "_previas" / "video" / f"{cena['n']:04d}_{int(origem.stat().st_mtime)}_{decimos}.mp4"
+
+
+def _gerar_previa_video(origem: Path, destino: Path, duracao_cena: float) -> None:
+    """Corta do vídeo de banco só o trecho que a cena usa, em 480p e sem som.
+
+    O original é 1080p de 9 a 18 Mbps e chega a 111 MB, mas a cena mostra 3 a 5 segundos dele: pelo túnel do
+    Cloudflare o player esperava o download do arquivo inteiro e travava. O começo segue a mesma regra do render
+    (render._entrada_video), para o editor mostrar o mesmo trecho que vai sair no vídeo final."""
+    from .util import duracao_audio
+
+    disponivel = duracao_audio(origem)
+    inicio = min(1.0, (disponivel - duracao_cena) / 2) if disponivel >= duracao_cena + 1 else 0.0
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_name(f"{destino.stem}.{threading.get_ident()}.tmp.mp4")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.3f}", "-i", str(origem),
+                    "-t", f"{duracao_cena + 1.5:.3f}", "-an", "-vf", f"scale=-2:{ALTURA_PREVIA_VIDEO},fps=30",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-maxrate", "1200k", "-bufsize", "2400k",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp)], check=True)
+    for velho in destino.parent.glob(f"{destino.name.split('_')[0]}_*.mp4"):
+        if velho != destino and not velho.name.endswith(".tmp.mp4"):
+            velho.unlink(missing_ok=True)
+    tmp.replace(destino)
+
+
+def _previa_video_pronta(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
+    """Devolve a prévia leve do vídeo da cena, fazendo agora se ainda não existir. None se a cena não é vídeo."""
+    origem = _video_da_cena(p, cena)
+    if origem is None:
+        return None
+    destino = _destino_previa_video(p, cena, origem)
+    if not destino.exists():
+        _gerar_previa_video(origem, destino, max(0.5, cena["fim"] - cena["ini"]))
+    return destino
+
+
+def preparar_previas_video(nome: str) -> None:
+    """Faz em segundo plano as prévias de vídeo que faltam, na ordem das cenas, para o player já achar prontas."""
+    with _TRAVA_LEVES:
+        if nome in _PREPARANDO_PREVIAS:
+            return
+        _PREPARANDO_PREVIAS.add(nome)
+
+    def trabalhar():
+        try:
+            p = Projeto(nome)
+            for cena in p.ler_json("cenas.json").get("cenas", []):
+                try:
+                    _previa_video_pronta(p, cena)
+                except Exception as erro:
+                    print(f"[prévias de vídeo] cena {cena.get('n')} de {nome}: {str(erro)[:120]}")
+        except (Exception, SystemExit) as erro:
+            print(f"[prévias de vídeo] {nome}: {str(erro)[:120]}")
+        finally:
+            with _TRAVA_LEVES:
+                _PREPARANDO_PREVIAS.discard(nome)
+
+    threading.Thread(target=trabalhar, daemon=True, name=f"previas-video-{nome}").start()
+
+
+@app.api_route("/arquivos_previas/{nome}/video/{n}.mp4", methods=["GET", "HEAD"])
+def servir_previa_video(nome: str, n: int):
+    """Prévia leve do vídeo da cena para o player do editor (480p, só o trecho da cena, sem som)."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+    p = Projeto(nome)
+    cena = next((c for c in p.ler_json("cenas.json").get("cenas", []) if c.get("n") == n), None)
+    origem = _video_da_cena(p, cena) if cena else None
+    if origem is None:
+        raise HTTPException(status_code=404, detail="Essa cena não tem vídeo.")
+    try:
+        destino = _previa_video_pronta(p, cena)
+    except Exception:
+        # não deu para reduzir: serve o original, que ao menos toca
+        return FileResponse(origem, media_type=mimetypes.guess_type(str(origem))[0] or "video/mp4",
+                            headers={"Cache-Control": "no-cache"})
+    # o endereço muda quando a mídia ou o corte mudam (?v=), então o navegador pode guardar a prévia
+    return FileResponse(destino, media_type="video/mp4", headers={"Cache-Control": "private, max-age=604800"})
 
 
 @app.api_route("/arquivos_narracao/{nome}.mp3", methods=["GET", "HEAD"])

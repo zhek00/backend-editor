@@ -10,6 +10,7 @@ sem cobrar a saída), mas só entende texto. Quem olha as imagens é o modelo de
 que aparece, e o Jev julga a descrição contra a narração.
 """
 import json
+import os
 import threading
 import time
 from datetime import datetime
@@ -82,8 +83,16 @@ def _pelo_mimo(projeto, etapa, estado, perguntas, log, motivo):
 def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=None):
     """Devolve as respostas do Jev para esse estado. Uma chamada responde todas as perguntas de uma vez.
 
-    Se o servidor do Jev cair (503, tempo esgotado), a mesma pergunta vai para o MiMo na hora, sem dormir."""
+    Se o servidor do Jev cair (503, tempo esgotado), a mesma pergunta vai para o MiMo na hora, sem dormir.
+
+    Com jev.julgar_com: principal no config.yaml, ou FABRICA_JULGAR_COM=principal no ambiente (vale só para aquele
+    processo, sem mexer no servidor que está no ar), quem julga é o modelo principal, que hoje é gratuito."""
     cfg = projeto.config.get("jev") or {}
+    if (os.environ.get("FABRICA_JULGAR_COM") or cfg.get("julgar_com") or "jev").strip().lower() == "principal":
+        try:
+            return _pelo_mimo(projeto, etapa, estado, perguntas, log, "")
+        except (Exception, SystemExit) as e:
+            raise RuntimeError(f"O modelo principal não julgou na etapa {etapa} ({e}).") from None
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     corpo = {"model": modelo, "state": estado, "questions": perguntas}
     cabecalho = {"Authorization": f"Bearer {_chave()}"}

@@ -32,7 +32,7 @@ ritmo:
   caracteres_por_minuto: 914
 
 midia_real:
-  fontes_foto: [wikimedia, pexels, pixabay, unsplash, smithsonian, europeana, harvard]   # iNaturalist (cena de animal) e NASA (cena de espaço) entram sozinhos
+  fontes_foto: [wikimedia, pexels, pixabay, unsplash, smithsonian, europeana, harvard, nypl, tepapa]   # iNaturalist (cena de animal) e NASA (cena de espaço) entram sozinhos. Smithsonian, Europeana, Harvard, NYPL e Te Papa só em cena de acervo (história, arte, artefato)
   fontes_video: [pixabay, pexels]
   aceitar_cc_by: true                # exige crédito ao autor, que vai para creditos.txt
   aceitar_cc_by_sa: false

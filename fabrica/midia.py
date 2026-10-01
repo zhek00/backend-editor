@@ -260,6 +260,40 @@ def _e_de_espaco(busca: str) -> bool:
     return bool(set(re.findall(r"[a-z]+", (busca or "").lower())) & _PALAVRAS_DE_ESPACO)
 
 
+# palavras (em inglês, como a busca, e em português, como o "mostrar" do agente) de assunto de museu ou arquivo
+_PALAVRAS_DE_ACERVO = {
+    "painting", "paintings", "engraving", "etching", "lithograph", "woodcut", "manuscript", "ancient", "antique",
+    "vintage", "historic", "historical", "history", "century", "medieval", "renaissance", "baroque", "museum",
+    "artifact", "artifacts", "artefact", "archive", "archival", "fossil", "fossils", "specimen", "specimens",
+    "skeleton", "taxidermy", "sculpture", "statue", "roman", "greek", "egyptian", "pharaoh", "aztec", "maya", "inca",
+    "viking", "victorian", "colonial", "empire", "dynasty", "pottery", "relic", "daguerreotype", "illuminated",
+    "pintura", "gravura", "manuscrito", "antigo", "antiga", "antigos", "antigas", "historico", "historica", "seculo",
+    "medieval", "museu", "artefato", "artefatos", "fossil", "fosseis", "esqueleto", "especime", "escultura", "estatua",
+    "romano", "romana", "grego", "grega", "egipcio", "egipcia", "farao", "imperio", "dinastia", "ceramica", "reliquia",
+    "vitoriano", "colonial", "epoca", "extinct", "extinto", "extinta",
+}
+
+_PALAVRAS_DE_ACERVO_ANIMAL = {"fossil", "fossils", "skeleton", "specimen", "specimens", "taxidermy", "extinct",
+                              "museum", "fosseis", "esqueleto", "especime", "extinto", "extinta", "museu", "taxidermia"}
+
+
+def _e_de_acervo(cena) -> bool:
+    """A cena pede material de museu ou arquivo: o agente mandou buscar na Wikimedia (lugar, artefato ou espécie
+    pouco conhecida), a busca ou a descrição falam de história, arte ou acervo, ou citam um ano antes de 1950.
+
+    Só nessas cenas os bancos de acervo (bancos.ACERVO) entram; nas outras eles só tomariam vagas com quadros."""
+    texto = " ".join(str(cena.get(c) or "") for c in ("busca", "busca_alternativa", "mostrar", "sujeito"))
+    texto = unicodedata.normalize("NFKD", texto.lower()).encode("ascii", "ignore").decode()
+    palavras = set(re.findall(r"[a-z]+", texto))
+    if cena.get("animal"):
+        # bicho vivo é foto de campo (iNaturalist, Wikimedia), não quadro: o Harvard traria pintura de lince. Museu só
+        # quando a cena fala do que só existe em acervo, como fóssil, esqueleto ou espécie extinta
+        return bool(palavras & _PALAVRAS_DE_ACERVO_ANIMAL)
+    if cena.get("fonte_sugerida") == "wikimedia" or palavras & _PALAVRAS_DE_ACERVO:
+        return True
+    return any(1000 <= int(a) < 1950 for a in re.findall(r"\b(1\d{3})s?\b", texto))
+
+
 class _Todos(set):
     """Exigência em que a foto precisa citar todas as palavras, não uma delas (nome próprio composto)."""
 
@@ -696,7 +730,8 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
             normal = buscador.quantidade
             buscador.quantidade = max(normal, 30)
             # todos os nomes do MESMO assunto, do mais exato ao mais amplo: nunca outra coisa para tapar o buraco
-            termos = [cena.get("busca") or "", cena.get("busca_alternativa") or "", cena.get("animal") or "",
+            termos = [cena.get("exato") or "", cena.get("busca") or "", cena.get("busca_alternativa") or "",
+                      cena.get("animal") or "",
                       cena.get("sujeito") or "", busca_com_contexto(bloco, curta), bloco.get("ancora", "")]
             if not animal:
                 # coisa, lugar ou ideia: o sujeito em uma palavra e o contexto do bloco ainda são o mesmo assunto;
@@ -709,7 +744,9 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
                         continue
                     vistos.add(termo.strip().lower())
                     if termo.strip():
-                        opcoes = [x for x in buscador._das_fontes(tipo, termo.strip()) or buscador._das_fontes("foto", termo.strip())
+                        acervo = _e_de_acervo(cena)
+                        opcoes = [x for x in buscador._das_fontes(tipo, termo.strip(), acervo=acervo)
+                                  or buscador._das_fontes("foto", termo.strip(), acervo=acervo)
                                   if _chave(x) not in usados and cita(x)]
                         if opcoes:
                             origem = f"busca ampla '{termo.strip()}'"
@@ -827,7 +864,12 @@ class Buscador:
             preferida = "inaturalist" if animal_da_cena(bloco, cena) else "wikimedia"
         curta = " ".join((cena.get("sujeito") or cena["busca"]).split()[:2])
         assunto = animal or (_radicais(cena.get("sujeito") or cena["busca"]) - _SO_ESTILO)
-        tentativas = [busca_com_contexto(bloco, cena["busca"]), cena["busca"],
+        acervo = _e_de_acervo(cena)
+        # o que a foto obrigatoriamente mostra vem primeiro como BUSCA, não só como filtro: a cena 11 do
+        # aparte2-2min-v2 exigia "Instituto Butantan", buscava "antivenom vials corridor" e descartava tudo
+        exato = (cena.get("exato") or "").strip()
+        tentativas = [exato if exato and exato.lower() not in cena["busca"].lower() else "",
+                      busca_com_contexto(bloco, cena["busca"]), cena["busca"],
                       busca_com_contexto(bloco, cena.get("busca_alternativa") or ""),
                       busca_com_contexto(bloco, curta)]
         vistas = set()
@@ -837,11 +879,11 @@ class Buscador:
             if not busca or busca.lower() in vistas:
                 continue
             vistas.add(busca.lower())
-            novos = self._das_fontes(tipo, busca, preferida)
+            novos = self._das_fontes(tipo, busca, preferida, acervo)
             if tipo == "video" and not [n for n in novos if _cita_o_assunto(assunto, n)]:
                 # nenhum vídeo do assunto: coisa com nome próprio (o Novo Confinamento Seguro, o "pé de elefante")
                 # só existe em foto, e quase sempre na Wikimedia, que a busca de vídeo não consulta
-                novos = novos + self._das_fontes("foto", busca, "wikimedia")
+                novos = novos + self._das_fontes("foto", busca, "wikimedia", acervo)
             # soma em vez de trocar: os achados da busca mais exata ficam na frente e não se perdem
             ja = {_chave(a) for a in achados}
             achados += [n for n in novos if _chave(n) not in ja]
@@ -853,14 +895,20 @@ class Buscador:
         achados.sort(key=lambda a: not _cita_o_assunto(assunto, a))
         return achados[:self.quantidade]
 
-    def _das_fontes(self, tipo, busca, preferida=None):
+    def _das_fontes(self, tipo, busca, preferida=None, acervo=False):
         """Busca em todos os bancos do perfil AO MESMO TEMPO e intercala os resultados (o 1º de cada banco, depois o
         2º de cada...). Antes a lista era cortada na ordem dos bancos, e com vários bancos só os primeiros entravam.
 
         Bancos especializados só onde fazem sentido: o iNaturalist (o melhor para espécies) vem primeiro em cena de
-        animal, e a NASA só entra em cena de espaço; senão "cobra" traria o helicóptero AH-1 Cobra."""
+        animal, a NASA só entra em cena de espaço (senão "cobra" traria o helicóptero AH-1 Cobra) e os bancos de
+        acervo (Harvard, Europeana, Smithsonian, NYPL, Te Papa) só em cena de acervo. No lince2 o Harvard trouxe
+        4.303 candidatos, quase todos quadros, e só 1 entrou no vídeo: nas cenas comuns ele só tomava vaga."""
+        from . import bancos
+
         padrao = ["pexels", "pixabay"] if tipo == "video" else ["wikimedia", "pexels", "pixabay"]
         fontes = list(self.cfg.get("fontes_video" if tipo == "video" else "fontes_foto") or padrao)
+        if not acervo:
+            fontes = [f for f in fontes if f not in bancos.ACERVO]
         if tipo == "foto":
             if _e_de_espaco(busca) and "nasa" not in fontes:
                 fontes.append("nasa")

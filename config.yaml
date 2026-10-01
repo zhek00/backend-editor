@@ -128,3 +128,8 @@ render:
   zoom_maximo: 1.12
   crf: 18                    # menor dá mais qualidade e arquivo maior
   processos: 0               # 0 usa metade dos núcleos do Mac
+
+jev:
+  julgar_com: jev             # jev: o juiz da TypeSafe pelo OpenRouter (pago, uns US$ 0,00005 por cena).
+                              # principal: o modelo principal julga as mesmas perguntas (hoje gratuito). Para usar
+                              # só num processo, sem mexer no servidor no ar: FABRICA_JULGAR_COM=principal
