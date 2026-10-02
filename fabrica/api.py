@@ -1470,9 +1470,29 @@ def definir_provedor_imagem(nome: str, payload: ImagensAjustesPayload):
     return {"sucesso": True, "imagens": p.perfil.get("imagens") or {}}
 
 
+_TRAVAS_DOS_PROJETOS: Dict[str, threading.Lock] = {}
+_TRAVA_DAS_TRAVAS = threading.Lock()
+
+
+def trava_do_projeto(nome: str) -> threading.Lock:
+    """Uma alteração de cada vez no cenas.json de um projeto.
+
+    Cada alteração lê o arquivo inteiro, trabalha e grava o arquivo inteiro de volta. Com duas trocas de cena ao
+    mesmo tempo (cenas 123 e 124 do ouro-da-serra-gaucha), a segunda tinha lido o arquivo com a 123 ainda vazia,
+    no meio da troca dela, e gravou essa cópia por cima: a 123 ficava sem imagem. Agora a segunda espera a
+    primeira terminar e só então lê o arquivo."""
+    with _TRAVA_DAS_TRAVAS:
+        return _TRAVAS_DOS_PROJETOS.setdefault(nome, threading.Lock())
+
+
 @app.post("/api/projetos/{nome}/cenas/{n}/refazer")
 def refazer_cena(nome: str, n: int, payload: RefazerCenaPayload):
     """Executa imagens.refazer() para a cena n com novos termos de busca ou prompt."""
+    with trava_do_projeto(nome):
+        return _refazer_cena(nome, n, payload)
+
+
+def _refazer_cena(nome: str, n: int, payload: RefazerCenaPayload):
     pasta = PROJETOS / nome
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
@@ -1526,7 +1546,11 @@ async def upload_cena_midia(nome: str, n: int, file: UploadFile = File(...)):
 
     p = Projeto(nome)
     conteudo = await file.read()
-    cena_atualizada = definir_midia_manual(p, n, conteudo, file.filename or "upload.png")
+    def com_trava():
+        with trava_do_projeto(nome):
+            return definir_midia_manual(p, n, conteudo, file.filename or "upload.png")
+
+    cena_atualizada = await asyncio.to_thread(com_trava)
     cena_info = enriquecer_cena(p, cena_atualizada)
 
     return {
@@ -1573,6 +1597,11 @@ def listar_antigas(name: str = Query(...), n: int = Query(...)):
 @app.post("/api/project/scene/restore-antiga")
 def restaurar_antiga(payload: RestoreAntigaPayload):
     """Restaura um arquivo da pasta antigas/ como a mídia ativa da cena n."""
+    with trava_do_projeto(payload.name):
+        return _restaurar_antiga(payload)
+
+
+def _restaurar_antiga(payload: RestoreAntigaPayload):
     pasta = PROJETOS / payload.name
     if not pasta.exists():
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
@@ -1665,6 +1694,11 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
 @app.post("/api/projetos/{nome}/cenas/salvar")
 def salvar_cenas(nome: str, payload: SalvarCenasPayload):
     """Salva diretamente alterações no array de cenas em cenas.json."""
+    with trava_do_projeto(nome):
+        return _salvar_cenas(nome, payload)
+
+
+def _salvar_cenas(nome: str, payload: SalvarCenasPayload):
     pasta = PROJETOS / nome
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")

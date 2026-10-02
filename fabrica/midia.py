@@ -206,7 +206,7 @@ def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usado
     # nenhum passou no juiz: o melhor só fica se for do assunto da cena (as tags citam o assunto). Nota baixa de
     # outra coisa nunca entra "porque era o melhor que havia": a cena vai para o tapa-buraco, que busca o assunto
     assunto = (exigido_da_cena({}, cena, nomes_do_roteiro(projeto))
-               or _radicais(cena.get("sujeito") or cena.get("busca") or ""))
+               or _radicais(sujeito_da_busca(cena)))
     # e com nota de "na dúvida", não de outra coisa: uma manada de elefantes tem "elephant" nas tags, mas nota 2
     # para "pé de elefante" (a massa derretida no reator) quer dizer que o juiz viu outra coisa
     do_assunto = [t for t in testados if t[0] >= NOTA_OUTRA_COISA and _cita_o_assunto(assunto, candidatos_da_cena[t[1]])]
@@ -521,6 +521,28 @@ _PALAVRAS_PT = {"de", "da", "do", "das", "dos", "na", "no", "nas", "nos", "com",
 _TRADUCOES = {}
 
 
+def _parece_portugues(texto: str) -> bool:
+    """Acento, palavra de ligação ou terminação do português ("fogo de chão", "lince euroasiático")."""
+    texto = (texto or "").lower()
+    palavras = re.findall(r"[a-zà-ÿ]+", texto)
+    return bool(re.search(r"[ãõçáéíóúâêôà]", texto) or set(palavras) & _PALAVRAS_PT
+                or any(p.endswith(("ção", "ções", "ões")) for p in palavras))
+
+
+def sujeito_da_busca(cena) -> str:
+    """O assunto da cena em inglês, a língua das tags e descrições dos bancos.
+
+    O agente escreve o sujeito em português em boa parte das cenas (62 de 217 no ouro-da-serra-gaucha), e ele era
+    usado para ordenar, filtrar e buscar: "fogo de chão" marcou como fora do assunto as 6 fotos de fogueira (as tags
+    dizem "fire", "hearth") e, buscado na Wikimedia, "fogo" trouxe a ilha vulcânica do Fogo, em Cabo Verde; "campos
+    com geada" pôs Campo Mourão na frente das fotos de geada. Sujeito em português cede lugar à busca, que o agente
+    sempre escreve em inglês."""
+    sujeito = (cena.get("sujeito") or "").strip()
+    if sujeito and not _parece_portugues(sujeito):
+        return sujeito
+    return (cena.get("busca") or "").strip() or sujeito
+
+
 def busca_em_ingles(projeto, termo: str, log=print) -> str:
     """O termo que a pessoa digitou, em inglês, a língua em que os bancos indexam as fotos.
 
@@ -588,7 +610,7 @@ def _so_do_assunto(cena, candidatos, log=print):
     "fire ants"), e um modelo barato de visão às vezes o aceita. As tags do Pixabay e o texto do Pexels e do
     Wikimedia já dizem o que a foto é, então quem não cita nenhuma palavra do assunto sai antes da escolha.
     """
-    assunto = _radicais(cena.get("sujeito") or cena.get("busca") or "")
+    assunto = _radicais(sujeito_da_busca(cena))
     if not assunto or not candidatos:
         return candidatos
     # sem descrição não há como julgar, fica para o modelo
@@ -598,7 +620,7 @@ def _so_do_assunto(cena, candidatos, log=print):
         # porque a foto pode remeter ao assunto mesmo sem as palavras certas na descrição
         return candidatos
     if len(ficam) < len(candidatos):
-        log(f"  cena {cena['n']}: {len(candidatos) - len(ficam)} candidato(s) fora do assunto ({cena.get('sujeito') or cena.get('busca')})")
+        log(f"  cena {cena['n']}: {len(candidatos) - len(ficam)} candidato(s) fora do assunto ({sujeito_da_busca(cena)})")
     return ficam
 
 
@@ -753,7 +775,7 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
     por_candidato = por_busca = por_vizinha = 0
     for cena in vazias:
         bloco = blocos.get(cena.get("bloco")) or {}
-        assunto = _radicais(cena.get("sujeito") or cena.get("busca") or "")
+        assunto = _radicais(sujeito_da_busca(cena))
         do_bloco = _assunto_do_bloco(bloco) if bloco else set()
         animal = animal_da_cena(bloco, cena)
         exigido = exigido_da_cena(bloco, cena, buscador.nomes)
@@ -764,7 +786,7 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
         origem = "candidato não escolhido, do assunto"
         if not opcoes:
             tipo = "video" if cena["tipo"] == "video_real" else "foto"
-            curta = " ".join((cena.get("sujeito") or cena.get("busca") or "").split()[:2])
+            curta = " ".join(sujeito_da_busca(cena).split()[:2])
             # antes de repetir a vizinha, a busca da própria cena com uma página bem maior: bicho que aparece em
             # muitas cenas (o petauro em 25 cenas) esgota os 8 candidatos de cada busca, mas o banco tem dezenas
             normal = buscador.quantidade
@@ -772,11 +794,11 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
             # todos os nomes do MESMO assunto, do mais exato ao mais amplo: nunca outra coisa para tapar o buraco
             termos = [cena.get("exato") or "", cena.get("busca") or "", cena.get("busca_alternativa") or "",
                       cena.get("animal") or "",
-                      cena.get("sujeito") or "", busca_com_contexto(bloco, curta), bloco.get("ancora", "")]
+                      sujeito_da_busca(cena), busca_com_contexto(bloco, curta), bloco.get("ancora", "")]
             if not animal:
                 # coisa, lugar ou ideia: o sujeito em uma palavra e o contexto do bloco ainda são o mesmo assunto;
                 # para bicho não, porque "snake" traria outra cobra
-                termos += [" ".join((cena.get("sujeito") or cena.get("busca") or "").split()[:1]), bloco.get("contexto", "")]
+                termos += [" ".join(sujeito_da_busca(cena).split()[:1]), bloco.get("contexto", "")]
             vistos = set()
             try:
                 for termo in termos:
@@ -902,8 +924,8 @@ class Buscador:
             # espécie: o iNaturalist, que indexa pelo nome comum e científico; lugar ou objeto com nome próprio: a
             # Wikimedia. Pexels e Pixabay quase não têm nenhum dos dois
             preferida = "inaturalist" if animal_da_cena(bloco, cena) else "wikimedia"
-        curta = " ".join((cena.get("sujeito") or cena["busca"]).split()[:2])
-        assunto = animal or (_radicais(cena.get("sujeito") or cena["busca"]) - _SO_ESTILO)
+        curta = " ".join(sujeito_da_busca(cena).split()[:2])
+        assunto = animal or (_radicais(sujeito_da_busca(cena)) - _SO_ESTILO)
         acervo = _e_de_acervo(cena)
         # o que a foto obrigatoriamente mostra vem primeiro como BUSCA, não só como filtro: a cena 11 do
         # aparte2-2min-v2 exigia "Instituto Butantan", buscava "antivenom vials corridor" e descartava tudo
