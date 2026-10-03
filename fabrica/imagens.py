@@ -604,6 +604,10 @@ def _a_busca_da_pessoa_manda(cena, digitada, em_ingles):
     cena["sujeito"] = em_ingles
     cena["mostrar"] = digitada
     cena["exato"] = ""
+    # o bicho que o agente escolheu também sai: sem o exato, o filtro de espécie usa o campo animal, e a cena que o
+    # agente marcou como "impala" só aceitava foto de impala mesmo com a pessoa buscando "leão" (três impalas
+    # seguidas na cena 190 de um amigo). Quem confere se a foto mostra o que a pessoa pediu é o Jev
+    cena["animal"] = ""
     cena["busca_manual"] = digitada
 
 
