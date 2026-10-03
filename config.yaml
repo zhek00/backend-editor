@@ -81,7 +81,6 @@ openrouter:
   # (chave aimlapi_api no .env). O Space Bunny sai do OpenRouter em 5/10/2026; o Qwen gratuito tem 1.000
   # chamadas por dia na conta (um vídeo usa de 1.200 a 2.300)
   principais:
-    - aimlapi:stealth/space-bunny-alpha
     - stealth/space-bunny-alpha
     - qwen/qwen3.8-27b:free
   raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high

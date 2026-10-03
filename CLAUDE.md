@@ -198,14 +198,14 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 ## Quem responde cada etapa
 
 **Uma cadeia de modelos principais para tudo que não é o juiz:** `openrouter.principais` no `config.yaml`, em ordem:
-o Space Bunny pela AIMLAPI (`aimlapi:stealth/space-bunny-alpha`, chave `aimlapi_api` no `.env`), o Space Bunny do
-OpenRouter (sai do ar em 5/10/2026) e o `qwen/qwen3.8-27b:free`. Quando um não atende (sem saldo, limite do dia dos
+o Space Bunny do OpenRouter (sai do ar em 5/10/2026) e o `qwen/qwen3.8-27b:free`. A cadeia também aceita rota pela
+AIMLAPI (`aimlapi:` na frente do modelo, chave `aimlapi_api` no `.env`), tirada em 2026-10-03 a pedido do usuário. Quando um não atende (sem saldo, limite do dia dos
 gratuitos, retirado do ar, servidor cheio), `openrouter_local.perguntar` passa na hora para o seguinte e deixa o que
 caiu de lado um tempo (`_FORA_DO_AR`): nunca esperar. Comparação de 2026-10-03 nos testes da fábrica (descrever foto,
 escolher entre imagens, compor a trilha, dividir o roteiro): o Qwen gratuito passou em tudo, com português mais limpo
 que o Space Bunny; Gemma gratuita vivia lotada (429), Inkling só serve em ferramenta de agente, Dots falha com imagem.
 O limite dos gratuitos na conta é de 1.000 chamadas por dia, e um vídeo usa de 1.200 a 2.300: por isso a cadeia. O
-Space Bunny da AIMLAPI vem do mesmo espaço stealth do OpenRouter, e a AIMLAPI exige saldo até para ele.
+Space Bunny da AIMLAPI vinha do mesmo espaço stealth do OpenRouter, e a AIMLAPI exige saldo até para ele.
 **MiMo, Groq e Gemini não são mais usados** em nenhuma etapa. O Jev continua sendo o juiz.
 
 **Voz grátis: Fish Audio** (`fabrica/fish.py`, `voz.provedor: fish`), no lugar do Edge-TTS, pelo OpenRouter
