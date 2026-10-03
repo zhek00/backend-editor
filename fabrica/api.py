@@ -1673,6 +1673,12 @@ def animacao_da_cena(nome: str, n: int, payload: AnimacaoPayload):
             raise HTTPException(status_code=422, detail=f"A animação não passou na conferência e a cena ficou com a "
                                                         f"foto: {resumo['falharam'][n]}")
     cena = next(c for c in p.ler_json("cenas.json")["cenas"] if c["n"] == n)
+    try:
+        # a montagem que o editor mostra (imagem da cena + animação por cima) já sai pronta para esta cena
+        animacoes.composicao_da_cena(p, cena, criar=True)
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError) as erro:
+        print(f"[animação] montagem da cena {n} de {nome}: {str(erro)[:160]}")
+    preparar_previas_video(nome)
     return {"sucesso": True, "cena": enriquecer_cena(p, cena), "resumo": resumo}
 
 
@@ -2721,21 +2727,31 @@ EXTENSOES_VIDEO = (".mp4", ".mov", ".webm", ".m4v")
 
 
 def _animacao_valida(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
-    """A animação da cena, se as animações estão ligadas e ela está em dia com a cena (a mesma regra do render)."""
+    """A cena com a animação por cima (a imagem atual da cena e o pedaço da camada de animação), se já foi montada.
+
+    A animação é uma camada sobre o vídeo (animacoes.py), não um clipe da cena: o editor, que mostra cena por cena,
+    recebe a montagem pronta. Ela é feita em segundo plano (preparar_previas_video) ou quando o player pede."""
     if not animacoes.config(p).get("ativo", True):
         return None
     try:
-        return animacoes.valida(p, cena)
-    except (OSError, KeyError, TypeError, ValueError):
+        return animacoes.composicao_da_cena(p, cena)
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError):
         return None
 ALTURA_PREVIA_VIDEO = 480
 _PREPARANDO_PREVIAS = set()  # projetos com as prévias de vídeo sendo feitas em segundo plano
 
 
-def _video_da_cena(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
-    animada = _animacao_valida(p, cena)
-    if animada is not None:
-        return animada  # a cena animada mostra a animação no player, também em prévia leve
+def _video_da_cena(p: Projeto, cena: Dict[str, Any], criar: bool = False) -> Optional[Path]:
+    if animacoes.config(p).get("ativo", True):
+        # a cena embaixo de uma animação mostra a montagem (imagem da cena + animação) no player, também em prévia
+        try:
+            item = animacoes.da_cena(p, cena)
+            if item is not None:
+                montada = animacoes.composicao_da_cena(p, cena, criar=criar)
+                if montada is not None or not criar:
+                    return montada or item["arquivo"]  # sem criar: o MOV só marca a versão do endereço
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as erro:
+            print(f"[animação] cena {cena.get('n')} de {p.nome}: {str(erro)[:160]}")
     m = cena.get("midia") or {}
     arq = p.pasta / m["arquivo"] if m.get("arquivo") else None
     return arq if arq and arq.exists() and arq.suffix.lower() in EXTENSOES_VIDEO else None
@@ -2771,7 +2787,7 @@ def _gerar_previa_video(origem: Path, destino: Path, duracao_cena: float) -> Non
 
 def _previa_video_pronta(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
     """Devolve a prévia leve do vídeo da cena, fazendo agora se ainda não existir. None se a cena não é vídeo."""
-    origem = _video_da_cena(p, cena)
+    origem = _video_da_cena(p, cena, criar=True)
     if origem is None:
         return None
     destino = _destino_previa_video(p, cena, origem)
@@ -2811,7 +2827,7 @@ def servir_previa_video(nome: str, n: int):
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
     p = Projeto(nome)
     cena = next((c for c in p.ler_json("cenas.json").get("cenas", []) if c.get("n") == n), None)
-    origem = _video_da_cena(p, cena) if cena else None
+    origem = _video_da_cena(p, cena, criar=True) if cena else None
     if origem is None:
         raise HTTPException(status_code=404, detail="Essa cena não tem vídeo.")
     try:

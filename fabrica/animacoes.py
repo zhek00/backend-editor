@@ -1,19 +1,22 @@
-"""Animações das cenas que não existem em banco de imagens, feitas com o HyperFrames.
+"""Animações (motion) por cima do vídeo, feitas com o HyperFrames.
 
 O agente de roteiro marca cada cena com um tipo visual. Diagrama, texto na tela, linha do tempo e mapa não se
-fotografam: antes viravam a foto de banco mais próxima ("diagrama de rede clandestina" virou uma iguana, "diagrama
-da fazenda em torno do fogo de chão" virou a ilha vulcânica do Fogo). Agora o modelo principal (gratuito) escreve
-a animação dessas cenas em HTML, por cima do material real da cena escurecido, com cada elemento entrando no tempo
-exato da palavra falada, e o HyperFrames (github.com/heygen-com/hyperframes, roda no PC com Node 22+) transforma
-em MP4.
+fotografam: antes viravam a foto de banco mais próxima ("diagrama de rede clandestina" virou uma iguana). O modelo
+principal (gratuito) escolhe um dos modelos prontos (animacoes_modelos.py) e preenche os textos e o segundo de cada
+um, e o HyperFrames (github.com/heygen-com/hyperframes, roda no PC com Node 22+) desenha.
+
+A animação é uma CAMADA POR CIMA DAS CENAS, não uma cena. Cada animação fica em animacoes/motion.json, presa às
+palavras do roteiro (a posição de cada palavra no texto, o campo c do alinhamento.json), e é desenhada num MOV
+transparente com o véu escuro dentro. O render monta as cenas como sempre e põe a camada por cima, no tempo da fala.
+Por isso:
+- trocar a imagem de uma cena, dividir, juntar ou renumerar cenas não mexe na animação. Antes cada animação era um
+  clipe da cena com a foto dela no fundo, e qualquer troca deixava a animação "desatualizada" e voltava a foto;
+- trocar a voz só reposiciona a animação na fala nova e desenha de novo, sem perguntar de novo ao modelo;
+- cenas de animação seguidas, do mesmo bloco, viram UMA animação que segue por cima enquanto as imagens trocam
+  embaixo (até animacoes.duracao_maxima segundos).
 
 Nada aqui pode quebrar o vídeo: sem Node, com a etapa desligada ou com a animação reprovada na conferência do
-próprio HyperFrames, a cena continua com a foto de sempre. O render só usa a animação que está em dia com a cena
-(mesma fala, mesmo tempo, mesmo fundo); se algo mudou, volta a foto até a animação ser refeita.
-
-A fábrica monta a parte fixa da página (tela, fundo, fontes, linha do tempo) e o modelo escreve só o conteúdo e as
-entradas no tempo das palavras: escrevendo a página inteira ele errava muito mais. O HyperFrames confere cada
-animação (texto sobreposto, saindo da tela, regras de animação); reprovada, os erros voltam para o modelo corrigir.
+próprio HyperFrames, as cenas seguem com a foto e o texto na tela de sempre.
 """
 import hashlib
 import json
@@ -22,6 +25,7 @@ import re
 import shutil
 import subprocess
 import threading
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -32,8 +36,11 @@ from .util import duracao_audio, rodar
 
 TIPOS_PADRAO = ("diagrama", "texto_tela", "linha_do_tempo", "mapa")
 VERSAO_PADRAO = "0.8.113"  # versão fixa: uma atualização do HyperFrames não muda o vídeo de ninguém sem aviso
+VERSAO_CAMADA = 1  # suba quando mudar o jeito de montar a camada (véu, entrada, saída): tudo é desenhado de novo
 RECURSOS = Path(__file__).parent / "recursos"
 GSAP = "https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"
+ARQUIVO = "animacoes/motion.json"
+DURACAO_MAXIMA = 10.0  # cenas de animação seguidas viram uma animação só até este tamanho
 
 ESTILO_PADRAO = {
     "destaque": "#E8A33D",   # números, palavras-chave, linhas
@@ -41,11 +48,12 @@ ESTILO_PADRAO = {
     "secundaria": "#B9BEC6",  # rótulos e texto de apoio
     "painel": "rgba(14, 11, 9, 0.78)",  # fundo de cartões
     "alerta": "#C2313F",     # o que a narração nega, risca ou contrapõe
-    "escurecer": 0.62,       # quanto o fundo real escurece por trás da animação (0 a 1)
+    "escurecer": 0.62,       # quanto a camada escurece as cenas por baixo (0 a 1)
 }
 
 _TRAVA_NODE = threading.Lock()
 _NODE = {}
+_TRAVA_ARQUIVO = threading.Lock()
 
 
 def config(projeto) -> dict:
@@ -79,25 +87,18 @@ def node_pronto() -> str:
         return pronto
 
 
-def elegivel(projeto, cena, pedida=False) -> bool:
-    """A cena é de um tipo que se anima e já tem o material real ou a imagem que vai ao fundo.
-
-    Cena em que a pessoa escolheu ficar com a foto (animacao.desligada) só volta a ser animada se ela pedir."""
-    if (cena.get("animacao") or {}).get("desligada") and not pedida:
-        return False
-    return cena.get("visual") in tipos(projeto) and _fundo(projeto, cena) is not None
+def _estilo(projeto) -> dict:
+    return {**ESTILO_PADRAO, **(config(projeto).get("estilo") or {})}
 
 
-def _fundo(projeto, cena):
-    m = cena.get("midia") or {}
-    if m.get("arquivo"):
-        arquivo = projeto.pasta / m["arquivo"]
-        return arquivo if arquivo.exists() else None
-    imagem = projeto.imagem(cena["n"])
-    return imagem if imagem.exists() else None
+def _tamanho(projeto):
+    cfg = projeto.config.get("render") or {}
+    return cfg.get("largura", 1920), cfg.get("altura", 1080)
 
 
-_PALAVRAS = {}  # (arquivo, data) -> palavras da narração: o editor confere a animação de centenas de cenas por vez
+# ------------------------------------------------------------------------------------- as palavras da fala
+
+_PALAVRAS = {}  # (arquivo, data) -> palavras da narração: o editor consulta centenas de cenas por vez
 
 
 def _palavras_do_projeto(projeto) -> list:
@@ -107,92 +108,189 @@ def _palavras_do_projeto(projeto) -> list:
     chave = (str(arquivo), arquivo.stat().st_mtime_ns)
     if chave not in _PALAVRAS:
         _PALAVRAS.clear()  # guarda só o projeto da vez
-        _PALAVRAS[chave] = json.loads(arquivo.read_text(encoding="utf-8")).get("palavras", [])
+        _PALAVRAS[chave] = [p for p in json.loads(arquivo.read_text(encoding="utf-8")).get("palavras", [])
+                            if p.get("ini") is not None]
     return _PALAVRAS[chave]
 
 
-def palavras_da_cena(projeto, cena) -> list:
-    """[(palavra, segundo dentro da cena)] com o tempo que a narração mediu."""
+def _normal(texto) -> str:
+    texto = unicodedata.normalize("NFKD", str(texto or "").lower()).encode("ascii", "ignore").decode()
+    return " ".join(re.findall(r"[a-z0-9]+", texto))
+
+
+def _palavras_entre(projeto, ini, fim) -> list:
+    return [p for p in _palavras_do_projeto(projeto) if ini - 0.05 <= p["ini"] < fim]
+
+
+def _ancorar(projeto, item) -> dict | None:
+    """Onde a animação está AGORA na fala: {ini, fim, palavras}. None se a fala dela não existe mais.
+
+    A âncora é a posição das palavras no roteiro (campo c), que não muda quando a voz muda; o tempo vem da
+    narração atual. Roteiro editado (posições mudaram) procura as mesmas palavras perto de onde estavam."""
+    palavras = _palavras_do_projeto(projeto)
+    if not palavras:
+        return None
+    alvo = item.get("fala_normal") or _normal(item.get("texto"))
+    sel = [p for p in palavras if p.get("c") is not None and item["c_ini"] <= p["c"] <= item["c_fim"]]
+    if not sel or _normal(" ".join(p["texto"] for p in sel)) != alvo:
+        # o roteiro mudou de lugar: as mesmas palavras, na sequência, mais perto da posição antiga
+        quantas = len(alvo.split())
+        normais = [_normal(p["texto"]) for p in palavras]
+        achados = [i for i in range(len(palavras) - quantas + 1)
+                   if " ".join(normais[i:i + quantas]) == alvo]
+        if not achados:
+            return None
+        i = min(achados, key=lambda k: abs((palavras[k].get("c") or 0) - item["c_ini"]))
+        sel = palavras[i:i + quantas]
+    depois = next((p for p in palavras if p["ini"] > sel[-1]["ini"] and p is not sel[-1]
+                   and (p.get("c") or 0) > (sel[-1].get("c") or 0)), None)
+    ini = max(0.0, sel[0]["ini"] - item.get("folga_ini", 0.0))
+    if depois is not None:
+        fim = depois["ini"] - item.get("folga_fim", 0.0)
+    else:
+        fim = sel[-1]["ini"] + item.get("cauda", 1.0)
+    fim = max(fim, ini + 0.5)
+    return {"ini": round(ini, 3), "fim": round(fim, 3), "palavras": sel,
+            "c_ini": sel[0].get("c"), "c_fim": sel[-1].get("c")}
+
+
+def _tempos(ancora) -> list:
+    return [round(max(p["ini"] - ancora["ini"], 0.0), 2) for p in ancora["palavras"]]
+
+
+# ------------------------------------------------------------------------------------------- o arquivo
+
+def ler(projeto) -> list:
+    """As animações do projeto (animacoes/motion.json)."""
+    arquivo = projeto.pasta / ARQUIVO
+    if not arquivo.exists():
+        return []
+    try:
+        return json.loads(arquivo.read_text(encoding="utf-8")).get("itens", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _salvar(projeto, itens) -> None:
+    arquivo = projeto.pasta / ARQUIVO
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    temporario = arquivo.with_suffix(".tmp")
+    temporario.write_text(json.dumps({"itens": sorted(itens, key=lambda i: i["c_ini"])}, ensure_ascii=False, indent=1),
+                          encoding="utf-8")
+    temporario.replace(arquivo)
+
+
+def _atualizar_item(projeto, novo, trava=None) -> None:
+    """Grava um item lendo o arquivo na hora: outra animação pode ter terminado ao mesmo tempo."""
+    with _TRAVA_ARQUIVO:
+        itens = [i for i in ler(projeto) if i["id"] != novo["id"]] + [novo]
+        _salvar(projeto, itens)
+
+
+def _assinatura_render(projeto, item, ancora) -> str:
+    """Muda quando muda o que vai na tela: o modelo e os dados, o tempo das palavras, o tamanho, o estilo ou o design.
+    As cenas por baixo não entram: trocar a imagem de uma cena não mexe na animação."""
+    base = json.dumps([item.get("modelo"), item.get("dados"), round(ancora["fim"] - ancora["ini"], 2), _tempos(ancora),
+                       _tamanho(projeto), config(projeto).get("versao", VERSAO_PADRAO), _estilo(projeto),
+                       VERSAO_DESIGN, VERSAO_CAMADA], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(base.encode()).hexdigest()[:12]
+
+
+def validas(projeto) -> list:
+    """As animações em dia, com o tempo de agora: [{**item, ini, fim, arquivo: Path}]. É o que o render põe por cima."""
+    if not config(projeto).get("ativo", True):
+        return []
     saida = []
-    for p in _palavras_do_projeto(projeto):
-        ini = p.get("ini")
-        if ini is not None and cena["ini"] - 0.05 <= ini < cena["fim"]:
-            saida.append((p["texto"], round(max(ini - cena["ini"], 0.0), 2)))
-    return saida
+    for item in ler(projeto):
+        if item.get("desligada") or not item.get("arquivo"):
+            continue
+        arquivo = projeto.pasta / item["arquivo"]
+        if not arquivo.exists():
+            continue
+        ancora = _ancorar(projeto, item)
+        if ancora is None or item.get("render") != _assinatura_render(projeto, item, ancora):
+            continue
+        saida.append({**item, "ini": ancora["ini"], "fim": ancora["fim"], "arquivo": arquivo})
+    return sorted(saida, key=lambda i: i["ini"])
 
 
-def _pedido_da_cena(cena) -> dict:
-    """O que o agente de roteiro pediu, antes de qualquer busca manual mudar a cena."""
-    original = cena.get("pedido_original") or {}
-    texto_tela = cena.get("texto_tela") or cena.get("overlay") or ""
-    if isinstance(texto_tela, dict):
-        texto_tela = " ".join(str(texto_tela.get(k) or "") for k in ("titulo", "texto")).strip()
-    return {"mostrar": original.get("mostrar") or cena.get("mostrar") or "", "texto_tela": texto_tela}
+def _cobre(item, cena) -> bool:
+    """A animação está por cima da maior parte da cena (o meio da cena cai dentro dela)."""
+    meio = (cena["ini"] + cena["fim"]) / 2
+    return item["ini"] <= meio < item["fim"]
 
 
-def _assinatura_pedido(projeto, cena) -> str:
-    """Muda quando muda o que a animação diz: fala, tempo das palavras, tipo ou pedido do agente."""
-    pedido = _pedido_da_cena(cena)
-    base = json.dumps([cena.get("texto"), round(cena["fim"] - cena["ini"], 2), cena.get("visual"), pedido,
-                       palavras_da_cena(projeto, cena)], ensure_ascii=False)
-    return hashlib.sha1(base.encode()).hexdigest()[:12]
+def sobreposta(item, cena, folga=0.3) -> bool:
+    """A animação passa por cima de parte da cena (mais que folga segundos)."""
+    return min(item["fim"], cena["fim"]) - max(item["ini"], cena["ini"]) > folga
 
 
-def _assinatura_render(projeto, cena, assinatura_pedido) -> str:
-    """Muda também quando muda o fundo (a mídia da cena), o tamanho do vídeo ou a versão do HyperFrames."""
-    fundo = _fundo(projeto, cena)
-    cfg = projeto.config.get("render") or {}
-    base = (f"{assinatura_pedido}|{fundo.name if fundo else ''}|{fundo.stat().st_mtime_ns if fundo else 0}|"
-            f"{cfg.get('largura', 1920)}x{cfg.get('altura', 1080)}|{config(projeto).get('versao', VERSAO_PADRAO)}|"
-            f"{json.dumps(_estilo(projeto), sort_keys=True)}|design {VERSAO_DESIGN}")
-    return hashlib.sha1(base.encode()).hexdigest()[:12]
+def da_cena(projeto, cena, itens=None):
+    """A animação em dia que está por cima desta cena, ou None."""
+    for item in itens if itens is not None else validas(projeto):
+        if _cobre(item, cena):
+            return item
+    return None
 
 
 def valida(projeto, cena):
-    """O MP4 da animação, se ela existe e está em dia com a cena; senão None (a cena usa a foto)."""
-    info = cena.get("animacao") or {}
-    if not info.get("arquivo") or cena.get("visual") not in tipos(projeto):
-        return None
-    arquivo = projeto.pasta / info["arquivo"]
-    if not arquivo.exists():
-        return None
-    assinatura_pedido = _assinatura_pedido(projeto, cena)
-    if info.get("pedido") != assinatura_pedido or info.get("render") != _assinatura_render(projeto, cena, assinatura_pedido):
-        return None
-    return arquivo
+    """O MOV da animação que está por cima da cena, se ela está em dia; senão None. (Nome antigo, mantido.)"""
+    item = da_cena(projeto, cena)
+    return item["arquivo"] if item else None
+
+
+def cenas_cobertas(projeto, cenas, itens=None) -> set:
+    """Os números das cenas que ficam embaixo de uma animação em dia (o texto na tela delas sai)."""
+    itens = validas(projeto) if itens is None else itens
+    return {c["n"] for c in cenas if any(sobreposta(i, c) for i in itens)}
+
+
+def _item_por_tempo(projeto, cena, itens=None):
+    """Qualquer animação (em dia ou não, ligada ou desligada) por cima da cena."""
+    for item in itens if itens is not None else ler(projeto):
+        ancora = _ancorar(projeto, item)
+        if ancora and _cobre({"ini": ancora["ini"], "fim": ancora["fim"]}, cena):
+            return item
+    return None
 
 
 def situacao(projeto, cena) -> str:
-    """Para o editor: "pronta", "desatualizada" (algo da cena mudou), "possivel" (dá para animar) ou ""."""
-    if valida(projeto, cena) is not None:
+    """Para o editor: "pronta", "desligada", "desatualizada", "possivel" (dá para animar) ou ""."""
+    if da_cena(projeto, cena) is not None:
         return "pronta"
+    item = _item_por_tempo(projeto, cena)
+    if item is not None:
+        return "desligada" if item.get("desligada") else "desatualizada"
     if (cena.get("animacao") or {}).get("desligada"):
         return "desligada" if cena.get("visual") in tipos(projeto) else ""
-    if (cena.get("animacao") or {}).get("arquivo") and cena.get("visual") in tipos(projeto):
-        return "desatualizada"
     return "possivel" if elegivel(projeto, cena) else ""
 
 
-def _estilo(projeto) -> dict:
-    return {**ESTILO_PADRAO, **(config(projeto).get("estilo") or {})}
+def elegivel(projeto, cena, pedida=False) -> bool:
+    """A cena é de um tipo que se anima e tem fala. Cena em que a pessoa escolheu ficar com a foto só volta a ser
+    animada se ela pedir. A imagem da cena não importa: a animação vai por cima de qualquer uma."""
+    if (cena.get("animacao") or {}).get("desligada") and not pedida:
+        return False
+    return cena.get("visual") in tipos(projeto) and bool((cena.get("texto") or "").strip())
 
 
 # ---------------------------------------------------------------------------------------------- o pedido
 
-INSTRUCOES = """Você é diretor de motion design de documentários para o YouTube. Escolhe a animação de UMA cena de um
-vídeo narrado e preenche os textos dela. O design já está pronto na fábrica, no estilo editorial e limpo da Apple e da
-Netflix: você só escolhe o modelo que melhor conta o que a narração diz e preenche os dados dele.
+INSTRUCOES = """Você é diretor de motion design de documentários para o YouTube. Escolhe a animação de UM trecho de
+um vídeo narrado e preenche os textos dela. A animação vai por cima das imagens do vídeo, que seguem passando por
+baixo, escurecidas. O design já está pronto na fábrica, no estilo editorial e limpo da Apple e da Netflix: você só
+escolhe o modelo que melhor conta o que a narração diz e preenche os dados dele.
 
 Modelos e o formato exato de "dados" de cada um:
 """ + CATALOGO + """
 Como escolher: número com o que ele mede -> numero; dois lados opostos -> contraste; um assunto que une várias coisas
 -> radial; enumeração -> lista; processo em etapas -> fluxo; datas ou épocas -> linha_do_tempo; lugar, distância ou
 rota -> mapa; afirmação de impacto sem nada disso -> frase. Use o pedido do diretor de arte como pista, mas quem manda
-é o que a narração desta cena diz.
+é o que a narração deste trecho diz.
 
 O TEMPO MANDA: todo "t" é o segundo em que aquela palavra é falada, tirado da lista de tempos do pedido. Cada elemento
-entra quando é falado, nunca antes. Elemento que não é falado na cena (um rótulo, um título) entra junto com a palavra
-mais próxima do sentido dele.
+entra quando é falado, nunca antes. Elemento que não é falado no trecho (um rótulo, um título) entra junto com a
+palavra mais próxima do sentido dele.
 
 Textos: português do Brasil, com acentos. Curtos (veja os limites de cada campo). Só o que a narração diz ou o fato
 direto dela; nunca invente número, data ou nome. Títulos e rótulos em poucas palavras.
@@ -206,18 +304,18 @@ ESQUEMA = {
 }
 
 
-def _pedido(projeto, cena, vizinhas, erros):
-    pedido = _pedido_da_cena(cena)
-    palavras = palavras_da_cena(projeto, cena)
+def _pedido(item, ancora, vizinhas, erros):
+    palavras = [(p["texto"], t) for p, t in zip(ancora["palavras"], _tempos(ancora))]
+    pedido = item.get("pedido") or {}
     linhas = [
-        f"Tipo pedido pelo agente de roteiro: {cena.get('visual')}",
-        f"Duração da cena: {cena['fim'] - cena['ini']:.2f} s",
-        f"Narração desta cena: \"{cena.get('texto', '')}\"",
-        "Tempo de cada palavra (segundos dentro da cena): " + ", ".join(f"{p} {t:.2f}" for p, t in palavras),
+        f"Tipo pedido pelo agente de roteiro: {item.get('visual')}",
+        f"Duração do trecho: {ancora['fim'] - ancora['ini']:.2f} s",
+        f"Narração deste trecho: \"{item.get('texto', '')}\"",
+        "Tempo de cada palavra (segundos dentro do trecho): " + ", ".join(f"{p} {t:.2f}" for p, t in palavras),
         f"Frases anteriores: \"{vizinhas[0]}\"" if vizinhas[0] else "",
         f"Frase seguinte: \"{vizinhas[1]}\"" if vizinhas[1] else "",
-        f"O que o diretor de arte pediu: {pedido['mostrar']}" if pedido["mostrar"] else "",
-        f"Texto sugerido para a tela: {pedido['texto_tela']}" if pedido["texto_tela"] else "",
+        f"O que o diretor de arte pediu: {pedido.get('mostrar')}" if pedido.get("mostrar") else "",
+        f"Texto sugerido para a tela: {pedido.get('texto_tela')}" if pedido.get("texto_tela") else "",
     ]
     if erros:
         linhas.append("\nA resposta anterior foi REPROVADA, por estes motivos. Corrija todos:\n- " + "\n- ".join(erros))
@@ -236,14 +334,11 @@ def _erros_para_o_modelo(erros_conferencia) -> list:
     return saida
 
 
-def _montar_html(partes, cena, fundo_tipo, largura, altura, estilo) -> str:
-    dur = round(cena["fim"] - cena["ini"], 3)
-    if fundo_tipo == "video":
-        fundo = (f'<video id="fundo" src="assets/fundo.mp4" data-start="0" data-duration="{dur}" '
-                 'data-track-index="0" muted playsinline></video>')
-    else:
-        fundo = '<img id="fundo" src="assets/fundo.jpg" alt="" />'
+def _montar_html(partes, dur, largura, altura, estilo) -> str:
+    """A página da camada: fundo transparente, o véu escuro que entra e sai, e o conteúdo do modelo."""
+    dur = round(dur, 3)
     cores = "".join(f"--{k}: {v};" for k, v in estilo.items() if k != "escurecer")
+    saida = max(dur - 0.35, 0.0)
     return f"""<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -255,20 +350,17 @@ def _montar_html(partes, cena, fundo_tipo, largura, altura, estilo) -> str:
       @font-face {{ font-family: "Texto"; src: url("assets/fontes/Inter.ttf"); font-weight: 100 900; }}
       :root {{ {cores} }}
       * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-      html, body {{ width: {largura}px; height: {altura}px; overflow: hidden; background: #0b0907; }}
+      html, body {{ width: {largura}px; height: {altura}px; overflow: hidden; background: transparent; }}
       #root {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
-      #camada-fundo {{ position: absolute; inset: -40px; }}
-      #fundo {{ display: block; width: 100%; height: 100%; object-fit: cover; }}
       #veu {{ position: absolute; inset: 0; background: rgba(8, 6, 4, {float(estilo.get("escurecer", 0.62)):.2f}); }}
       #conteudo {{ position: absolute; inset: 0; padding: 110px 110px 210px 110px; font-family: "Texto", sans-serif;
                    color: var(--texto); }}
-      /* da cena */
+      /* do trecho */
 {partes["css"]}
     </style>
   </head>
   <body>
     <div id="root" data-composition-id="main" data-start="0" data-duration="{dur}" data-width="{largura}" data-height="{altura}">
-      <div id="camada-fundo">{fundo}</div>
       <div id="veu"></div>
       <section id="conteudo" class="clip" data-start="0" data-duration="{dur}" data-track-index="1">
 {partes["html"]}
@@ -276,11 +368,11 @@ def _montar_html(partes, cena, fundo_tipo, largura, altura, estilo) -> str:
     </div>
     <script>
       const tl = gsap.timeline({{ paused: true }});
-      tl.fromTo("#camada-fundo", {{ scale: 1.03 }}, {{ scale: 1.1, duration: {dur}, ease: "none" }}, 0);
       tl.fromTo("#veu", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.4, ease: "power2.out" }}, 0);
       (function () {{
 {partes["js"]}
       }})();
+      tl.to("#root", {{ opacity: 0, duration: 0.3, ease: "power2.in" }}, {saida:.2f});
       window.__timelines["main"] = tl;
     </script>
   </body>
@@ -290,12 +382,11 @@ def _montar_html(partes, cena, fundo_tipo, largura, altura, estilo) -> str:
 
 # ---------------------------------------------------------------------------------------------- a pasta
 
-def _pasta(projeto, cena) -> Path:
-    return projeto.pasta / "animacoes" / f"{cena['n']:04d}"
+def _pasta(projeto, item) -> Path:
+    return projeto.pasta / "animacoes" / "motion" / item["id"]
 
 
-def _preparar_pasta(projeto, cena, pasta, largura, altura) -> str:
-    """Fundo da cena (o mesmo trecho que o render usaria) e as fontes. Devolve "video" ou "foto"."""
+def _preparar_pasta(pasta) -> None:
     assets = pasta / "assets"
     (assets / "fontes").mkdir(parents=True, exist_ok=True)
     for nome in ("Inter.ttf", "PlayfairDisplay.ttf"):
@@ -307,21 +398,6 @@ def _preparar_pasta(projeto, cena, pasta, largura, altura) -> str:
         "paths": {"blocks": "compositions", "components": "compositions/components", "assets": "assets"},
         "media": {"autoProxy": True}}, indent=2), encoding="utf-8")
     (pasta / "meta.json").write_text(json.dumps({"id": pasta.name, "name": pasta.name}), encoding="utf-8")
-    origem = _fundo(projeto, cena)
-    dur = cena["fim"] - cena["ini"]
-    escala = f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura}"
-    for velho in assets.glob("fundo.*"):
-        velho.unlink()
-    if origem.suffix.lower() in (".mp4", ".mov", ".webm", ".m4v"):
-        disponivel = duracao_audio(origem)
-        # o mesmo começo do render (render._entrada_video): pula até 1 s, que costuma ter tremida
-        inicio = min(1.0, (disponivel - dur) / 2) if disponivel >= dur + 1 else 0.0
-        rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.3f}", "-i", origem, "-t", f"{dur + 0.5:.3f}",
-               "-an", "-vf", f"{escala},fps=30,tpad=stop_mode=clone:stop_duration={dur + 0.5:.3f}",
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", assets / "fundo.mp4"])
-        return "video"
-    rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", origem, "-vf", escala, "-q:v", "3", assets / "fundo.jpg"])
-    return "foto"
 
 
 def _hyperframes(projeto, args, pasta, limite):
@@ -342,19 +418,22 @@ def _conferir(projeto, pasta) -> list:
     if dados.get("ok"):
         return []
     erros = []
-    for parte in ("lint", "runtime", "layout", "motion", "contrast"):
+    # contraste fica de fora: com o fundo transparente, a conferência mede o texto contra o nada; o véu escuro
+    # da camada garante a leitura sobre qualquer imagem
+    for parte in ("lint", "runtime", "layout", "motion"):
         for f in (dados.get(parte) or {}).get("findings", []):
             if f.get("severity") == "error":
                 quando = f" em {f['time']:.2f}s" if isinstance(f.get("time"), (int, float)) else ""
                 texto = f" (\"{f['text'][:40]}\")" if f.get("text") else ""
                 erros.append(f"{f.get('code')}{quando} no {f.get('selector', '?')}{texto}: {f.get('message', '')} "
                              f"Como corrigir: {f.get('fixHint', '')}".strip())
-    return erros or ["a conferência reprovou sem dizer o motivo"]
+    return erros
 
 
 def _renderizar(projeto, pasta, destino) -> bool:
-    temporario = destino.with_name(destino.stem + ".tmp.mp4")
-    r = _hyperframes(projeto, ["render", "--output", str(temporario), "--fps", "30", "--quality", "delivery",
+    """MOV ProRes 4444, com transparência: o render põe por cima das cenas."""
+    temporario = destino.with_name(destino.stem + ".tmp.mov")
+    r = _hyperframes(projeto, ["render", "--output", str(temporario), "--format", "mov", "--fps", "30",
                                "--workers", "1", "--quiet"], pasta, 900)
     if r.returncode != 0 or not temporario.exists() or temporario.stat().st_size < 1000:
         temporario.unlink(missing_ok=True)
@@ -363,69 +442,135 @@ def _renderizar(projeto, pasta, destino) -> bool:
     return True
 
 
+# --------------------------------------------------------------------------------- de cenas para animações
+
+def _novo_item(cenas_do_trecho, palavras) -> dict | None:
+    """Uma animação nova para cenas seguidas, presa às palavras que elas falam."""
+    primeira, ultima = cenas_do_trecho[0], cenas_do_trecho[-1]
+    sel = [p for p in palavras if p.get("c") is not None and primeira["ini"] - 0.05 <= p["ini"] < ultima["fim"]]
+    if not sel:
+        return None
+    depois = next((p for p in palavras if p["ini"] >= ultima["fim"] - 0.05 and p["ini"] > sel[-1]["ini"]), None)
+    texto = " ".join(p["texto"] for p in sel)
+    mostrar = " / ".join(dict.fromkeys(c.get("mostrar") or "" for c in cenas_do_trecho if c.get("mostrar")))
+    telas = []
+    for c in cenas_do_trecho:
+        t = c.get("texto_tela") or c.get("overlay") or ""
+        if isinstance(t, dict):
+            t = " ".join(str(t.get(k) or "") for k in ("titulo", "texto")).strip()
+        if t:
+            telas.append(t)
+    return {
+        "id": f"m{sel[0]['c']:06d}",
+        "c_ini": sel[0]["c"], "c_fim": sel[-1]["c"],
+        "texto": texto, "fala_normal": _normal(texto),
+        "folga_ini": round(max(sel[0]["ini"] - primeira["ini"], 0.0), 3),
+        "folga_fim": round(max(depois["ini"] - ultima["fim"], 0.0), 3) if depois else 0.0,
+        "cauda": round(max(ultima["fim"] - sel[-1]["ini"], 0.5), 3),
+        "visual": primeira.get("visual"),
+        "pedido": {"mostrar": mostrar, "texto_tela": " / ".join(dict.fromkeys(telas))},
+        "cenas_origem": [c["n"] for c in cenas_do_trecho],
+    }
+
+
+def _trechos(projeto, cenas, candidatas) -> list:
+    """Agrupa cenas de animação seguidas, do mesmo bloco, em trechos de até duracao_maxima segundos."""
+    maximo = float(config(projeto).get("duracao_maxima", DURACAO_MAXIMA))
+    trechos, atual = [], []
+    for c in sorted(candidatas, key=lambda c: c["ini"]):
+        if atual and (abs(c["ini"] - atual[-1]["fim"]) <= 0.1 and c.get("bloco") == atual[-1].get("bloco")
+                      and c["fim"] - atual[0]["ini"] <= maximo):
+            atual.append(c)
+            continue
+        if atual:
+            trechos.append(atual)
+        atual = [c]
+    if atual:
+        trechos.append(atual)
+    return trechos
+
+
+def _reaproveitar_antiga(projeto, cena):
+    """Projeto de antes da camada: a animação da cena tinha modelo e dados em animacoes/NNNN/partes.json. Os tempos
+    eram contados do começo da cena, o mesmo começo da animação nova de uma cena só."""
+    antiga = cena.get("animacao") or {}
+    arquivo = projeto.pasta / "animacoes" / f"{cena['n']:04d}" / "partes.json"
+    if not antiga.get("modelo") or not arquivo.exists():
+        return None
+    try:
+        guardada = json.loads(arquivo.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return guardada if guardada.get("modelo") == antiga["modelo"] else None
+
+
+def _remapear(dados, antigos, novos):
+    """Leva cada "t" para a mesma palavra no tempo novo (a voz mudou de ritmo)."""
+    if not antigos or not novos:
+        return dados
+
+    def um(t):
+        try:
+            t = float(t)
+        except (TypeError, ValueError):
+            return t
+        k = min(range(len(antigos)), key=lambda i: abs(antigos[i] - t))
+        if len(antigos) == len(novos):
+            return novos[k] + (t - antigos[k])
+        return t * (novos[-1] / antigos[-1]) if antigos[-1] else t
+
+    def andar(x):
+        if isinstance(x, dict):
+            return {k: (um(v) if k == "t" else andar(v)) for k, v in x.items()}
+        if isinstance(x, list):
+            return [andar(v) for v in x]
+        return x
+    return andar(dados)
+
+
 # ---------------------------------------------------------------------------------------------- a etapa
 
-def _gravar(projeto, n, info, trava):
-    """Grava só o campo animacao da cena, lendo o arquivo na hora: o editor pode ter mexido em outra cena."""
-    def gravar():
-        dados = projeto.ler_json("cenas.json")
-        for c in dados["cenas"]:
-            if c["n"] == n:
-                if info is None:
-                    c.pop("animacao", None)
-                else:
-                    c["animacao"] = info
-        projeto.salvar_json("cenas.json", dados)
-    if trava is not None:
-        with trava:
-            gravar()
-    else:
-        gravar()
-
-
-def _animar(projeto, cena, vizinhas, forcar, log):
-    """Faz (ou reaproveita) a animação de uma cena. Devolve (info, situação) ou (None, motivo)."""
+def _animar(projeto, item, vizinhas, forcar, log):
+    """Faz (ou reaproveita) uma animação. Devolve (item atualizado, situação) ou (None, motivo)."""
     from . import openrouter_local
 
-    cfg_render = projeto.config.get("render") or {}
-    largura, altura = cfg_render.get("largura", 1920), cfg_render.get("altura", 1080)
+    ancora = _ancorar(projeto, item)
+    if ancora is None:
+        return None, "a fala desta animação não existe mais"
+    largura, altura = _tamanho(projeto)
     estilo = _estilo(projeto)
-    assinatura_pedido = _assinatura_pedido(projeto, cena)
-    assinatura_render = _assinatura_render(projeto, cena, assinatura_pedido)
-    pasta = _pasta(projeto, cena)
-    destino = projeto.pasta / "animacoes" / f"{cena['n']:04d}.mp4"
-    info = {k: v for k, v in (cena.get("animacao") or {}).items() if k != "desligada"}
-    if not forcar and info.get("pedido") == assinatura_pedido and info.get("render") == assinatura_render \
-            and destino.exists():
-        return info, "já estava pronta"
+    dur = ancora["fim"] - ancora["ini"]
+    tempos = _tempos(ancora)
+    fala = " ".join([vizinhas[0], item.get("texto", ""), vizinhas[1]])
+    item = {**item, "c_ini": ancora["c_ini"], "c_fim": ancora["c_fim"]}
+    destino_atual = projeto.pasta / item["arquivo"] if item.get("arquivo") else None
+    if (not forcar and item.get("modelo") and destino_atual and destino_atual.exists()
+            and item.get("render") == _assinatura_render(projeto, item, ancora)):
+        return item, "já estava pronta"
+    pasta = _pasta(projeto, item)
     pasta.mkdir(parents=True, exist_ok=True)
-    fundo_tipo = _preparar_pasta(projeto, cena, pasta, largura, altura)
-    arquivo_partes = pasta / "partes.json"
-    dur = cena["fim"] - cena["ini"]
-    tempos = [t for _, t in palavras_da_cena(projeto, cena)]
-    fala = " ".join([vizinhas[0], cena.get("texto", ""), vizinhas[1]])
+    _preparar_pasta(pasta)
     escolha = None
-    # a mesma fala e o mesmo tempo: só o fundo (ou o design) mudou, então reaproveita o que o modelo escolheu
-    if not forcar and info.get("pedido") == assinatura_pedido and arquivo_partes.exists():
-        guardada = json.loads(arquivo_partes.read_text(encoding="utf-8"))
-        if guardada.get("modelo") in MODELOS:
-            dados, erros = conferir_dados(guardada["modelo"], guardada.get("dados"), dur, tempos, fala)
-            if not erros:
-                html_ = _montar_html(partes_do_modelo(guardada["modelo"], dados, dur), cena, fundo_tipo, largura, altura, estilo)
-                (pasta / "index.html").write_text(html_, encoding="utf-8")
-                if not _conferir(projeto, pasta):
-                    escolha = {"modelo": guardada["modelo"], "dados": dados}
+    if not forcar and item.get("modelo") in MODELOS:
+        # a mesma fala: só o tempo (outra voz) ou o design mudou, então reaproveita o que o modelo escolheu
+        dados = _remapear(item.get("dados"), item.get("tempos") or [], tempos)
+        dados, erros = conferir_dados(item["modelo"], dados, dur, tempos, fala)
+        if not erros:
+            (pasta / "index.html").write_text(
+                _montar_html(partes_do_modelo(item["modelo"], dados, dur), dur, largura, altura, estilo), encoding="utf-8")
+            if not _conferir(projeto, pasta):
+                escolha = {"modelo": item["modelo"], "dados": dados}
     if escolha is None:
         erros = []
         for tentativa in range(int(config(projeto).get("tentativas", 3))):
             resposta = openrouter_local.perguntar(
-                projeto, "animação da cena", INSTRUCOES, _pedido(projeto, cena, vizinhas, erros), ESQUEMA, log=log,
+                projeto, "animação da cena", INSTRUCOES, _pedido(item, ancora, vizinhas, erros), ESQUEMA, log=log,
                 modelo=openrouter_local.principal(projeto), temperatura=0.4 if tentativa else 0.2)
             modelo = str(resposta.get("modelo") or "").strip()
             dados, erros = conferir_dados(modelo, resposta.get("dados"), dur, tempos, fala)
             if not erros:
-                html_ = _montar_html(partes_do_modelo(modelo, dados, dur), cena, fundo_tipo, largura, altura, estilo)
-                (pasta / "index.html").write_text(html_, encoding="utf-8")
+                (pasta / "index.html").write_text(
+                    _montar_html(partes_do_modelo(modelo, dados, dur), dur, largura, altura, estilo), encoding="utf-8")
                 erros = _erros_para_o_modelo(_conferir(projeto, pasta))
             if not erros:
                 escolha = {"modelo": modelo, "dados": dados}
@@ -433,18 +578,23 @@ def _animar(projeto, cena, vizinhas, forcar, log):
             erros = erros[:6]
         if escolha is None:
             return None, "reprovada na conferência: " + "; ".join(erros)[:300]
-        arquivo_partes.write_text(json.dumps(escolha, ensure_ascii=False, indent=1), encoding="utf-8")
+    item = {**item, **escolha, "tempos": tempos}
+    assinatura = _assinatura_render(projeto, item, ancora)
+    destino = projeto.pasta / "animacoes" / "motion" / f"{item['id']}_{assinatura}.mov"
     if not _renderizar(projeto, pasta, destino):
         return None, "o HyperFrames não conseguiu renderizar"
-    return {"arquivo": destino.relative_to(projeto.pasta).as_posix(), "pedido": assinatura_pedido,
-            "render": assinatura_render, "visual": cena.get("visual"), "modelo": escolha["modelo"]}, "feita"
+    for velho in destino.parent.glob(f"{item['id']}_*.mov"):
+        if velho != destino:
+            velho.unlink(missing_ok=True)
+    item.update(arquivo=destino.relative_to(projeto.pasta).as_posix(), render=assinatura, desligada=False)
+    return item, "feita"
 
 
 def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
-    """Anima as cenas de diagrama, texto na tela, linha do tempo e mapa que ainda não têm animação em dia.
+    """Faz as animações que faltam e põe em dia as que a fala mudou. numeros: só as das cenas indicadas.
 
-    Nunca para o vídeo: a cena que não deu para animar continua com a foto. trava protege o cenas.json quando o
-    editor também pode estar mexendo nele (o servidor passa a trava do projeto)."""
+    Nunca para o vídeo: o trecho que não deu para animar segue com a foto e o texto na tela. trava fica na assinatura
+    para o servidor: as animações não gravam mais no cenas.json, só em animacoes/motion.json."""
     resumo = {"feitas": [], "prontas": [], "falharam": {}, "motivo": ""}
     if not ligada(projeto):
         resumo["motivo"] = "animações desligadas (animacoes.ativo no config.yaml) ou projeto offline"
@@ -453,52 +603,142 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
         resumo["motivo"] = "falta o Node.js 22 ou mais nesta máquina (nodejs.org): as cenas seguem com foto"
         log(f"  animações: {resumo['motivo']}")
         return resumo
-    if not projeto.existe("cenas.json"):
+    if not projeto.existe("cenas.json") or not _palavras_do_projeto(projeto):
         return resumo
     cenas = projeto.ler_json("cenas.json")["cenas"]
-    alvo = [c for c in cenas if (numeros is None and elegivel(projeto, c))
-            or (numeros is not None and c["n"] in numeros and elegivel(projeto, c, pedida=True))]
+    palavras = _palavras_do_projeto(projeto)
+    itens = ler(projeto)
+
+    # animações cuja fala sumiu (o roteiro mudou) saem; as cenas daquele trecho voltam a ser candidatas
+    vivos = []
+    for item in itens:
+        if _ancorar(projeto, item) is None:
+            log(f"  animação '{item.get('texto', '')[:40]}' saiu: a fala dela não existe mais")
+        else:
+            vivos.append(item)
+    if len(vivos) != len(itens):
+        with _TRAVA_ARQUIVO:
+            _salvar(projeto, vivos)
+    itens = vivos
+    cobertas = {}
+    for item in itens:
+        ancora = _ancorar(projeto, item)
+        for c in cenas:
+            if _cobre(ancora, c):
+                cobertas[c["n"]] = item
+
+    alvo = []
+    if numeros is None:
+        alvo = [i for i in itens if not i.get("desligada")]
+        livres = [c for c in cenas if c["n"] not in cobertas and elegivel(projeto, c)]
+    else:
+        alvo = list({id(cobertas[n]): cobertas[n] for n in numeros if n in cobertas}.values())
+        livres = [c for c in cenas if c["n"] in numeros and c["n"] not in cobertas and elegivel(projeto, c, pedida=True)]
+    for trecho in _trechos(projeto, cenas, livres):
+        novo = _novo_item(trecho, palavras)
+        if novo is None:
+            continue
+        if len(trecho) == 1:
+            antiga = _reaproveitar_antiga(projeto, trecho[0])
+            if antiga:
+                novo.update(modelo=antiga["modelo"], dados=antiga.get("dados"))
+        alvo.append(novo)
     if not alvo:
         return resumo
     textos = {c["n"]: (c.get("texto") or "").strip() for c in cenas}
-    log(f"  animando {len(alvo)} cena(s) de diagrama, texto na tela, linha do tempo e mapa (HyperFrames)")
+    log(f"  animando {len(alvo)} trecho(s) de diagrama, texto na tela, linha do tempo e mapa (HyperFrames)")
 
-    def uma(cena):
-        # três frases antes: o assunto de um diagrama costuma ter sido apresentado logo antes ("o elemento que une
-        # o vinho, a cachaça, a carne e a terra: o fogo" vem nas cenas antes de "é o altar ao redor do qual...")
-        partes_antes, k = [], 1
-        while cena["n"] - k in textos and k <= 8 and sum(len(x) for x in partes_antes) < 300:
-            partes_antes.insert(0, textos[cena["n"] - k])
-            k += 1
-        antes = " ".join(partes_antes).strip()
-        vizinhas = (antes, textos.get(cena["n"] + 1, ""))
+    def uma(item):
+        ancora = _ancorar(projeto, item) or {"ini": 0, "fim": 0}
+        antes_cenas = [c for c in cenas if c["fim"] <= ancora["ini"] + 0.05][-3:]
+        depois_cena = next((c for c in cenas if c["ini"] >= ancora["fim"] - 0.05), None)
+        vizinhas = (" ".join(textos[c["n"]] for c in antes_cenas).strip()[-300:],
+                    textos.get(depois_cena["n"], "") if depois_cena else "")
         try:
-            info, situacao_ = _animar(projeto, cena, vizinhas, forcar, log)
+            novo, situacao_ = _animar(projeto, item, vizinhas, forcar, log)
         except (Exception, SystemExit) as erro:
-            info, situacao_ = None, f"falhou: {str(erro)[:200]}"
-        return cena, info, situacao_
+            novo, situacao_ = None, f"falhou: {str(erro)[:200]}"
+        return item, novo, situacao_
 
     with ThreadPoolExecutor(max(1, int(config(projeto).get("paralelo", 2)))) as executor:
-        for cena, info, situacao_ in executor.map(uma, alvo):
-            if info is None:
-                resumo["falharam"][cena["n"]] = situacao_
-                log(f"  cena {cena['n']}: sem animação, fica a foto ({situacao_})")
+        for item, novo, situacao_ in executor.map(uma, alvo):
+            ancora = _ancorar(projeto, item)
+            nums = [c["n"] for c in cenas if ancora and sobreposta(ancora, c)] or item.get("cenas_origem") or []
+            if novo is None:
+                for n in nums:
+                    resumo["falharam"][n] = situacao_
+                log(f"  animação '{item.get('texto', '')[:40]}': ficou sem, seguem as fotos ({situacao_})")
                 continue
             if situacao_ == "já estava pronta":
-                resumo["prontas"].append(cena["n"])
+                resumo["prontas"].extend(nums)
                 continue
-            _gravar(projeto, cena["n"], info, trava)
-            resumo["feitas"].append(cena["n"])
-            log(f"  cena {cena['n']}: animação pronta ({cena.get('visual')})")
-    log(f"  animações: {len(resumo['feitas'])} feita(s), {len(resumo['prontas'])} já pronta(s), "
-        f"{len(resumo['falharam'])} ficaram com foto")
+            _atualizar_item(projeto, novo)
+            resumo["feitas"].extend(nums)
+            log(f"  animação pronta por cima das cenas {', '.join(map(str, nums))} ({novo.get('visual')})")
+    log(f"  animações: {len(resumo['feitas'])} cena(s) com animação nova, {len(resumo['prontas'])} já em dia, "
+        f"{len(resumo['falharam'])} seguem com foto")
     return resumo
 
 
 def remover(projeto, n, trava=None) -> None:
-    """A cena volta a usar a foto e fica assim: a criação não anima de novo sozinha. Os arquivos ficam guardados."""
-    _gravar(projeto, n, {"desligada": True}, trava)
-    from . import aprendizados
+    """A animação por cima da cena sai e fica assim: a criação não anima de novo sozinha. Os arquivos ficam."""
     cena = next((c for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] == n), None)
-    if cena:
-        aprendizados.registrar(projeto, cena, "foto")
+    if cena is None:
+        return
+    with _TRAVA_ARQUIVO:
+        itens = ler(projeto)
+        item = _item_por_tempo(projeto, cena, itens)
+        if item is None:
+            # ninguém por cima: um marcador desligado no tempo da cena, para a criação não animar de novo
+            item = _novo_item([cena], _palavras_do_projeto(projeto))
+            if item is None:
+                return
+            itens.append(item)
+        item["desligada"] = True
+        _salvar(projeto, itens)
+    from . import aprendizados
+    aprendizados.registrar(projeto, cena, "foto")
+
+
+# ---------------------------------------------------------------------------- a prévia do editor, por cena
+
+def composicao_da_cena(projeto, cena, criar=False):
+    """Para o editor, que mostra cena por cena: a imagem atual da cena com o pedaço da animação por cima, em MP4.
+
+    O nome muda quando a imagem da cena, o corte ou a animação mudam. Sem criar, só devolve se já existir."""
+    item = da_cena(projeto, cena)
+    if item is None:
+        return None
+    m = cena.get("midia") or {}
+    fundo = projeto.pasta / m["arquivo"] if m.get("arquivo") else projeto.imagem(cena["n"])
+    if not fundo.exists():
+        return None
+    base = f"{fundo.name}|{fundo.stat().st_mtime_ns}|{item['arquivo'].name}|{cena['ini']}|{cena['fim']}"
+    codigo = hashlib.sha1(base.encode()).hexdigest()[:10]
+    destino = projeto.pasta / "_previas" / "animacao" / f"{cena['n']:04d}_{codigo}.mp4"
+    if destino.exists() or not criar:
+        return destino if destino.exists() else None
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    for velho in destino.parent.glob(f"{cena['n']:04d}_*.mp4"):
+        velho.unlink(missing_ok=True)
+    dur = max(cena["fim"] - cena["ini"], 0.5)
+    largura, altura = 1280, 720
+    escala = f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1"
+    if fundo.suffix.lower() in (".mp4", ".mov", ".webm", ".m4v"):
+        disponivel = duracao_audio(fundo)
+        inicio = min(1.0, (disponivel - dur) / 2) if disponivel >= dur + 1 else 0.0
+        entrada_fundo = ["-ss", f"{inicio:.3f}", "-t", f"{dur:.3f}", "-i", str(fundo)]
+        filtro_fundo = f"[0:v]{escala},fps=30,tpad=stop_mode=clone:stop_duration={dur:.3f}[f]"
+    else:
+        entrada_fundo = ["-loop", "1", "-t", f"{dur:.3f}", "-i", str(fundo)]
+        filtro_fundo = f"[0:v]{escala},fps=30[f]"
+    # o pedaço da animação que passa por cima desta cena, no mesmo segundo
+    desde = cena["ini"] - item["ini"]
+    entrada_anim = (["-ss", f"{desde:.3f}"] if desde > 0 else ["-itsoffset", f"{-desde:.3f}"]) + ["-i", str(item["arquivo"])]
+    temporario = destino.with_suffix(".tmp.mp4")
+    rodar(["ffmpeg", "-y", "-loglevel", "error", *entrada_fundo, *entrada_anim, "-filter_complex",
+           f"{filtro_fundo};[1:v]scale={largura}:{altura},format=yuva420p[a];[f][a]overlay=eof_action=pass:format=auto[v]",
+           "-map", "[v]", "-t", f"{dur:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(temporario)])
+    temporario.replace(destino)
+    return destino

@@ -516,9 +516,12 @@ def efeitos_na_linha(projeto, cenas, log=print):
             # a passagem começa um pouco antes, para o ar passar bem no corte
             pedidos.append((1, max(s["ini"] - (0.55 if efeito == "passagem" else 0.0), 0.0), efeito))
     if config(projeto).get("toque_no_texto", True):
+        from . import animacoes
+        # embaixo de uma animação o texto na tela não aparece (a animação traz o dela): sem toque
+        debaixo = animacoes.cenas_cobertas(projeto, cenas)
         for c in cenas:
             tela = c.get("texto_tela")
-            if tela and not (c.get("animacao") or {}).get("arquivo"):
+            if tela and c["n"] not in debaixo:
                 pedidos.append((2, float(c["ini"]) + float(tela.get("inicio", 0.0) or 0.0), "toque"))
     escolhidos = []
     for prioridade, momento, nome in sorted(pedidos):

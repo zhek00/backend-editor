@@ -92,6 +92,9 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     com_textos = textos.ativo(projeto.perfil)
     # as animações foram desenhadas para a tela deitada; na versão em pé a cena volta à foto com o texto na tela
     com_animacoes = bool(animacoes.config(projeto).get("ativo", True)) and not vertical
+    # a camada de animação vai por cima das cenas, no tempo da fala (animacoes.py): as cenas não mudam por causa dela
+    motion = animacoes.validas(projeto) if com_animacoes else []
+    debaixo_da_animacao = animacoes.cenas_cobertas(projeto, cenas, motion) if motion else set()
     sorteio = random.Random(projeto.nome)
     pasta_clipes = projeto.caminho(base, "clipes", "_").parent
     pasta_fotos = projeto.caminho(base, "fotos", "_").parent
@@ -129,16 +132,11 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
         c = pedaco["cena"]
         movimento = sorteio.choice([m for m in MOVIMENTOS if m != anterior])
         anterior = movimento
-        texto_tela = c.get("texto_tela") if com_textos else None
-        # cena de diagrama, texto na tela, linha do tempo ou mapa com animação em dia: o clipe animado entra no lugar
-        # da foto, e o texto na tela sai, porque a animação já traz o texto no tempo da fala
-        animada = animacoes.valida(projeto, c) if com_animacoes else None
-        if animada is not None:
-            pedaco = {**pedaco, "origem": "animacao", "arquivo": animada, "deslocamento": pedaco["ini"] - c["ini"]}
-            arquivo, texto_tela = animada, None
-        enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
+        # embaixo de uma animação o texto na tela sai: a animação já traz o texto, no tempo da fala
+        texto_tela = c.get("texto_tela") if com_textos and c["n"] not in debaixo_da_animacao else None
         simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
         # o nome do clipe muda quando a origem, a duração, o movimento, o texto, o símbolo ou o título mudam
+        enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
         assinatura = (
             f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}{enquadramento}|"
             f"{textos.assinatura(texto_tela, projeto.perfil)}|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
@@ -193,9 +191,11 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     partes = ["narração", "música", "legenda"] + (["personagem"] if extras else []) + (["efeitos"] if sons else [])
     log("  juntando " + ", ".join(partes[:-1]) + " e " + partes[-1])
     final = arquivo_final(projeto, vertical)
+    if motion:
+        log(f"  {len(motion)} animação(ões) por cima das cenas")
     _mixar(projeto, video, duracao_total + atraso, final, log, sem_avatar, extras,
            sons=sons, atraso=atraso, musica_abertura=musica_abertura, faixa_abertura=faixa_abertura, legenda=legenda,
-           cfg=cfg, base=base)
+           cfg=cfg, base=base, motion=[(m["ini"] + atraso, m["fim"] + atraso, m["arquivo"]) for m in motion])
     return final
 
 
@@ -348,12 +348,7 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
         return _clipe_avatar(tarefa, destino, temporario, cfg)
     if tarefa["tipo"] == "abertura":
         return _clipe_abertura(tarefa, destino, temporario, pasta_fotos, cfg)
-    if tarefa["origem"] == "animacao":
-        # a animação já tem a duração da cena e o movimento dela: entra do ponto certo, sem pular nem desacelerar
-        entradas = ["-ss", f"{tarefa.get('deslocamento', 0.0):.3f}", "-i", arquivo]
-        filtro = (f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1,"
-                  f"fps={fps},tpad=stop_mode=clone:stop_duration={frames / fps:.3f},format=yuv420p")
-    elif tarefa["origem"] == "video":
+    if tarefa["origem"] == "video":
         entradas, filtro = _entrada_video(arquivo, frames, cfg)
     else:
         entradas, filtro = ["-i", _preparar_foto(arquivo, pasta_fotos, cfg)], _filtro_foto(tarefa["movimento"], frames, cfg)
@@ -534,12 +529,12 @@ def quadro_da_foto(origem, largura_px, cfg=None):
             quadro = quadro.crop((0, sobra, quadro.width, sobra + round(quadro.width / tela)))
     return quadro.resize((largura_px, round(largura_px / tela)), Image.LANCZOS)
 
-    largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
 
 def _moldura(imagem, origem, cfg):
     """Foto em pé, quadrada ou panorâmica sobre uma cópia dela mesma, desfocada, no tamanho dobrado da tela."""
     from PIL import Image, ImageEnhance, ImageFilter
 
+    largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
     tela_l, tela_a = largura * 2, altura * 2
     pequeno = (tela_l // 8, tela_a // 8)
     escala = max(pequeno[0] / imagem.width, pequeno[1] / imagem.height)
@@ -568,7 +563,7 @@ def _moldura(imagem, origem, cfg):
 
 
 def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(), sons=(), atraso=0.0,
-           musica_abertura=None, faixa_abertura=None, legenda=None, cfg=None, base="render"):
+           musica_abertura=None, faixa_abertura=None, legenda=None, cfg=None, base="render", motion=()):
     cfg = cfg if cfg is not None else (projeto.config.get("render") or {})
     # voz e música chegam prontas, com o tamanho e o volume certos, e aqui só se somam
     # a trilha completa sai antes, num passo só de áudio, porque o filtro de legenda
@@ -576,7 +571,14 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
     audio = _trilha(projeto, duracao, extras, sons, atraso, musica_abertura, faixa_abertura, base)
     entradas, partes = ["-i", video, "-i", audio], []
 
-    atual, reencodar = "0:v", False
+    atual, reencodar, pip = "0:v", False, None
+    # a camada de animação (MOV transparente) entra por cima das cenas, no segundo da fala, antes do avatar e da legenda
+    for k, (ini, fim, arquivo) in enumerate(motion):
+        n = len(entradas) // 2
+        entradas += ["-i", str(arquivo)]
+        partes.append(f"[{n}:v]setpts=PTS-STARTPTS+{ini:.3f}/TB,format=yuva420p[m{k}]")
+        partes.append(f"[{atual}][m{k}]overlay=eof_action=pass:format=auto:enable='between(t,{ini:.3f},{fim:.3f})'[cm{k}]")
+        atual, reencodar = f"cm{k}", True
     if com_avatar(projeto, sem_avatar) and avatar.modo(projeto.perfil) != "trechos":
         # o avatar entra num quadro no canto, recortado pela máscara e com a moldura por cima
         pip = avatar.preparar_pip(projeto, cfg, log)
@@ -596,7 +598,7 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
         if cfg.get("vertical"):
             estilo = ((projeto.perfil.get("vertical") or {}).get("estilo_legenda")
                       or (projeto.config.get("vertical") or {}).get("estilo_legenda") or ESTILO_LEGENDA_VERTICAL)
-        if atual != "0:v" and pip["y"] > cfg.get("altura", 1080) / 2 and not re.search(r"Margin[LR]=", estilo):
+        if pip is not None and pip["y"] > cfg.get("altura", 1080) / 2 and not re.search(r"Margin[LR]=", estilo):
             # a legenda desvia do quadro do avatar. As margens do estilo contam numa tela de 384 pontos de largura
             largura_tela = cfg.get("largura", 1920)
             if pip["x"] < largura_tela / 2:
