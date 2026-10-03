@@ -21,12 +21,47 @@ MODELO_PRINCIPAL_PADRAO = "stealth/space-bunny-alpha"
 MIMO = MODELO_PRINCIPAL_PADRAO  # nome antigo, mantido para quem ainda importa
 
 
-def principal(projeto=None) -> str:
-    """O modelo que a fábrica usa para tudo que não é o juiz (Jev)."""
+URL_AIMLAPI = "https://api.aimlapi.com/v1/chat/completions"
+
+
+def principais(projeto=None) -> list:
+    """Os modelos principais, em ordem (openrouter.principais no config.yaml). Quando um esgota (saldo, limite do
+    dia, modelo retirado do ar), a chamada passa na hora para o seguinte. "aimlapi:" na frente vai pela AIMLAPI."""
     if projeto is not None:
-        return (projeto.config.get("openrouter") or {}).get("modelo_principal") or MODELO_PRINCIPAL_PADRAO
-    from .config import config_geral
-    return (config_geral().get("openrouter") or {}).get("modelo_principal") or MODELO_PRINCIPAL_PADRAO
+        cfg = projeto.config.get("openrouter") or {}
+    else:
+        from .config import config_geral
+        cfg = config_geral().get("openrouter") or {}
+    lista = [m for m in (cfg.get("principais") or []) if m]
+    return lista or [cfg.get("modelo_principal") or MODELO_PRINCIPAL_PADRAO]
+
+
+def principal(projeto=None) -> str:
+    """O modelo que a fábrica usa para tudo que não é o juiz (Jev): o primeiro da cadeia de principais."""
+    return principais(projeto)[0]
+
+
+class RotaIndisponivel(RuntimeError):
+    """O modelo não atende agora (sem saldo, limite do dia, retirado do ar): a cadeia segue para o próximo."""
+
+
+# rota -> segundo até quando ela fica de lado. Saldo zerado ou limite do dia não voltam em segundos: as próximas
+# chamadas vão direto para o modelo seguinte, sem perder tempo batendo no que caiu
+_FORA_DO_AR: dict = {}
+
+
+def _rota(modelo: str):
+    """(url, chave, nome do modelo na API, provedor) de uma rota da cadeia."""
+    if modelo.startswith("aimlapi:"):
+        return URL_AIMLAPI, _chave_aimlapi(), modelo.split(":", 1)[1], "aimlapi"
+    return URL, _chave(), modelo, "openrouter"
+
+
+def _chave_aimlapi():
+    for nome, valor in os.environ.items():
+        if nome.lower().startswith("aimlapi") and valor.strip():
+            return valor.strip().strip('"').strip("'")
+    raise RotaIndisponivel("falta a chave da AIMLAPI no .env (aimlapi_api)")
 _trava = threading.Lock()
 
 
@@ -89,9 +124,43 @@ def parte_de_imagem(caminho):
 
 
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
-    """imagens é uma lista de caminhos de JPG enviados junto do pedido."""
+    """imagens é uma lista de caminhos de JPG enviados junto do pedido.
+
+    Com um modelo da cadeia de principais, quem não atender passa a vez para o seguinte na hora (nunca esperar)."""
     cfg = projeto.config.get("openrouter") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
+    cadeia = principais(projeto)
+    rotas = cadeia[cadeia.index(modelo):] if modelo in cadeia else [modelo]
+    agora = time.time()
+    vivas = [r for r in rotas if _FORA_DO_AR.get(r, 0) <= agora] or rotas[-1:]
+    erro = None
+    for k, rota in enumerate(vivas):
+        ultima = k == len(vivas) - 1
+        try:
+            return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
+                                   cadeia=not ultima)
+        except RotaIndisponivel as e:
+            erro = e
+            if not ultima:
+                log(f"  {rota} não atende agora ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
+        except (RuntimeError, SystemExit) as e:
+            erro = e
+            if ultima:
+                raise
+            log(f"  {rota} falhou ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
+    raise RuntimeError(f"Nenhum modelo principal atendeu na etapa {etapa}: {erro}")
+
+
+def _fora_do_ar(rota, minutos, motivo):
+    _FORA_DO_AR[rota] = time.time() + minutos * 60
+    raise RotaIndisponivel(motivo)
+
+
+def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, imagens, temperatura, cadeia=False):
+    """Uma rota da cadeia. Com cadeia=True (há outra depois), o que não volta logo vira RotaIndisponivel."""
+    cfg = projeto.config.get("openrouter") or {}
+    rota = modelo
+    url, chave, modelo, provedor = _rota(rota)
     if isinstance(pedido, list):
         conteudo = pedido  # já vem montado, com texto e imagens intercalados
     elif imagens:
@@ -120,18 +189,40 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     esforco = next((v for prefixo, v in (cfg.get("raciocinio_por_modelo") or {}).items() if modelo.startswith(prefixo)), None)
     if esforco:
         corpo["reasoning"] = {"enabled": False} if esforco == "nenhum" else {"effort": esforco}
-    cabecalho = {"Authorization": f"Bearer {_chave()}"}
+    if provedor == "aimlapi":
+        # a AIMLAPI fala o formato da OpenAI: o raciocínio é reasoning_effort, e os campos do OpenRouter saem
+        corpo.pop("usage", None)
+        if modelo.startswith("stealth/"):
+            corpo.pop("response_format", None)  # o esquema já vai no texto
+        raciocinio = corpo.pop("reasoning", None)
+        if raciocinio and raciocinio.get("effort"):
+            corpo["reasoning_effort"] = raciocinio["effort"]
+    cabecalho = {"Authorization": f"Bearer {chave}"}
 
-    ultimo_erro, erros = "", 0
+    ultimo_erro, erros, pediu_sem_quebra = "", 0, False
     inicio, orcamento = time.time(), cfg.get("espera_maxima", 300)
     while erros < cfg.get("tentativas", 5) and time.time() - inicio < orcamento:
         try:
-            r = httpx.post(URL, json=corpo, headers=cabecalho, timeout=cfg.get("tempo_maximo", 180))
+            r = httpx.post(url, json=corpo, headers=cabecalho, timeout=cfg.get("tempo_maximo", 180))
         except httpx.HTTPError as e:
             ultimo_erro, erros = str(e), erros + 1
+            if cadeia and erros >= 2:
+                _fora_do_ar(rota, 2, f"sem resposta ({ultimo_erro[:80]})")
             time.sleep(min(30, 3 * 2 ** erros))
             continue
+        texto_erro = r.text.lower() if r.status_code != 200 else ""
+        if cadeia and (r.status_code in (402, 404) or (r.status_code == 403 and ("fund" in texto_erro or "balance" in texto_erro))):
+            # sem saldo nesta conta, ou o modelo saiu do ar: as próximas chamadas já vão direto para o seguinte
+            _fora_do_ar(rota, 24 * 60 if r.status_code == 404 else 30, f"{r.status_code} {r.text[:120]}")
+        if cadeia and r.status_code == 429:
+            # limite do dia dos modelos gratuitos não volta em minutos; limite por minuto volta logo
+            por_dia = "per-day" in texto_erro or "per day" in texto_erro or "daily" in texto_erro
+            _fora_do_ar(rota, 60 if por_dia else 1, f"429 {r.text[:120]}")
+        if cadeia and r.status_code in (500, 502, 503, 504) and erros >= 1:
+            _fora_do_ar(rota, 2, f"{r.status_code} do servidor")
         if r.status_code == 401:
+            if cadeia:
+                _fora_do_ar(rota, 60, "chave recusada")
             raise SystemExit("A chave do OpenRouter foi recusada. Confira o arquivo .env.")
         if r.status_code == 402:
             raise SystemExit("Acabou o crédito no OpenRouter. Adicione saldo em openrouter.ai/credits.")
@@ -152,14 +243,15 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                 + json.dumps(esquema, ensure_ascii=False))
             log("  o modelo não aceita esquema nativo, mandando o esquema no texto")
             continue
-        if r.status_code != 200:
-            raise RuntimeError(f"O OpenRouter falhou na etapa {etapa}. {r.status_code} {r.text[:300]}")
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"O {'AIMLAPI' if provedor == 'aimlapi' else 'OpenRouter'} falhou na etapa {etapa}. "
+                               f"{r.status_code} {r.text[:300]}")
         dados = r.json()
         if dados.get("error"):
             ultimo_erro, erros = str(dados["error"])[:200], erros + 1
             time.sleep(min(30, 3 * 2 ** erros))
             continue
-        _registrar(projeto, etapa, dados.get("usage"), dados.get("model"))
+        _registrar(projeto, etapa, dados.get("usage"), ("aimlapi:" if provedor == "aimlapi" else "") + str(dados.get("model") or modelo))
         escolha = (dados.get("choices") or [{}])[0]
         if escolha.get("finish_reason") == "length" or not (escolha.get("message") or {}).get("content"):
             # o modelo gastou tudo pensando e não chegou a responder: tenta de novo com o dobro de folga
@@ -182,5 +274,47 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                 f"\n\nATENÇÃO: a resposta anterior não trouxe as chaves {', '.join(faltam)}. Use exatamente os nomes "
                 "de chave do esquema.")
             continue
-        return resposta
+        quebrados = _trechos_de_outro_alfabeto(resposta)
+        if quebrados and not pediu_sem_quebra:
+            # o modelo às vezes mistura pedaços de outros alfabetos no meio do texto ("carvalhočekades",
+            # "uma composição清楚的"): pede de novo uma vez, e no fim tira o que sobrar
+            pediu_sem_quebra = True
+            log(f"  a resposta veio com texto de outro alfabeto ({', '.join(quebrados[:3])}), pedindo de novo")
+            corpo["messages"][0]["content"] = sistema + (
+                "\n\nATENÇÃO: a resposta anterior misturou caracteres de outros alfabetos (chinês, japonês, coreano, "
+                "cirílico) no meio do texto. Escreva tudo só com o alfabeto latino, em português ou em inglês.")
+            continue
+        return _sem_outro_alfabeto(resposta)
     raise RuntimeError(f"O OpenRouter não respondeu direito na etapa {etapa} ({ultimo_erro}).")
+
+
+# chinês, japonês, coreano, cirílico, árabe, hebraico, tailandês e devanágari: nada disso cabe num roteiro em
+# português, e quando aparece é ruído do modelo no meio de uma palavra
+_OUTRO_ALFABETO = re.compile(r"[Ѐ-ӿ֐-׿؀-ۿऀ-ॿ฀-๿ᄀ-ᇿ"
+                             r"぀-ヿ㐀-䶿一-鿿가-힯＀-￯]+")
+
+
+def _textos(valor):
+    if isinstance(valor, str):
+        yield valor
+    elif isinstance(valor, dict):
+        for v in valor.values():
+            yield from _textos(v)
+    elif isinstance(valor, list):
+        for v in valor:
+            yield from _textos(v)
+
+
+def _trechos_de_outro_alfabeto(resposta) -> list:
+    return [m.group() for texto in _textos(resposta) for m in _OUTRO_ALFABETO.finditer(texto)]
+
+
+def _sem_outro_alfabeto(valor):
+    """Tira os pedaços de outro alfabeto que sobraram, sem mexer no resto da resposta."""
+    if isinstance(valor, str):
+        return re.sub(r"[ \t]{2,}", " ", _OUTRO_ALFABETO.sub(" ", valor)).strip() if _OUTRO_ALFABETO.search(valor) else valor
+    if isinstance(valor, dict):
+        return {k: _sem_outro_alfabeto(v) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_sem_outro_alfabeto(v) for v in valor]
+    return valor

@@ -8,7 +8,7 @@ Quem chegou aqui provavelmente recebeu esta pasta de um amigo e nunca usou o sis
 
 Faça um passo de cada vez e confirme antes de seguir.
 
-1. **Instalação.** Confira se `uv` e `ffmpeg` existem com `uv --version` e `ffmpeg -version`. Se faltar, instale com `brew install uv ffmpeg`. Depois rode `uv sync` na pasta do projeto.
+1. **Instalação.** Confira se `uv` e `ffmpeg` existem com `uv --version` e `ffmpeg -version`. Se faltar, instale com `brew install uv ffmpeg`. Depois rode `uv sync` na pasta do projeto. Para as animações (diagramas, textos na tela, linhas do tempo e mapas), confira também o Node.js 22 ou mais com `node --version` (`brew install node`). Ele é opcional: sem ele essas cenas ficam com foto.
 2. **Chaves.** Confira se existe um `.env`. Se não existir, crie a partir do `.env.exemplo` e peça para a pessoa colar as chaves **no arquivo, nunca no chat**. As obrigatórias são `GENAIPRO_API`, `GEMINI_API_KEY`, `PEXELS_API_KEY` e `PIXABAY_API_KEY`. Teste cada uma com uma chamada barata antes de seguir (a da GenAIPro se testa de graça com `uv run fabrica creditos`). A `ELEVENLABS_API_KEY` é opcional: só serve para efeitos sonoros, música e voz por descrição.
 3. **Contato do Wikimedia.** Troque `SEU_EMAIL_AQUI` no `config.yaml` pelo e-mail da pessoa. Sem isso o Wikimedia recusa as buscas.
 4. **Claude da fábrica.** A divisão em cenas roda pela assinatura do Claude Code, com `claude -p`. Confirme que o terminal está logado. Se não estiver, peça para rodar `claude` e digitar `/login`.
@@ -34,7 +34,11 @@ uv run fabrica narrar NOME        # só a narração
 uv run fabrica cenas NOME         # o Claude divide em cenas
 uv run fabrica midia NOME         # busca fotos e vídeos reais
 uv run fabrica imagens NOME       # gera as imagens de IA que faltam
+uv run fabrica animacoes NOME     # anima diagramas, textos na tela, linhas do tempo e mapas (grátis)
+uv run fabrica trilha NOME        # o modelo compõe a trilha e o código toca (grátis)
 uv run fabrica render NOME        # monta o vídeo
+uv run fabrica render NOME --vertical   # versão em pé (9:16) para Reels e Shorts, em final_vertical.mp4
+uv run fabrica revisar-video NOME # o modelo olha o vídeo pronto e aponta problemas (grátis)
 uv run fabrica revisar NOME       # abre a página com todas as cenas
 uv run fabrica refazer NOME 12 31 # troca o que aparece nessas cenas
 uv run fabrica custo NOME         # estimativa e consumo do Claude
@@ -71,6 +75,79 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - Cena de IA cortada por citação refaz o prompt de cada fatia, para não gerar a mesma imagem repetida.
 - Material real primeiro: IA só quando o acervo não tem o assunto, com teto de 15% das cenas (`ESTILO_TETO_IA`).
 - Ao refazer cenas, o `--forcar` apaga o cache dos lotes e guarda `imagens` e `midia` em pastas `_antigas_`.
+- **Trocar a voz troca a voz, e as cenas ficam.** Cada bloco de narração guarda a assinatura da voz que o gravou (`narracao.assinatura_da_voz`: voz, modelo, estabilidade, similaridade, estilo, velocidade; ritmo e pausa ficam fora porque são ajustes grátis depois). Bloco com o mesmo texto mas outra voz é gravado de novo; bloco antigo sem assinatura tem a voz lida do custos_reais.json. Antes só o texto contava, e trocar Nelton por Leo Antonio no editor reaproveitava os blocos com a voz antiga. Ao narrar, o tempo de cada palavra da narração anterior fica em `alinhamento_anterior.json`, e `cenas.atualizar_tempos` leva cada corte de cena para o mesmo ponto da fala (`_mapa_de_tempo`); antes ele recalculava pelo começo da frase e regerar sem mudar nada levava 252 cenas a 260. As cenas só mudam se a fala desequilibrar (`_desequilibrou`, com folga de 0,5 s: abaixo de 2,5 s ou acima de 5,5 s): voz até 10% mais rápida ou mais lenta não mexe em nenhuma cena. O endereço da narração leve do editor leva a data, para o navegador não tocar a gravação antiga.
+- **Trocar a narração nunca entrega vídeo com cena faltando.** Depois de narrar de novo (`POST /narracao` e `fabrica narrar`), a fábrica continua sozinha: `corrigir.depois_da_narracao` aponta as cenas sem imagem, as que ficaram com a foto antiga mas outra fala e as repetidas; no site, `api._completar_depois_da_narracao` solta as cópias repetidas e põe a esteira da criação para andar a partir da busca (feitas = mapa, narração e cenas), com a conferência do Jev só nessas cenas (`conferir_cenas`; as de outra fala são julgadas mesmo aprovadas na captura, `conferir_forcadas`), imagens de IA se ligada, completar, nenhuma repetida, animações e trilha. O editor mostra "Em produção" e o render fica travado até terminar; trocar a narração durante a esteira é recusado. No terminal, `cli.completar_depois_da_narracao` faz a mesma sequência (no `tudo` as etapas seguintes já fazem).
+- **A imagem acompanha a fala quando a narração muda** (`cenas._levar_imagens_numeradas`, chamada em `atualizar_tempos`). A imagem de IA e a foto que a pessoa sobe do computador ficam em `imagens/NNNN.png`, pelo número da cena. Narrar de novo (outra voz, outro ritmo) divide, junta e renumera as cenas. Antes, as imagens ficavam com o número velho: a cena dona ficava sem arquivo e outra mostrava a imagem errada (no zz_teste_animacoes, 9 cenas sem arquivo e a foto da faca artesanal na cena errada). Agora cada cena antiga é achada pelas primeiras palavras dela no tempo novo (`_trechos_pela_fala`), e a imagem vai para a cena nova sem material real que cobre ao menos 35% dessa fala. A foto da pessoa (marca `imagem_da_pessoa`, que o upload grava; sem IA ligada, toda imagem numerada conta como dela) vence o acervo se não houver cena livre. Uma imagem por cena, nunca repetida: o pedaço novo de uma cena dividida (imagem numerada OU foto e vídeo de acervo, `cenas._sem_a_imagem_da_original`) fica sem arquivo, com a foto da original em `rejeitadas`, até o "Continuar carregamento" (antes ele levava uma cópia do material, e o zz_teste_animacoes narrado três vezes chegou a 68 cenas repetindo a vizinha). O material baixado leva o número da cena no nome; depois de renumerar, `midia.nome_livre` escolhe `NNNN_2.jpg` quando outra cena já usa `NNNN.jpg`, senão a foto nova apagaria a de outra cena. A estimativa do "Continuar carregamento" com a IA desligada é só o Jev (uns US$ 0,00005 por chamada, até 4 por cena). Na junção de duas cenas, o material real acompanha a busca que ficou (antes o tipo "ia" de uma vinha com o material da outra, e o editor marcava "sem arquivo" uma cena com foto de banco; o editor agora segue a regra do render: sem imagem de IA, mostra o material real). O que não tiver cena vai para `imagens/_sem_cena`, sem ser apagado.
+
+## Animações (HyperFrames)
+
+`fabrica/animacoes.py` e `fabrica/animacoes_modelos.py`, ligadas por `animacoes.ativo` no `config.yaml`. As cenas que o agente marca como `diagrama`, `texto_tela`, `linha_do_tempo` ou `mapa` (39 de 217 no ouro-da-serra-gaucha) não existem em banco de imagens e antes viravam a foto mais próxima (a iguana no "diagrama de rede clandestina", a ilha do Fogo no "diagrama da fazenda em torno do fogo de chão"). Agora viram uma animação por cima do material real da cena, escurecido, com cada elemento entrando no tempo exato da palavra falada.
+
+- **Quem faz:** o modelo principal (gratuito) escolhe um dos 8 modelos prontos (`frase`, `numero`, `contraste`, `radial`, `lista`, `fluxo`, `linha_do_tempo`, `mapa`) e preenche os textos curtos e o segundo de cada um. O design é da fábrica (`animacoes_modelos.py`). **Não deixar o modelo escrever o HTML livre:** isso foi testado e saiu ruim (elemento aparecendo antes de ser falado, elemento esquecido, layout embolado). O código (`conferir_dados`) encosta cada tempo na palavra falada mais próxima e corta texto comprido.
+- **Conferência:** o `hyperframes check --json` reprova texto sobreposto, saindo da tela e regras de animação quebradas; os erros voltam para o modelo, até `animacoes.tentativas`. Reprovada, a cena fica com a foto.
+- **Render:** o HyperFrames (Node 22+, versão fixa em `animacoes.versao`, telemetria desligada) gera `animacoes/NNNN.mp4`; o `render.py` usa o clipe no lugar da foto e tira o texto na tela da cena (a animação já traz o texto). Só vale a animação **em dia** (`animacoes.valida`): mudou a fala, o tempo, o fundo, o estilo ou o design (`animacoes_modelos.VERSAO`), volta a foto até refazer. Mudança só de fundo ou de design re-renderiza sem pedir de novo ao modelo (reaproveita `partes.json`).
+- **Onde roda:** último passo da criação pelo site (depois que toda cena tem imagem), etapa `animacoes` no `tudo` (antes do render), comando `fabrica animacoes NOME [--cenas N...] [--forcar] [--remover]` e o cartão Animação no inspetor do editor (`POST /api/projetos/NOME/cenas/N/animacao`). Cena que a pessoa mandou "voltar para a foto" fica `animacao.desligada` e a criação não anima de novo sozinha.
+- **Nunca para o vídeo:** sem Node, com a etapa desligada, offline ou com erro, a cena segue com a foto de sempre.
+- **Fontes:** Inter e Playfair Display (licença OFL) em `fabrica/recursos/fontes`. Não usar fontes do Windows, que não podem ir para os amigos.
+
+## Texto na tela no tempo da palavra
+
+`cenas._momento_falado` decide o segundo em que cada texto na tela entra: procura na fala da cena trechos de 3, 2 e 1
+palavra do texto, em qualquer posição, e fica com o **mais cedo** em que um deles é falado. Palavra curta ou vazia
+sozinha ("de", "a", "que", `_PALAVRAS_VAZIAS`) não conta. Antes valia o trecho mais comprido, e o texto entrava
+atrasado quando o fim dele era falado depois do começo.
+
+## Aprendizados do canal
+
+`fabrica/aprendizados.py`. O que a pessoa corrige no editor vira exemplo para o agente de roteiro dos próximos vídeos
+do mesmo canal (o perfil): a busca que ela digitou no lugar da do agente, a imagem que ela mesma subiu e a animação que
+ela trocou pela foto. Fica em `aprendizados/CANAL.json` (fora do Git, até 300 por canal), e as 15 mais recentes vão no
+pedido do agente como "APRENDIZADOS DO CANAL". Correção que não muda nada não entra. O texto usado num projeto fica
+congelado em `aprendizados_usados.txt`: retomar uma criação não muda o que o agente já decidiu.
+
+## Revisão do vídeo pronto
+
+`fabrica/revisao_video.py`, ligada por `revisao_video.ativo`. Depois do render (no `tudo` e no site, em segundo plano),
+o modelo principal recebe um quadro de cada cena do `final.mp4` (a 60% da cena, com o atraso da abertura de
+`render/linha.json`), 8 por pedido, e aponta tela preta, imagem que não combina, texto cortado, sobreposto ou errado,
+imagem repetida, marca-d'água e baixa qualidade. **Só aponta, não troca nada.** O resultado (`revisao_video.json`) só
+vale para o `final.mp4` de agora; no editor vira o selo "⚠ revisar" na cena e o cartão Revisão no inspetor. Nunca
+derruba o render.
+
+## Versão em pé (Reels e Shorts)
+
+`fabrica render NOME --vertical`, `fabrica tudo NOME --vertical` (monta as duas) ou o campo "Formato" na janela de
+renderizar do editor (`vertical: true` no `POST /render`). Sai em `final_vertical.mp4`, com tudo em `render_vertical/`:
+a limpeza dos clipes velhos de uma versão nunca apaga os da outra, e **o vídeo deitado não muda**.
+
+- Tela 1080x1920 pela seção `vertical` do `config.yaml`, que fica **fora** da seção `render` de propósito: os ajustes
+  do render entram no nome de cada clipe, e mexer neles faria a versão deitada de todo projeto renderizar de novo.
+- Foto ou vídeo deitado perde as laterais só até ficar quadrado (`vertical.recorte`) e fica sobre uma cópia dele
+  mesmo, desfocada (`render._encaixe` e `_preparar_foto`). Cortar para 9:16 jogaria fora dois terços da imagem.
+- Textos na tela e cartões de título são desenhados para a tela deitada e levados para a faixa do meio da tela em pé
+  (`textos.para_vertical`), longe da legenda e dos botões do app. A legenda sobe (`ESTILO_LEGENDA_VERTICAL`).
+- Sem animações (foram desenhadas para a tela deitada: a cena volta à foto com o texto na tela) e sem o quadro do
+  personagem. A revisão do vídeo pronto olha só o deitado.
+
+## Trilha e efeitos gerados
+
+`fabrica/trilha.py`, ligada por `trilha.ativo`. **Todo vídeo sai com trilha**, sem custo e sem arquivo de música.
+
+- **Partitura:** o modelo principal lê os blocos do roteiro (o campo `bloco` das cenas; projeto sem blocos é cortado
+  em trechos de uns 90 s) e escolhe, por bloco, clima, tom, modo, andamento, sequência de acordes, intensidade, pulso
+  grave e o efeito de entrada. O código confere e completa pelo clima (`CLIMAS`); sem modelo (offline ou fora do ar)
+  a partitura sai só pelas regras. Fica em `trilha/partitura.json`, com assinatura dos blocos.
+- **Som:** o código toca a partitura com numpy (colchão de acordes com as vozes andando pouco, baixo, arpejo de sino e
+  pulso grave), com fusão de 2 s na troca de bloco e ambiente pelo FFmpeg, em `trilha/trilha.wav`. Mudou o jeito de
+  tocar, sobe `trilha.VERSAO`. Um vídeo de 11 min toca em uns 45 s.
+- **Quando entra:** no render, quando o perfil não aponta músicas ou a pasta está vazia (as músicas do canal não vêm
+  no pacote); com `trilha.substituir: true`, sempre. Volume em `trilha.volume_db` (-16), abaixo do
+  `volume_musica_db` do perfil. Medido: voz em -16 LUFS e trilha em -32 LUFS.
+- **Efeitos:** passagem de ar, impacto e subida na troca de bloco (o que a partitura pediu), impacto no cartão de
+  título e um toque curto quando o texto entra na tela (cena animada não ganha). No máximo um a cada 6 s. São tocados
+  pelo código uma vez e guardados em `efeitos/gerados/`. Perfil com os efeitos da ElevenLabs ligados segue com os dele.
+- **Onde roda:** etapa `trilha` no `tudo` (antes do render), último passo da criação pelo site, `fabrica trilha NOME
+  [--forcar] [--efeitos]` e, se nada disso rodou, o próprio render. **Nunca para o vídeo:** se falhar, sai só com a voz.
 
 ## Agente de roteiro (principal do passo de cenas)
 
@@ -80,7 +157,7 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 2. **JSON de cenas** (`roteiro_cenas.json`, também no `fabrica mapa`). Feito só com o texto, antes ou junto da narração: o corte (`_pre_cortar`) usa o tempo previsto de cada frase pelo `ritmo.caracteres_por_minuto` do perfil, e para cada bloco, em lotes de `roteirista.cenas_por_lote` e com `roteirista.paralelo` blocos ao mesmo tempo, o agente decide tipo, descrição, busca, prompt, texto na tela e reaproveitamento. O que ele deixar sem resposta cai no Groq antigo. No `tudo` e no editor ele roda em paralelo com a narração.
 3. **Passo de cenas = encaixe.** Os números das frases saem só do texto, então o JSON se encaixa nas frases da narração sem nenhum modelo: o passo de cenas aplica as regras fixas de tempo e só confere os textos na tela por código. Se a narração tiver outro número de frases (roteiro mudou), o agente decide sobre os cortes reais.
 
-O que o agente decide segue adiante: `mostrar` (a descrição) vai para a escolha do acervo, para o Jev e para a busca nova das reprovadas; `overlay` vira sugestão no passo dos textos na tela; as armadilhas corrigem por código a busca que for só o nome ambíguo. Tipos de animação (`texto_tela`, `linha_do_tempo`, `mapa`, `diagrama`) ficam guardados em `visual` e, por enquanto, viram a imagem de baixo, porque a fábrica ainda não desenha animações. As regras fixas acima continuam valendo depois dele.
+O que o agente decide segue adiante: `mostrar` (a descrição) vai para a escolha do acervo, para o Jev e para a busca nova das reprovadas; `overlay` vira sugestão no passo dos textos na tela; as armadilhas corrigem por código a busca que for só o nome ambíguo. Tipos de animação (`texto_tela`, `linha_do_tempo`, `mapa`, `diagrama`) ficam guardados em `visual` e viram animação (seção Animações, acima). As regras fixas acima continuam valendo depois dele.
 
 ## Como o sistema funciona por dentro
 
@@ -115,12 +192,30 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 | Claude Code diz que não está logado | rodar `claude` no terminal e digitar `/login` |
 | Lote do Google demora demais | é normal, pode levar horas. O mesmo comando retoma o lote sem pagar de novo |
 | Pexels ou Pixabay atingem o limite | a fábrica espera sozinha e continua |
+| `'charmap' codec can't encode characters` derruba a esteira | o backend no Windows gravava o fabrica.log na codificação antiga e caía com um pedaço em chinês do modelo. `cli.main` força UTF-8 na saída desde 2026-10-03; se voltar, confira se alguém tirou isso |
+| Completar cenas depois de trocar a narração demora | a escolha das fotos roda `midia.escolhas_ao_mesmo_tempo` lotes de 6 cenas juntos (4; antes 2, uma cena por minuto). O ritmo depende também do limite de buscas do Pixabay e do Unsplash |
 
 ## Quem responde cada etapa
 
-**Um modelo só para tudo que não é o juiz:** `openrouter.modelo_principal` no `config.yaml`, hoje o
-`stealth/space-bunny-alpha` (OpenRouter; lê até 1 milhão de tokens, enxerga texto, imagem e vídeo, e hoje é
-gratuito). **MiMo, Groq e Gemini não são mais usados** em nenhuma etapa. O Jev continua sendo o juiz.
+**Uma cadeia de modelos principais para tudo que não é o juiz:** `openrouter.principais` no `config.yaml`, em ordem:
+o Space Bunny pela AIMLAPI (`aimlapi:stealth/space-bunny-alpha`, chave `aimlapi_api` no `.env`), o Space Bunny do
+OpenRouter (sai do ar em 5/10/2026) e o `qwen/qwen3.8-27b:free`. Quando um não atende (sem saldo, limite do dia dos
+gratuitos, retirado do ar, servidor cheio), `openrouter_local.perguntar` passa na hora para o seguinte e deixa o que
+caiu de lado um tempo (`_FORA_DO_AR`): nunca esperar. Comparação de 2026-10-03 nos testes da fábrica (descrever foto,
+escolher entre imagens, compor a trilha, dividir o roteiro): o Qwen gratuito passou em tudo, com português mais limpo
+que o Space Bunny; Gemma gratuita vivia lotada (429), Inkling só serve em ferramenta de agente, Dots falha com imagem.
+O limite dos gratuitos na conta é de 1.000 chamadas por dia, e um vídeo usa de 1.200 a 2.300: por isso a cadeia. O
+Space Bunny da AIMLAPI vem do mesmo espaço stealth do OpenRouter, e a AIMLAPI exige saldo até para ele.
+**MiMo, Groq e Gemini não são mais usados** em nenhuma etapa. O Jev continua sendo o juiz.
+
+**Voz grátis: Fish Audio** (`fabrica/fish.py`, `voz.provedor: fish`), no lugar do Edge-TTS, pelo OpenRouter
+(`fish-audio/s2.1-pro-free:free`); as vozes são as da biblioteca pública da Fish (`GET /api/vozes/fish`, com amostra),
+e no editor o botão Fish Audio usa a mesma grade de vozes da GenAIPro. A Fish devolve só o áudio: o tempo de cada
+palavra vem da transcrição (`fish.palavras_com_tempo`, Whisper turbo, casando as palavras ouvidas com as do roteiro)
+e, sem saldo para ela, de `narracao._palavras_estimadas`, que casa cada ponto e vírgula do roteiro com a pausa real do
+áudio (limite de silêncio ajustado ao volume, `_pausas_da_voz`, porque a Fish tem chiado perto de -35 dB). Medido no
+áudio do Edge, que informa o tempo real: erro médio de 0,08 s por palavra. Projeto antigo com Edge continua
+funcionando; no editor ele aparece como Fish e regerar troca a voz.
 
 | Etapa | Quem responde |
 |---|---|
@@ -131,12 +226,13 @@ gratuito). **MiMo, Groq e Gemini não são mais usados** em nenhuma etapa. O Jev
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
 
 Cuidados com esse modelo, que já custaram erro:
+- Ele **mistura pedaços de outros alfabetos** no meio do texto ("uma composição清楚的", "esteiras스타일"). `openrouter_local.perguntar` pede de novo uma vez quando a resposta traz chinês, japonês, coreano, cirílico, árabe e afins, e no fim tira o que sobrar (`_sem_outro_alfabeto`). Acentos do português ficam.
 - Ele **ignora o `response_format`** e inventa os nomes das chaves. Por isso `openrouter_local.perguntar` põe o
   esquema também no texto e **confere se as chaves obrigatórias vieram**, pedindo de novo quando não vêm.
 - Ele **pensa antes de responder**: sem `raciocinio_por_modelo: stealth/: low`, gastava todo o limite pensando e
   não entregava a resposta.
 - É um modelo "stealth": gratuito e em teste, pode ter limite de uso, ficar fora do ar ou sumir do OpenRouter.
-  Para trocar, basta mudar `openrouter.modelo_principal` no `config.yaml`.
+  Para trocar ou reordenar, mude a lista `openrouter.principais` no `config.yaml`.
 
 ## Custo real, medido
 
@@ -148,13 +244,18 @@ entram, porque não geraram cobrança nova. Os modelos de texto gravam os própr
 - `uv run fabrica custo NOME` mostra a estimativa e, embaixo, o gasto real por categoria, por
   minuto de vídeo e por cena.
 - O botão **Custos** do editor mostra o mesmo.
-- O preço do caractere de narração sai da seção `assinaturas` do `config.yaml`: preço do plano
-  dividido pela franquia do mês. Sem assinatura, vale a tarifa avulsa de `precos`.
+- **Narração em créditos, medida no saldo.** A GenAIPro cobra em créditos (US$ 22 por 1 milhão, `assinaturas.genaipro`)
+  e **não é 1 crédito por caractere**: 10.543 caracteres gastaram 676 créditos (uns 0,064 por caractere, turbo v2.5),
+  e o Custos mostrava uns 15 vezes o gasto real. A GenAIPro não informa o gasto de cada tarefa, então
+  `narracao.narrar` lê o saldo antes e depois (`_registrar_gasto_da_narracao`) e grava os créditos de verdade. A média
+  medida de cada modelo fica em `genaipro_medido.json` (fora do Git) e vale para a estimativa; sem medida, vale
+  `genaipro.creditos_por_caractere` do `config.yaml`. Registro antigo (1 crédito por caractere) é recalculado na hora
+  de mostrar. Diferença de saldo zero ou maior que os caracteres (outra narração ao mesmo tempo) vira estimativa.
 - O Groq é do plano gratuito e conta zero. OpenRouter e Jev informam o custo real de cada
   chamada. O Gemini é calculado pelos preços por milhão de tokens do `config.yaml`.
 
 ## Custo real, para calibrar
 
-Um vídeo de 36 minutos com 250 cenas, 60% de material real e 94 imagens saiu por uns US$ 5,60, algo como US$ 0,16 por minuto. A narração foi US$ 1,91 na ElevenLabs; na GenAIPro (US$ 22 por 1 milhão de caracteres, `assinaturas.genaipro` no `config.yaml`) a mesma narração sai por volta de US$ 0,70, uns US$ 0,02 por minuto. O resto foi imagem. O Claude pela assinatura não custa nada além da mensalidade.
+Um vídeo de 36 minutos com 250 cenas, 60% de material real e 94 imagens saiu por uns US$ 5,60, algo como US$ 0,16 por minuto. A narração foi US$ 1,91 na ElevenLabs; na GenAIPro (US$ 22 por 1 milhão de créditos, uns 0,064 crédito por caractere) a mesma narração sai por volta de US$ 0,05, uns US$ 0,0013 por minuto. O resto foi imagem. O Claude pela assinatura não custa nada além da mensalidade.
 
 Sempre informe o custo total **e o custo por minuto** quando falar de dinheiro.

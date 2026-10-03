@@ -20,7 +20,7 @@ _trava = threading.Lock()
 
 # categoria -> (rótulo, nome da unidade medida)
 CATEGORIAS = {
-    "narracao": ("Narração", "caracteres"),
+    "narracao": ("Narração", "créditos"),
     "efeito": ("Efeitos sonoros", "segundos"),
     "imagem": ("Imagens de IA", "imagens"),
     "cenas": ("Divisão de cenas", "tokens"),
@@ -30,17 +30,61 @@ CATEGORIAS = {
 }
 
 
-def preco_por_caractere(config) -> tuple:
-    """Quanto custa um caractere de narração e de onde esse preço vem.
+# Créditos da GenAIPro gastos por caractere narrado. NÃO é 1 crédito por caractere: o saldo mostrou 676 créditos
+# para os 10.543 caracteres do zz_teste_animacoes (eleven_turbo_v2_5), uns 0,064 por caractere. Antes a fábrica
+# contava 1 por caractere e o Custos mostrava uns 15 vezes o gasto real. Cada narração mede o saldo antes e depois
+# (narracao.narrar) e guarda a medida em genaipro_medido.json; a estimativa usa a média medida de cada modelo.
+CREDITOS_POR_CARACTERE_PADRAO = 0.064
+ARQUIVO_MEDIDAS = "genaipro_medido.json"
 
-    Com assinatura, o caractere vale o que a mensalidade cobra por ele (preço do plano dividido
-    pela franquia do mês). Sem assinatura, vale a tarifa avulsa da API.
-    """
+
+def _medidas() -> dict:
+    from .config import RAIZ
+
+    arquivo = RAIZ / ARQUIVO_MEDIDAS
+    try:
+        return json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def creditos_por_caractere(config, modelo: str = "") -> tuple:
+    """Créditos gastos por caractere e de onde o número vem (medido no saldo ou o padrão do config)."""
+    medida = (_medidas().get("modelos") or {}).get(modelo or "") or {}
+    if medida.get("caracteres", 0) >= 2000 and medida.get("creditos", 0) > 0:
+        return medida["creditos"] / medida["caracteres"], "medido no saldo da GenAIPro"
+    padrao = (config.get("genaipro") or {}).get("creditos_por_caractere", CREDITOS_POR_CARACTERE_PADRAO)
+    return float(padrao), "medida padrão"
+
+
+def guardar_medida(modelo: str, caracteres: int, creditos: float) -> None:
+    """Soma uma narração medida pelo saldo à média do modelo."""
+    from .config import RAIZ
+
+    with _trava:
+        dados = _medidas()
+        modelos = dados.setdefault("modelos", {})
+        m = modelos.setdefault(modelo or "?", {"caracteres": 0, "creditos": 0, "narracoes": 0})
+        m["caracteres"] += int(caracteres)
+        m["creditos"] += float(creditos)
+        m["narracoes"] += 1
+        (RAIZ / ARQUIVO_MEDIDAS).write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def preco_por_credito(config) -> tuple:
+    """Quanto custa um crédito da GenAIPro e de onde esse preço vem (pacote: preço dividido pelos créditos)."""
     plano = plano_da_voz(config)
     mensal, incluido = plano.get("preco_mensal", 0) or 0, plano.get("incluido_no_mes", 0) or 0
     if mensal > 0 and incluido > 0:
         return mensal / incluido, f"pacote {plano.get('plano', 'GenAIPro')}"
     return preco_avulso_por_mil(config) / 1000, "tarifa avulsa da API"
+
+
+def preco_por_caractere(config, modelo: str = "") -> tuple:
+    """Quanto custa, de verdade, um caractere de narração: créditos por caractere vezes o preço do crédito."""
+    por_credito, origem = preco_por_credito(config)
+    creditos, _ = creditos_por_caractere(config, modelo)
+    return por_credito * creditos, origem
 
 
 def plano_da_voz(config) -> dict:
@@ -124,6 +168,22 @@ def _uso_dos_modelos(projeto) -> list:
     return linhas
 
 
+def _narracao_em_creditos(h: dict, config, por_credito: float) -> dict:
+    """Registro de narração com o valor em créditos de verdade.
+
+    Os registros antigos contavam 1 crédito por caractere (unidades = caracteres, sem "creditos" nos detalhes):
+    são recalculados pelos créditos por caractere medidos, e ficam marcados como estimados."""
+    detalhes = dict(h.get("detalhes") or {})
+    if detalhes.get("provedor", "genaipro") != "genaipro" or "creditos" in detalhes:
+        return h
+    caracteres = detalhes.get("caracteres") or h.get("unidades") or 0
+    taxa, _ = creditos_por_caractere(config, detalhes.get("modelo", ""))
+    creditos = caracteres * taxa
+    detalhes.update({"caracteres": caracteres, "creditos": round(creditos, 1), "estimado": True})
+    return {**h, "valor_usd": round(creditos * por_credito, 6), "unidades": round(creditos, 1), "detalhes": detalhes,
+            "motivo": h.get("motivo", "") + " (recalculado: a conta antiga usava 1 crédito por caractere)"}
+
+
 def resumo(projeto) -> dict:
     """Tudo o que este vídeo custou: o que foi cobrado por chamada mais o que os modelos de texto gastaram."""
     itens = historico(projeto)
@@ -131,6 +191,11 @@ def resumo(projeto) -> dict:
 
     por_categoria: dict = {}
     medidas: dict = {}
+    por_credito, _ = preco_por_credito(projeto.config)
+    itens = [_narracao_em_creditos(h, projeto.config, por_credito) if h["categoria"] == "narracao" else h
+             for h in itens]
+    caracteres_narrados = sum((h.get("detalhes") or {}).get("caracteres", 0) for h in itens
+                              if h["categoria"] == "narracao")
     for h in itens:
         por_categoria[h["categoria"]] = por_categoria.get(h["categoria"], 0.0) + h["valor_usd"]
         if h.get("unidades"):
@@ -149,7 +214,7 @@ def resumo(projeto) -> dict:
 
     por_unidade, origem_narracao = preco_por_caractere(projeto.config)
     plano = plano_da_voz(projeto.config)
-    caracteres = medidas.get("narracao", 0)
+    creditos = medidas.get("narracao", 0)
     return {
         "total_usd": round(total, 4),
         "por_minuto_usd": round(total / minutos, 4) if minutos else 0,
@@ -162,16 +227,18 @@ def resumo(projeto) -> dict:
         "unidades": {k: v[1] for k, v in CATEGORIAS.items()},
         "modelos_de_texto": sorted(modelos, key=lambda m: -m["custo_usd"]),
         "narracao": {
-            "caracteres": round(caracteres),
+            "caracteres": round(caracteres_narrados),
+            "creditos": round(creditos, 1),
             "origem_do_preco": origem_narracao,
-            "preco_por_mil": round(por_unidade * 1000, 4),
+            "preco_por_mil": round(por_unidade * 1000, 6),
+            "preco_por_credito": por_credito,
             "plano": plano.get("plano", ""),
             "preco_mensal": plano.get("preco_mensal", 0),
             "incluido_no_mes": plano.get("incluido_no_mes", 0),
-            "fatia_da_franquia": (round(caracteres / plano["incluido_no_mes"] * 100, 1)
+            "fatia_da_franquia": (round(creditos / plano["incluido_no_mes"] * 100, 3)
                                   if plano.get("incluido_no_mes") else 0),
-            "videos_por_mes": (int(plano["incluido_no_mes"] // caracteres)
-                               if plano.get("incluido_no_mes") and caracteres else 0),
+            "videos_por_mes": (int(plano["incluido_no_mes"] // creditos)
+                               if plano.get("incluido_no_mes") and creditos else 0),
         },
         "itens": sorted(itens, key=lambda h: h["quando"], reverse=True),
     }

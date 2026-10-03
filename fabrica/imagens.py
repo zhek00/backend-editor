@@ -546,6 +546,8 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
             c["midia"] = None
         if digitada:
             _a_busca_da_pessoa_manda(c, digitada, busca)
+            from . import aprendizados
+            aprendizados.registrar(projeto, c, "busca", digitada)
         if escolheu_real:
             c["tipo"] = tipo if tipo in midia.TIPOS_REAIS else (c.get("tipo") if c.get("tipo") in midia.TIPOS_REAIS else "foto_real")
             # uma cena que era de IA não tem busca: os termos saem do prompt ou do texto dela

@@ -474,6 +474,9 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
     por_lote = cfg.get("cenas_por_lote", 10)
     mapa_texto = _mapa_para_o_modelo(m)
     perfil_texto = _perfil_do_nicho(projeto)
+    from . import aprendizados
+    # o que a pessoa corrigiu em vídeos anteriores do canal, congelado neste projeto na primeira vez
+    aprendido = aprendizados.texto_para_o_agente(projeto)
 
     por_bloco = {}
     for k, corte in enumerate(cortes):
@@ -506,6 +509,7 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
                 resumo = "(nenhuma, é o começo do vídeo)"
             trechos = "\n".join(_linhas(unidades, cortes, k) for k in lote)
             pedido = (f"MAPA DO VÍDEO:\n{mapa_texto}\n\nPERFIL DO NICHO:\n{perfil_texto}\n\n"
+                      + (f"APRENDIZADOS DO CANAL:\n{aprendido}\n\n" if aprendido else "") +
                       f"ÚLTIMAS CENAS DO BLOCO ANTERIOR (para manter continuidade):\n{resumo}\n\n"
                       f"BLOCO ATUAL: {bloco['id']}. {bloco['nome']} (âncora: {bloco['ancora']})\n\n"
                       f"TRECHOS DESTE BLOCO (devolva exatamente {len(lote)} cenas, de {lote[0] + 1} a {lote[-1] + 1}):\n{trechos}")

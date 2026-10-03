@@ -714,7 +714,9 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
         tamanho = geral.get("cenas_por_escolha", 6)
         lotes = [com_opcoes[i:i + tamanho] for i in range(0, len(com_opcoes), tamanho)]
         log(f"  a escolha será feita em {len(lotes)} rodada(s)")
-        processos = (projeto.config.get("claude") or {}).get("processos", 2)
+        # lotes de escolha ao mesmo tempo. Quem escolhe é o modelo principal (gratuito); o claude.processos antigo
+        # (2) deixava a troca de narração do zz_teste_animacoes buscando 138 cenas a menos de 2 por minuto
+        processos = geral.get("escolhas_ao_mesmo_tempo") or (projeto.config.get("claude") or {}).get("processos", 2)
         # um lote que falha (cota do modelo, rede) não derruba os outros: cada um é tratado à parte,
         # e os que já estavam decididos em cache continuam sendo baixados
         interrupcao = None
@@ -1517,6 +1519,16 @@ def cenas_repetidas(projeto) -> list[int]:
 def tirar_repetidas(projeto, log=print) -> list[int]:
     """Varredura final, regra fixa: JAMAIS repetir imagem. Cena com imagem repetida perde a cópia (que entra em
     rejeitadas) e busca uma imagem nova do assunto. Roda no fim da conferência e no fim da criação."""
+    repetidas = soltar_repetidas(projeto)
+    if not repetidas:
+        return []
+    log(f"  {len(repetidas)} cena(s) com imagem repetida: buscando imagem nova ({', '.join(map(str, repetidas))})")
+    buscar(projeto, apenas=set(repetidas), log=log)
+    return repetidas
+
+
+def soltar_repetidas(projeto) -> list[int]:
+    """A cena com imagem repetida perde a cópia (que entra em rejeitadas) e volta a esperar material, sem buscar."""
     repetidas = cenas_repetidas(projeto)
     if not repetidas:
         return []
@@ -1529,23 +1541,46 @@ def tirar_repetidas(projeto, log=print) -> list[int]:
             c.pop("conferencia", None)
             c["captura"] = {}
     projeto.salvar_json("cenas.json", dados)
-    log(f"  {len(repetidas)} cena(s) com imagem repetida: buscando imagem nova ({', '.join(map(str, repetidas))})")
-    buscar(projeto, apenas=set(repetidas), log=log)
     return repetidas
+
+
+def nome_livre(projeto, n: int, sufixos: tuple) -> str:
+    """Base do nome (midia/NNNN, midia/NNNN_2...) cujos arquivos nenhuma OUTRA cena usa.
+
+    O material baixado leva o número da cena no nome. Depois que a narração muda e as cenas são renumeradas, a cena
+    129 pode estar usando midia/0111.jpg: gravar a foto nova da cena 111 com esse nome trocaria a foto da 129."""
+    usados = set()
+    try:
+        for c in projeto.ler_json("cenas.json").get("cenas", []):
+            if c.get("n") == n:
+                continue
+            m = c.get("midia") or {}
+            for chave in ("arquivo", "capa"):
+                if m.get(chave):
+                    usados.add(str(m[chave]).replace("\\", "/"))
+    except (OSError, ValueError, KeyError):
+        pass
+    k = 1
+    while True:
+        base = f"{n:04d}" if k == 1 else f"{n:04d}_{k}"
+        if not any(f"midia/{base}{s}" in usados for s in sufixos):
+            return base
+        k += 1
 
 
 def _baixar_midia(projeto, cena, candidato, http):
     n = cena["n"]
     if candidato["tipo"] == "video":
-        arquivo = projeto.caminho("midia", f"{n:04d}.mp4")
+        base = nome_livre(projeto, n, (".mp4", "_capa.jpg"))
+        arquivo = projeto.caminho("midia", f"{base}.mp4")
         _baixar(http, candidato["arquivo"], arquivo)
-        capa = projeto.caminho("midia", f"{n:04d}_capa.jpg")
+        capa = projeto.caminho("midia", f"{base}_capa.jpg")
         try:
             _baixar(http, candidato["miniatura"], capa)
         except httpx.HTTPError:
             capa = None
     else:
-        arquivo = projeto.caminho("midia", f"{n:04d}.jpg")
+        arquivo = projeto.caminho("midia", f"{nome_livre(projeto, n, ('.jpg',))}.jpg")
         _baixar(http, candidato["arquivo"], arquivo)
         _garantir_jpeg(arquivo)
         capa = arquivo

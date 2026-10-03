@@ -22,11 +22,22 @@ assinaturas:
   genaipro:
     plano: GenAIPro 1 milhão          # só para aparecer no relatório
     preco_mensal: 22.00                # US$ pagos pelo pacote
-    incluido_no_mes: 1000000           # créditos do pacote. Todos os modelos gastam 1 crédito por caractere
+    incluido_no_mes: 1000000           # créditos do pacote (US$ 0,000022 por crédito)
+
+# Voz grátis: Fish Audio pelo OpenRouter, no lugar do Edge-TTS (perfil ou editor com voz.provedor: fish e o código
+# da voz da biblioteca da Fish em voz.voice_id). O tempo de cada palavra vem da transcrição (uns centavos por vídeo,
+# precisa de US$ 0,50 de saldo no OpenRouter); sem ela, é estimado pelas pausas do áudio
+fish:
+  modelo: fish-audio/s2.1-pro-free:free
+  transcricao: openai/whisper-large-v3-turbo
+  blocos_ao_mesmo_tempo: 3
 
 # Narração. A chave fica no .env, em GENAIPRO_API. O saldo aparece no editor e em uv run fabrica creditos.
 genaipro:
   url: https://genaipro.io/api
+  # créditos gastos por caractere. NÃO é 1: o saldo mostrou 676 créditos para 10.543 caracteres (turbo v2.5).
+  # Cada narração mede o saldo antes e depois e a média medida (genaipro_medido.json) passa a valer no lugar deste
+  creditos_por_caractere: 0.064
 
 cenas:
   provedor: groq              # ignorado: cenas, textos e buscas usam openrouter.modelo_principal
@@ -65,6 +76,14 @@ openrouter:
   # modelo de texto e de visão de TODA a fábrica (agente, cenas, textos na tela, escolha das fotos, descrição das
   # imagens). MiMo, Groq e Gemini não são mais usados. O Jev continua sendo o juiz.
   modelo_principal: stealth/space-bunny-alpha
+  # os principais, em ordem: quando um não atende (sem saldo, limite do dia dos gratuitos, retirado do ar), a
+  # chamada passa na hora para o seguinte, e ele fica de lado um tempo. "aimlapi:" na frente vai pela AIMLAPI
+  # (chave aimlapi_api no .env). O Space Bunny sai do OpenRouter em 5/10/2026; o Qwen gratuito tem 1.000
+  # chamadas por dia na conta (um vídeo usa de 1.200 a 2.300)
+  principais:
+    - aimlapi:stealth/space-bunny-alpha
+    - stealth/space-bunny-alpha
+    - qwen/qwen3.8-27b:free
   raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high
     xiaomi/mimo: nenhum         # com o raciocínio ligado, alguns lotes de cenas gastavam tudo pensando e voltavam vazios
     stealth/: low               # o Space Bunny pensa antes de responder: sem limite, gastava tudo pensando numa descrição
@@ -109,6 +128,7 @@ midia:
   candidatos_conferidos: 3   # quantos candidatos testar por cena. Se nenhum passar, fica o de maior nota, sob suspeita
   contato: "jonathansantost99@gmail.com"   # o Wikimedia só libera buscas com um contato no pedido
   processos: 4               # cenas buscando material real ao mesmo tempo
+  escolhas_ao_mesmo_tempo: 4 # lotes de 6 cenas escolhidos e conferidos ao mesmo tempo pelo modelo principal e pelo Jev
   candidatos: 12             # fotos ou vídeos mostrados ao modelo por cena (com 9 bancos, 8 era pouco)
   cenas_por_escolha: 6       # cenas mostradas ao Claude em cada rodada de escolha
   espera_maxima: 3600        # segundos que a fábrica espera quando uma fonte atinge o limite de buscas
@@ -133,3 +153,39 @@ jev:
   julgar_com: jev             # jev: o juiz da TypeSafe pelo OpenRouter (pago, uns US$ 0,00005 por cena).
                               # principal: o modelo principal julga as mesmas perguntas (hoje gratuito). Para usar
                               # só num processo, sem mexer no servidor no ar: FABRICA_JULGAR_COM=principal
+
+# Animações das cenas de diagrama, texto na tela, linha do tempo e mapa (HyperFrames, roda no PC, gratuito).
+# Precisa do Node.js 22 ou mais (nodejs.org). Sem ele, ou com ativo: false, essas cenas seguem com foto.
+animacoes:
+  ativo: true
+  versao: 0.8.113             # versão fixa do HyperFrames: atualização dele não muda vídeo sem aviso
+  paralelo: 2                 # cenas animadas ao mesmo tempo (cada uma abre um Chrome escondido)
+  tentativas: 3               # pedidos ao modelo quando a animação reprova na conferência
+  tipos: [diagrama, texto_tela, linha_do_tempo, mapa]
+  # estilo:                   # cores do canal (também dá para pôr no perfil, em animacoes.estilo)
+  #   destaque: "#E8A33D"
+  #   texto: "#F3EBDD"
+  #   escurecer: 0.62          # quanto o material real escurece por trás da animação
+
+# Revisão do vídeo pronto: depois do render, o modelo principal (gratuito) olha um quadro de cada cena do final.mp4
+# e aponta tela preta, imagem que não combina, texto cortado ou por cima da legenda. Só aponta, não troca nada.
+revisao_video:
+  ativo: true
+
+# Versão em pé (9:16) para Reels e Shorts: fabrica render NOME --vertical (ou "Formato" na janela de renderizar).
+# Sai em final_vertical.mp4, com pastas próprias (render_vertical); o vídeo deitado não muda.
+vertical:
+  largura: 1080
+  altura: 1920
+  recorte: 1.0                # a foto ou vídeo deitado perde as laterais até ficar quadrado, sobre o fundo desfocado
+  # estilo_legenda: "..."     # estilo da legenda só na versão em pé
+
+# Trilha e efeitos compostos pelo modelo principal e tocados pelo código (grátis). Entram quando o perfil não tem
+# músicas próprias, ou sempre com substituir: true. fabrica trilha NOME --forcar pede uma partitura nova.
+trilha:
+  ativo: true
+  substituir: false
+  volume_db: -16              # volume da trilha gerada (o volume_musica_db do perfil tem prioridade)
+  efeitos: true               # passagem, impacto, subida e toque, nos momentos que a partitura e as cenas pedem
+  toque_no_texto: true
+  volume_efeitos_db: 0        # ajuste geral dos efeitos gerados

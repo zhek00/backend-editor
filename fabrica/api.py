@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cenas, corrigir, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, fish, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -307,9 +307,14 @@ def _esteira(nome: str, task_id: str) -> None:
     with TAREFAS_LOCK:
         feitas = set(TAREFAS[task_id].setdefault("feitas", []))
     # projeto de antes da esteira: o que já está no disco conta como feito
+    with TAREFAS_LOCK:
+        # depois de uma troca de narração: as cenas que ficaram sem imagem ou mudaram de fala (conferir_cenas) e,
+        # delas, as que mudaram de fala com a foto antiga (conferir_forcadas), que o Jev julga de novo
+        conferir_cenas = TAREFAS[task_id].get("conferir_cenas")
+        conferir_forcadas = set(TAREFAS[task_id].get("conferir_forcadas") or [])
     if p.existe("cenas.json"):
         feitas |= {"mapa", "narracao", "cenas"}
-        if (p.pasta / "conferir").exists():
+        if (p.pasta / "conferir").exists() and conferir_cenas is None:
             feitas.add("conferir")  # a conferência paga o Jev: a que já rodou não roda de novo
 
     def marcar(etapa):
@@ -382,7 +387,11 @@ def _esteira(nome: str, task_id: str) -> None:
         cap = c.get("captura") or {}
         return cap.get("conferida") and not cap.get("suspeita") and (cap.get("nota") or 0) >= minima
 
-    na_duvida = {c["n"] for c in corrigir.conferiveis(p) if not aprovada_na_captura(c)}
+    if conferir_cenas is None:
+        na_duvida = {c["n"] for c in corrigir.conferiveis(p) if not aprovada_na_captura(c)}
+    else:
+        na_duvida = {c["n"] for c in corrigir.conferiveis(p, numeros=set(conferir_cenas))
+                     if c["n"] in conferir_forcadas or not aprovada_na_captura(c)}
     if "conferir" not in feitas and cfg_corr.get("automatico", True) and na_duvida:
         _atualizar(task_id, etapa="conferir", passo_atual=4, progresso_pct=78,
                    mensagem=f"Conferindo as {len(na_duvida)} cena(s) que ficaram na dúvida na captura...")
@@ -432,6 +441,27 @@ def _esteira(nome: str, task_id: str) -> None:
         raise ParadaPrecisaDeVoce(
             f"Os bancos de imagens não têm nenhuma foto destes assuntos: {lista}. Suba uma foto dessas cenas no editor "
             "(ou ligue a IA no config.yaml) e clique em Retomar.")
+
+    # PASSO 7: diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames, gratuito). É uma
+    # melhoria: a cena que não der para animar continua com a foto, e uma falha aqui nunca para o vídeo
+    if animacoes.ligada(p):
+        _atualizar(task_id, etapa="animacoes", progresso_pct=97,
+                   mensagem="Animando os diagramas, textos na tela e mapas no tempo da narração...")
+        try:
+            resumo_anim = animacoes.gerar(p, log=log_w, trava=trava_do_projeto(nome))
+            _atualizar(task_id, animacoes={"feitas": resumo_anim["feitas"], "prontas": resumo_anim["prontas"],
+                                           "ficaram_com_foto": sorted(resumo_anim["falharam"])})
+        except (Exception, SystemExit) as erro_anim:
+            log_w(f"  as animações falharam, as cenas seguem com foto: {erro_anim}")
+
+    # PASSO 8: o modelo compõe a trilha pelos blocos do roteiro e o código toca (gratuito). Se falhar aqui, o render
+    # tenta de novo; e o vídeo nunca deixa de sair por causa dela
+    if trilha.ligada(p):
+        _atualizar(task_id, etapa="trilha", progresso_pct=98, mensagem="Compondo a trilha sonora do vídeo...")
+        try:
+            trilha.gerar(p, log=log_w)
+        except (Exception, SystemExit) as erro_trilha:
+            log_w(f"  a trilha não saiu agora, o render tenta de novo: {erro_trilha}")
 
     _atualizar(task_id, status="concluido", etapa="concluido", passo_atual=5, total_passos=5, progresso_pct=100,
                mensagem="Cenas prontas com sucesso! Tudo pronto para renderizar.", pronto_para_edicao=True,
@@ -510,7 +540,7 @@ class ImagensAjustesPayload(BaseModel):
 
 class VozAjustesPayload(BaseModel):
     """Ajustes de voz só deste projeto (GenAIPro ou Edge-TTS), sem tocar no perfil do canal."""
-    provedor: Optional[str] = None  # "genaipro" ou "edge-tts" ("elevenlabs" é o nome antigo da GenAIPro)
+    provedor: Optional[str] = None  # "genaipro", "fish" (grátis) ou "edge-tts" (antigo; "elevenlabs" = GenAIPro)
     voice_id: Optional[str] = None
     nome: Optional[str] = None
     idioma: Optional[str] = None  # "pt", "es" ou "en" — só pra lembrar a aba certa ao reabrir
@@ -554,6 +584,7 @@ class RenderPayload(BaseModel):
     opcoes: Optional[RenderOpcoesPayload] = None
     cenas_confirmadas: Optional[List[CenaConfirmada]] = None
     sem_avatar: bool = True
+    vertical: bool = False  # versão em pé (9:16) para Reels e Shorts, em final_vertical.mp4; a deitada fica como está
 
 
 class SalvarCenasPayload(BaseModel):
@@ -619,6 +650,9 @@ def definir_midia_manual(projeto: Projeto, cena_n: int, arquivo_bytes: bytes, no
 
         cena["tipo"] = "ia"
         cena["midia"] = None
+        # a foto fica em imagens/NNNN.png, pelo número da cena: a marca faz ela acompanhar a cena e vencer o acervo
+        # quando a narração muda e as cenas são renumeradas (cenas._levar_imagens_numeradas)
+        cena["imagem_da_pessoa"] = True
 
     projeto.salvar_json("cenas.json", dados)
     return cena
@@ -661,7 +695,18 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
             capa_url = _url_com_versao(f"/arquivos/{projeto.nome}/{midia_info['capa'].replace(os.sep, '/')}", arq_capa)
 
     # URL principal a ser exibida no frontend
-    url_principal = midia_url if (tipo in ("foto_real", "video_real") and midia_url) else img_ia_url
+    # a mesma regra do render (origem_da_cena): sem imagem de IA, a cena com material real mostra o material, mesmo
+    # com tipo "ia". Na junção de cenas o tipo de uma vinha para a outra sem o material, e a cena com foto de banco
+    # aparecia como "sem arquivo" no editor, embora o render usasse a foto
+    url_principal = midia_url if (midia_url and (tipo in ("foto_real", "video_real") or not img_ia_existe)) else img_ia_url
+    # cena de diagrama, texto na tela, linha do tempo ou mapa: a animação em dia aparece no lugar da foto
+    animada = _animacao_valida(projeto, cena)
+    if animada is not None:
+        url_principal = _url_com_versao(f"/arquivos/{projeto.nome}/{animada.relative_to(projeto.pasta).as_posix()}", animada)
+    try:
+        situacao_animacao = animacoes.situacao(projeto, cena) if animacoes.config(projeto).get("ativo", True) else ""
+    except (OSError, KeyError, TypeError, ValueError):
+        situacao_animacao = ""
 
     # versões leves para o editor: miniatura da timeline e prévia do player, em vez do original pesado
     thumb_url = previa_url = None
@@ -700,6 +745,8 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
         origem_badge = f"Foto Real ({fonte_nome})"
     else:
         origem_badge = tipo_efetivo
+    if animada is not None:
+        origem_badge = "Animação"
 
     # Efeito sonoro (SFX)
     efeito_url = None
@@ -731,6 +778,11 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
         "sem_arquivo": url_principal is None,
         "origem_badge": origem_badge,
         "efeito_url": efeito_url,
+        # "pronta", "desatualizada" (a cena mudou depois), "desligada" (a pessoa preferiu a foto), "possivel" ou ""
+        "animacao_situacao": situacao_animacao,
+        "animada": animada is not None,
+        # o que a revisão do vídeo pronto apontou nesta cena (vale para o final.mp4 de agora)
+        "revisao": revisao_video.problemas_da_cena(projeto, n, _revisao_atual(projeto)),
     }
 
 
@@ -840,7 +892,16 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
     # Ajuste de voz e de imagens só deste projeto, sem tocar no perfil do canal. Fica no projeto.json,
     # então vale também quando a criação é retomada depois de um reinício
     p = Projeto(nome)
-    if payload.voz_provedor in ("genaipro", "elevenlabs"):
+    if payload.voz_provedor == "fish":
+        # a voz grátis: Fish Audio pelo OpenRouter, no lugar do Edge-TTS
+        p.definir_voz_override({
+            "provedor": "fish",
+            "voice_id": payload.voz_id,
+            "nome": payload.voz_nome,
+            "idioma": payload.voz_idioma,
+            "velocidade": payload.voz_velocidade,
+        })
+    elif payload.voz_provedor in ("genaipro", "elevenlabs"):
         p.definir_voz_override({
             "provedor": "genaipro",
             "voice_id": payload.voz_id or payload.voz_elevenlabs_id,
@@ -1024,6 +1085,30 @@ def listar_vozes_genaipro(idioma: str = "pt", busca: str = "", genero: str = "",
     return {**base, "vozes": vozes}
 
 
+_CACHE_VOZES_FISH: Dict[tuple, tuple] = {}
+
+
+@app.get("/api/vozes/fish")
+def listar_vozes_fish(idioma: str = "pt", busca: str = "", genero: str = ""):
+    """Vozes da biblioteca pública da Fish Audio, com amostra em áudio, para a voz grátis (no lugar do Edge-TTS).
+
+    Não gasta nada. A resposta fica guardada por uma hora."""
+    idioma = idioma if any(i["id"] == idioma for i in IDIOMAS_VOZ) else "pt"
+    genero = genero if genero in ("male", "female") else ""
+    busca = (busca or "").strip()[:60]
+    base = {"modelos": [], "idiomas": IDIOMAS_VOZ, "idioma_atual": idioma, "preco_por_mil": 0}
+    chave_cache = (idioma, busca.lower(), genero)
+    guardado = _CACHE_VOZES_FISH.get(chave_cache)
+    if guardado and time.time() - guardado[0] < _CACHE_VOZES_SEGUNDOS:
+        return {**base, "vozes": guardado[1]}
+    try:
+        vozes = fish.vozes(busca=busca or None, idioma=idioma, genero=genero or None, quantidade=40)
+    except fish.ErroFish as e:
+        return {**base, "vozes": [], "erro": str(e)}
+    _CACHE_VOZES_FISH[chave_cache] = (time.time(), vozes)
+    return {**base, "vozes": vozes}
+
+
 @app.get("/api/genaipro/creditos")
 def creditos_genaipro():
     """Saldo da GenAIPro, quando vence e quanto isso rende em minutos de narração. Não gasta nada."""
@@ -1034,8 +1119,10 @@ def creditos_genaipro():
     except SystemExit as e:
         raise HTTPException(status_code=502, detail=str(e))
     por_caractere, origem = custos_reais.preco_por_caractere(config_geral())
+    creditos_por_caractere, _ = custos_reais.creditos_por_caractere(config_geral())
     ritmo = 900  # caracteres por minuto de uma narração típica
-    return {**conta, "configurada": True, "minutos_de_narracao": conta["creditos"] // ritmo,
+    return {**conta, "configurada": True,
+            "minutos_de_narracao": int(conta["creditos"] / (creditos_por_caractere * ritmo)),
             "preco_por_minuto_usd": round(por_caractere * ritmo, 4), "origem_do_preco": origem}
 
 
@@ -1361,9 +1448,14 @@ def obter_projeto(nome: str):
         "tem_final": p.existe("final.mp4"),
         "tem_narracao": p.existe("narracao.wav"),
         "url_final": _url_com_versao(f"/arquivos/{nome}/final.mp4", p.caminho("final.mp4")) if p.existe("final.mp4") else None,
+        "tem_final_vertical": p.existe("final_vertical.mp4"),
+        "url_final_vertical": (_url_com_versao(f"/arquivos/{nome}/final_vertical.mp4", p.caminho("final_vertical.mp4"))
+                               if p.existe("final_vertical.mp4") else None),
         "url_narracao": f"/arquivos/{nome}/narracao.wav" if p.existe("narracao.wav") else None,
         # MP3 leve para o player do editor; o WAV original continua para o render e para baixar
-        "url_narracao_leve": f"/arquivos_narracao/{nome}.mp3" if p.existe("narracao.wav") else None,
+        # com a data da narração no endereço: trocar a voz troca o endereço, e o navegador não toca a gravação antiga
+        "url_narracao_leve": (_url_com_versao(f"/arquivos_narracao/{nome}.mp3", p.pasta / "narracao.wav")
+                              if p.existe("narracao.wav") else None),
         "legendas": obter_legendas_projeto(p),
         "voz": p.perfil.get("voz") or {},
         "imagens": p.perfil.get("imagens") or {},
@@ -1485,6 +1577,105 @@ def trava_do_projeto(nome: str) -> threading.Lock:
         return _TRAVAS_DOS_PROJETOS.setdefault(nome, threading.Lock())
 
 
+_REVISOES = {}  # projeto -> (data do revisao_video.json, dados): o editor lista centenas de cenas por vez
+_REVISANDO = set()
+
+
+def _revisao_atual(p: Projeto):
+    arquivo = p.pasta / "revisao_video.json"
+    if not arquivo.exists():
+        return None
+    chave = arquivo.stat().st_mtime_ns
+    guardada = _REVISOES.get(p.nome)
+    if not guardada or guardada[0] != chave:
+        try:
+            _REVISOES[p.nome] = (chave, revisao_video.resultado(p))
+        except (OSError, ValueError):
+            return None
+    return _REVISOES[p.nome][1]
+
+
+def iniciar_revisao_video(nome: str) -> bool:
+    """Revisa o vídeo pronto numa linha à parte. Nunca atrapalha: se falhar, o vídeo está pronto do mesmo jeito."""
+    p = Projeto(nome)
+    if not revisao_video.ligada(p) or not p.existe("final.mp4"):
+        return False
+    with TAREFAS_LOCK:
+        if nome in _REVISANDO:
+            return True
+        _REVISANDO.add(nome)
+
+    def trabalhar():
+        try:
+            revisao_video.revisar(Projeto(nome), log=print)
+        except (Exception, SystemExit) as erro:
+            print(f"[revisão do vídeo] {nome}: {str(erro)[:160]}")
+        finally:
+            with TAREFAS_LOCK:
+                _REVISANDO.discard(nome)
+
+    threading.Thread(target=trabalhar, daemon=True, name=f"revisao-{nome}").start()
+    return True
+
+
+@app.get("/api/projetos/{nome}/revisao-video")
+def ver_revisao_video(nome: str):
+    """O que a revisão do vídeo pronto apontou, se ela é do final.mp4 de agora, e se ela está rodando."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    dados = revisao_video.resultado(p) or {}
+    return {"rodando": nome in _REVISANDO, "tem_video": p.existe("final.mp4"), "revisadas": dados.get("revisadas", 0),
+            "cenas": dados.get("cenas", {}), "graves": dados.get("graves", []), "quando": dados.get("quando")}
+
+
+@app.post("/api/projetos/{nome}/revisao-video")
+def rodar_revisao_video(nome: str):
+    """Revisa de novo o vídeo pronto, em segundo plano. Gratuito."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    if not Projeto(nome).existe("final.mp4"):
+        raise HTTPException(status_code=400, detail="Renderize o vídeo antes de revisar.")
+    iniciar_revisao_video(nome)
+    return {"rodando": True}
+
+
+class AnimacaoPayload(BaseModel):
+    acao: str = "gerar"  # "gerar" ou "remover" (a cena volta para a foto e fica assim)
+    forcar: bool = False  # pede uma animação nova ao modelo mesmo se a atual estiver em dia
+
+
+@app.post("/api/projetos/{nome}/cenas/{n}/animacao")
+def animacao_da_cena(nome: str, n: int, payload: AnimacaoPayload):
+    """Anima a cena (diagrama, texto na tela, linha do tempo ou mapa) ou faz ela voltar para a foto. Gratuito."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    cena = next((c for c in p.ler_json("cenas.json").get("cenas", []) if c["n"] == n), None)
+    if cena is None:
+        raise HTTPException(status_code=404, detail=f"A cena {n} não existe.")
+    trava = trava_do_projeto(nome)
+    if payload.acao == "remover":
+        animacoes.remover(p, n, trava=trava)
+        resumo = {}
+    else:
+        if cena.get("visual") not in animacoes.tipos(p):
+            raise HTTPException(status_code=400, detail="Só cenas de diagrama, texto na tela, linha do tempo ou mapa "
+                                                        "viram animação.")
+        if not animacoes.node_pronto():
+            raise HTTPException(status_code=400, detail="Falta o Node.js 22 ou mais na máquina da fábrica "
+                                                        "(nodejs.org) para fazer animações.")
+        try:
+            resumo = animacoes.gerar(p, numeros={n}, forcar=payload.forcar, log=print, trava=trava)
+        except (Exception, SystemExit) as e:
+            raise HTTPException(status_code=500, detail=f"Não consegui animar a cena: {e}")
+        if n in resumo.get("falharam", {}):
+            raise HTTPException(status_code=422, detail=f"A animação não passou na conferência e a cena ficou com a "
+                                                        f"foto: {resumo['falharam'][n]}")
+    cena = next(c for c in p.ler_json("cenas.json")["cenas"] if c["n"] == n)
+    return {"sucesso": True, "cena": enriquecer_cena(p, cena), "resumo": resumo}
+
+
 @app.post("/api/projetos/{nome}/cenas/{n}/refazer")
 def refazer_cena(nome: str, n: int, payload: RefazerCenaPayload):
     """Executa imagens.refazer() para a cena n com novos termos de busca ou prompt."""
@@ -1548,7 +1739,11 @@ async def upload_cena_midia(nome: str, n: int, file: UploadFile = File(...)):
     conteudo = await file.read()
     def com_trava():
         with trava_do_projeto(nome):
-            return definir_midia_manual(p, n, conteudo, file.filename or "upload.png")
+            antes = next((c for c in p.ler_json("cenas.json").get("cenas", []) if c["n"] == n), None)
+            resultado = definir_midia_manual(p, n, conteudo, file.filename or "upload.png")
+            if antes:
+                aprendizados.registrar(p, antes, "upload")
+            return resultado
 
     cena_atualizada = await asyncio.to_thread(com_trava)
     cena_info = enriquecer_cena(p, cena_atualizada)
@@ -1660,7 +1855,9 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
 
+    _recusar_se_criando(nome, "trocar a narração")
     p = Projeto(nome)
+    antes = corrigir.falas_do_material(p)
 
     if payload.roteiro is not None:
         (pasta / "roteiro.txt").write_text(payload.roteiro, encoding="utf-8")
@@ -1680,6 +1877,7 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
     except (Exception, SystemExit) as e:
         raise HTTPException(status_code=500, detail=f"Falha ao gerar narração: {str(e)}")
 
+    preenchendo = _completar_depois_da_narracao(p, antes) if p.existe("cenas.json") else None
     alinhamento = p.ler_json("alinhamento.json") if p.existe("alinhamento.json") else {}
     cenas_atualizadas = [enriquecer_cena(p, c) for c in p.ler_json("cenas.json").get("cenas", [])]
 
@@ -1688,7 +1886,36 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
         "duracao": duracao,
         "cenas": cenas_atualizadas,
         "alinhamento": alinhamento,
+        "preenchendo": preenchendo,
     }
+
+
+def _completar_depois_da_narracao(p: Projeto, antes: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Trocar a narração nunca pode deixar o vídeo com cena faltando nem com imagem que não combina.
+
+    A voz nova muda o ritmo: as cenas se dividem, se juntam e mudam de fala. Aqui a mesma esteira da criação volta a
+    andar a partir da busca, sozinha: busca de acervo com a conferência na captura, conferência do Jev, imagens de
+    IA (se ligada), cenas completadas, nenhuma imagem repetida, animações e trilha. O Jev julga só o que mudou: as
+    cenas sem imagem e as que continuam com a foto antiga mas com outra fala. O editor mostra "Em produção" e o
+    render fica travado até terminar."""
+    mudou = corrigir.depois_da_narracao(p, antes)
+    vazias, mudaram, repetidas, alvo = mudou["vazias"], mudou["mudaram"], mudou["repetidas"], mudou["alvo"]
+    if not alvo:
+        return None
+    with trava_do_projeto(p.nome):
+        midia.soltar_repetidas(p)  # a cópia sai antes: o Jev não gasta julgando uma foto que vai sair
+    task_id = f"criar_{p.nome}_{datetime.now():%Y%m%d_%H%M%S}"
+    iniciar_criacao(p.nome, {
+        "tarefa_id": task_id, "projeto": p.nome, "tipo": "criacao", "status": "processando", "concluido": False,
+        "pronto_para_edicao": False, "erro": None, "precisa_voce": False, "inicio": datetime.now().isoformat(),
+        "mensagem": "A narração mudou: completando e conferindo as cenas...", "passo_atual": 3, "total_passos": 5,
+        "progresso_pct": 60, "logs": [f"Narração trocada: {len(vazias)} cena(s) sem imagem, {len(mudaram)} com outra "
+                                      f"fala e {len(repetidas)} com imagem repetida voltam para a esteira"],
+        "feitas": ["mapa", "narracao", "cenas"],
+        "conferir_cenas": sorted(alvo), "conferir_forcadas": sorted(mudaram - vazias),
+    })
+    return {"tarefa_id": task_id, "sem_imagem": sorted(vazias), "outra_fala": sorted(mudaram),
+            "repetidas": sorted(repetidas)}
 
 
 @app.post("/api/projetos/{nome}/cenas/salvar")
@@ -1744,9 +1971,10 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
             "projeto": nome,
             "status": "renderizando",
             "progresso_pct": 5,
-            "etapa_atual": "Iniciando montagem com FFmpeg...",
+            "etapa_atual": "Iniciando a versão em pé (9:16)..." if payload.vertical else "Iniciando montagem com FFmpeg...",
             "concluido": False,
-            "logs": ["Iniciando renderização..."],
+            "logs": ["Iniciando renderização da versão em pé..." if payload.vertical else "Iniciando renderização..."],
+            "vertical": payload.vertical,
             "inicio": time.time(),
             "sucesso": False,
             "tarefa_id": task_id,
@@ -1785,7 +2013,7 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
                             TAREFAS[task_id]["etapa_atual"] = "Mixando áudio final e trilha sonora..."
 
             sem_avatar = payload.sem_avatar
-            final_path = render.renderizar(p, log=log_fn, sem_avatar=sem_avatar)
+            final_path = render.renderizar(p, log=log_fn, sem_avatar=sem_avatar, vertical=payload.vertical)
 
             tamanho_mb = 0.0
             if Path(final_path).exists():
@@ -1807,12 +2035,18 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
                     TAREFAS[task_id]["sucesso"] = True
                     TAREFAS[task_id]["concluido"] = True
                     TAREFAS[task_id]["progresso_pct"] = 100
-                    TAREFAS[task_id]["etapa_atual"] = "Vídeo final renderizado com sucesso!"
+                    TAREFAS[task_id]["etapa_atual"] = ("Versão em pé renderizada com sucesso!" if payload.vertical
+                                                       else "Vídeo final renderizado com sucesso!")
                     TAREFAS[task_id]["final_mp4"] = str(final_path)
-                    TAREFAS[task_id]["video_url"] = _url_com_versao(f"/arquivos/{nome}/final.mp4", Path(final_path))
+                    TAREFAS[task_id]["video_url"] = _url_com_versao(f"/arquivos/{nome}/{Path(final_path).name}", Path(final_path))
                     TAREFAS[task_id]["duracao"] = dur_str
                     TAREFAS[task_id]["tamanho_mb"] = tamanho_mb
                     TAREFAS[task_id]["logs"].append("Vídeo renderizado com sucesso!")
+            try:
+                if not payload.vertical:  # a revisão olha o final.mp4; a versão em pé tem as mesmas cenas
+                    iniciar_revisao_video(nome)  # o modelo olha o vídeo pronto em segundo plano; nunca falha o render
+            except (Exception, SystemExit) as erro_rev:
+                print(f"[revisão do vídeo] {nome}: {str(erro_rev)[:160]}")
         except (Exception, SystemExit) as err:
             with TAREFAS_LOCK:
                 if task_id in TAREFAS:
@@ -1959,6 +2193,17 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
         "mensagem": "Conferência de mídia iniciada em segundo plano.", "tarefa_id": task_id})
 
 
+def _preco_medio_do_jev(p: Projeto) -> float:
+    """Custo médio de uma chamada do Jev, medido no uso_jev.json do projeto (uns US$ 0,00005)."""
+    try:
+        chamadas = json.loads((p.pasta / "uso_jev.json").read_text(encoding="utf-8"))
+        if chamadas:
+            return sum(c.get("custo_usd", 0) or 0 for c in chamadas) / len(chamadas)
+    except (OSError, ValueError):
+        pass
+    return 0.00005
+
+
 class ContinuarPayload(BaseModel):
     confirmar: bool = False  # sem isto só devolve o que falta e quanto custa, sem fazer nada
 
@@ -1979,8 +2224,12 @@ def continuar_carregamento(nome: str, bg_tasks: BackgroundTasks, payload: Option
     sem_acervo = [c["n"] for c in cenas_lista if midia.pendente(c)]
     sem_ia = [c["n"] for c in imagens.pendentes_ia(p, cenas_lista)]
     preco = custos.preco_da_imagem(p)
-    # das cenas que ainda vão ao acervo, uma parte não acha material e cai para IA
-    custo = round((len(sem_ia) + 0.15 * len(sem_acervo)) * preco, 2)
+    # das cenas que ainda vão ao acervo, uma parte não acha material e cai para IA; com a IA desligada, nenhuma cai
+    custo_ia = (len(sem_ia) + (0.15 * len(sem_acervo) if midia.ia_ativa(p) else 0)) * preco
+    # a busca nos bancos é grátis; o Jev confere até candidatos_conferidos fotos por cena, e mais uma conferência
+    por_jev = _preco_medio_do_jev(p)
+    conferidos = int((p.config.get("midia") or {}).get("candidatos_conferidos", 3))
+    custo = round(custo_ia + len(sem_acervo) * (conferidos + 1) * por_jev, 4)
     resumo = {"sem_acervo": len(sem_acervo), "sem_imagem_ia": len(sem_ia), "custo_estimado_usd": custo,
               "preco_por_imagem_usd": preco, "nada_a_fazer": not sem_acervo and not sem_ia}
     if not (payload and payload.confirmar) or resumo["nada_a_fazer"]:
@@ -2167,6 +2416,7 @@ def status_projeto(nome: str, task_id: Optional[str] = None):
                 "progresso_pct": 100,
                 "concluido": True,
                 "video_url": tarefa_alvo.get("video_url", f"/arquivos/{nome}/final.mp4"),
+                "vertical": bool(tarefa_alvo.get("vertical")),
                 "duracao": tarefa_alvo.get("duracao", "01:02"),
                 "tamanho_mb": tarefa_alvo.get("tamanho_mb", 15.0),
                 "tarefa_id": tarefa_alvo.get("tarefa_id"),
@@ -2462,11 +2712,24 @@ def servir_previa(nome: str, tamanho: str, n: int):
 
 
 EXTENSOES_VIDEO = (".mp4", ".mov", ".webm", ".m4v")
+
+
+def _animacao_valida(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
+    """A animação da cena, se as animações estão ligadas e ela está em dia com a cena (a mesma regra do render)."""
+    if not animacoes.config(p).get("ativo", True):
+        return None
+    try:
+        return animacoes.valida(p, cena)
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
 ALTURA_PREVIA_VIDEO = 480
 _PREPARANDO_PREVIAS = set()  # projetos com as prévias de vídeo sendo feitas em segundo plano
 
 
 def _video_da_cena(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
+    animada = _animacao_valida(p, cena)
+    if animada is not None:
+        return animada  # a cena animada mostra a animação no player, também em prévia leve
     m = cena.get("midia") or {}
     arq = p.pasta / m["arquivo"] if m.get("arquivo") else None
     return arq if arq and arq.exists() and arq.suffix.lower() in EXTENSOES_VIDEO else None

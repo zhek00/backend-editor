@@ -1,5 +1,6 @@
 """Linha de comando da fábrica de vídeos."""
 import argparse
+import sys
 import base64
 import html
 import json
@@ -11,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import avatar, cenas, claude_local, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
+from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
 from . import custos_reais
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
@@ -70,6 +71,7 @@ def etapa_narrar(p, a, aprovado=False):
         valor = custos.dinheiro(custos.estimar(p)["voz"])
         if not confirmar(f"A narração custa cerca de {valor}. Continuar?", a.sim):
             raise SystemExit("Cancelado.")
+    antes = corrigir.falas_do_material(p)
     log("Narração")
     total = narracao.narrar(p, log)
     caracteres = len(tx.normalizar(p.roteiro()))
@@ -81,8 +83,54 @@ def etapa_narrar(p, a, aprovado=False):
     if p.existe("cenas.json"):
         cenas.atualizar_tempos(p)
         log("  tempos das cenas e dos textos atualizados")
+        if not getattr(a, "_dentro_do_tudo", False):
+            completar_depois_da_narracao(p, a, antes)
     if render.com_avatar(p):
         partes_avatar(p, getattr(a, "minutos", None))
+
+
+def completar_depois_da_narracao(p, a, antes):
+    """Trocar a narração nunca pode deixar o vídeo com cena faltando nem com imagem que não combina com a fala.
+
+    A mesma sequência da criação, só nas cenas que mudaram: busca de acervo (com a conferência na captura), o Jev
+    julga as cenas novas e as que ficaram com a foto antiga mas outra fala, imagens de IA (se ligada, com o custo
+    perguntado), cenas completadas sem repetir imagem, animações e trilha."""
+    mudou = corrigir.depois_da_narracao(p, antes)
+    if not mudou["alvo"] or avatar.somente_avatar(p.perfil):
+        return
+    log(f"A narração mudou o corte: {len(mudou['vazias'])} cena(s) sem imagem, {len(mudou['mudaram'])} com outra fala "
+        f"e {len(mudou['repetidas'])} com imagem repetida")
+    midia.tirar_repetidas(p, log=log)
+    midia.buscar(p, log=log)
+    cfg = p.config.get("corrigir") or {}
+    if not p.offline and cfg.get("automatico", True):
+        minima = midia.nota_minima_da_conferencia(p)
+        forcadas = mudou["mudaram"] - mudou["vazias"]
+
+        def aprovada(c):
+            cap = c.get("captura") or {}
+            return cap.get("conferida") and not cap.get("suspeita") and (cap.get("nota") or 0) >= minima
+
+        julgar = {c["n"] for c in corrigir.conferiveis(p, numeros=mudou["alvo"]) if c["n"] in forcadas or not aprovada(c)}
+        if julgar:
+            log(f"  o Jev confere {len(julgar)} cena(s)")
+            resumo = corrigir.corrigir(p, numeros=julgar, rodadas=cfg.get("rodadas", corrigir.RODADAS),
+                                       nota_minima=minima, nota_para_trocar=minima, log=log)
+            log(corrigir.formatar(resumo))
+    etapa_imagens(p, a)
+    for _ in range(2):
+        if not corrigir.depois_da_narracao(p, {})["vazias"]:
+            break
+        corrigir.preparar_gratis(p, log=log)
+    faltam = corrigir.depois_da_narracao(p, {})["vazias"]
+    if faltam:
+        midia.buscar(p, apenas=set(faltam), log=log, permissivo=True)
+    midia.tirar_repetidas(p, log=log)
+    faltam = sorted(corrigir.depois_da_narracao(p, {})["vazias"])
+    if faltam:
+        log(f"  ainda sem imagem: cenas {', '.join(map(str, faltam))}. Suba uma foto delas no editor ou ligue a IA")
+    etapa_animacoes(p, a, aprovado=True)
+    etapa_trilha(p, a, aprovado=True)
 
 
 def partes_avatar(p, minutos=None):
@@ -201,6 +249,83 @@ def etapa_imagens(p, a, aprovado=False):
     log(f"  revisão em {imagens.gerar(p, log=log, direto=getattr(a, 'direto', False))}")
 
 
+def etapa_animacoes(p, a, aprovado=False):
+    """Diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames). Gratuito e sem bloquear:
+    a cena que não der para animar fica com a foto."""
+    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json"):
+        return
+    log("Animações")
+    resumo = animacoes.gerar(p, log=log)
+    if resumo.get("motivo"):
+        log(f"  {resumo['motivo']}")
+
+
+def etapa_trilha(p, a, aprovado=False):
+    """O modelo compõe a trilha pelos blocos do roteiro e o código toca. Gratuito; só entra no vídeo quando o perfil
+    não tem músicas próprias (ou trilha.substituir no config)."""
+    if not trilha.ligada(p) or not p.existe("cenas.json") or not p.existe("alinhamento.json"):
+        return
+    log("Trilha")
+    try:
+        trilha.gerar(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  a trilha não saiu ({str(erro)[:120]}); o render tenta de novo")
+
+
+def cmd_trilha(a):
+    p = Projeto(a.nome)
+    if not p.existe("cenas.json") or not p.existe("alinhamento.json"):
+        raise SystemExit(f"Faltam a narração e as cenas. Rode uv run fabrica tudo {p.nome}")
+    if not trilha.ligada(p):
+        raise SystemExit("A trilha gerada está desligada (trilha.ativo no config.yaml ou no perfil).")
+    log("Trilha")
+    destino = trilha.gerar(p, log=log, forcar=a.forcar)
+    if a.efeitos:
+        cenas_ = p.ler_json("cenas.json")["cenas"]
+        sons = trilha.efeitos_na_linha(p, cenas_, log=log)
+        nomes = {}
+        for _, arquivo, _ in sons:
+            nome = arquivo.stem.rsplit("-v", 1)[0]
+            nomes[nome] = nomes.get(nome, 0) + 1
+        log("  efeitos: " + (", ".join(f"{n} {k}" for k, n in nomes.items()) or "nenhum"))
+    log(f"  pronta em {destino}. Entra no próximo render.")
+
+
+def etapa_revisao_video(p, a):
+    """Depois do render, o modelo principal olha o vídeo pronto e aponta problemas. Gratuito e sem bloquear."""
+    if not revisao_video.ligada(p) or not p.existe("final.mp4"):
+        return
+    log("Revisão do vídeo pronto")
+    try:
+        revisao_video.revisar(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  a revisão não rodou ({str(erro)[:120]}); o vídeo está pronto do mesmo jeito")
+
+
+def cmd_revisar_video(a):
+    p = Projeto(a.nome)
+    log("Revisão do vídeo pronto")
+    r = revisao_video.revisar(p, log=log, numeros=set(a.cenas) if a.cenas else None)
+    for n, problemas in sorted(r["cenas"].items(), key=lambda x: int(x[0])):
+        for pr in problemas:
+            log(f"  cena {n} [{pr['gravidade']}] {revisao_video.TIPOS.get(pr['tipo'], pr['tipo'])}: {pr['descricao']}")
+
+
+def cmd_animacoes(a):
+    p = Projeto(a.nome)
+    if a.remover:
+        for n in a.cenas or []:
+            animacoes.remover(p, n)
+        log(f"Cenas {', '.join(map(str, a.cenas or []))} voltaram a usar a foto. Rode o render para valer no vídeo.")
+        return
+    log("Animações")
+    resumo = animacoes.gerar(p, numeros=set(a.cenas) if a.cenas else None, forcar=a.forcar, log=log)
+    if resumo.get("motivo"):
+        log(f"  {resumo['motivo']}")
+    elif resumo["feitas"]:
+        log(f"Pronto. Rode uv run fabrica render {p.nome} para as animações entrarem no vídeo.")
+
+
 def etapa_efeitos(p, a, aprovado=False):
     if not efeitos.ativo(p.perfil):
         return
@@ -219,8 +344,20 @@ def etapa_efeitos(p, a, aprovado=False):
 def etapa_render(p, a, aprovado=False):
     log("Render")
     inicio = time.time()
+    vertical = getattr(a, "vertical", False)
+    if vertical and not aprovado:
+        # só a versão em pé: a deitada fica como está
+        log("  versão em pé (9:16), para Reels e Shorts")
+        final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False), vertical=True)
+        log(f"  vídeo em pé pronto em {final} ({mmss(time.time() - inicio)} de render)")
+        return
     final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False))
     log(f"  vídeo pronto em {final} ({mmss(time.time() - inicio)} de render)")
+    if vertical:
+        inicio = time.time()
+        log("Render da versão em pé (9:16), para Reels e Shorts")
+        final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False), vertical=True)
+        log(f"  vídeo em pé pronto em {final} ({mmss(time.time() - inicio)} de render)")
 
 
 def etapa_corrigir(p, a, aprovado=False):
@@ -257,9 +394,10 @@ def cmd_tudo(a):
 
     with ThreadPoolExecutor(max_workers=1) as agente:
         pronto = agente.submit(etapa_mapa, p, a, True)
+        a._dentro_do_tudo = True  # no tudo, as etapas seguintes já completam as cenas
         etapa_narrar(p, a, aprovado=True)
         pronto.result()
-    for etapa in (etapa_cenas, etapa_midia, etapa_corrigir, etapa_imagens, etapa_efeitos):
+    for etapa in (etapa_cenas, etapa_midia, etapa_corrigir, etapa_imagens, etapa_efeitos, etapa_animacoes, etapa_trilha):
         etapa(p, a, aprovado=True)
     if render.com_avatar(p, a.sem_avatar):
         faltando = avatar.faltando(p) if avatar.modo(p.perfil) == "trechos" else avatar.partes_faltando(p)
@@ -269,6 +407,7 @@ def cmd_tudo(a):
             log(f"Gere no HeyGen com os áudios da pasta avatar e depois rode uv run fabrica render {p.nome}")
             return
     etapa_render(p, a, aprovado=True)
+    etapa_revisao_video(p, a)
     log(f"Revise as cenas com uv run fabrica revisar {p.nome}")
 
 
@@ -537,12 +676,14 @@ def cmd_creditos(a):
     c = genaipro.conta()
     numero = lambda n: f"{n:,}".replace(",", ".")
     por_caractere, origem = custos_reais.preco_por_caractere(config_geral())
-    log(f"GenAIPro, conta {c['usuario']}: {numero(c['creditos'])} créditos (1 crédito por caractere narrado)")
+    taxa, de_onde = custos_reais.creditos_por_caractere(config_geral())
+    log(f"GenAIPro, conta {c['usuario']}: {numero(c['creditos'])} créditos "
+        f"({taxa:.3f} crédito por caractere narrado, {de_onde})")
     for pacote in c["pacotes"]:
         log(f"  {numero(pacote['creditos'])} vencem em {(pacote['vence'] or '')[:10]}")
     ritmo = 900  # caracteres por minuto de uma narração típica
-    log(f"  dá para cerca de {c['creditos'] // ritmo // 60} horas de narração, a {custos.dinheiro(por_caractere * ritmo)} "
-        f"por minuto ({origem})")
+    log(f"  dá para cerca de {int(c['creditos'] / (taxa * ritmo) / 60)} horas de narração, "
+        f"a {custos.dinheiro(por_caractere * ritmo)} por minuto ({origem})")
 
 
 VOZES_CRIADAS = RAIZ / "vozes_criadas"
@@ -618,6 +759,14 @@ def cmd_servidor(a):
 
 
 def main():
+    # no Windows, com a saída indo para um arquivo (o backend escondido grava em fabrica.log), o Python usa a
+    # codificação antiga do sistema: um aviso com um pedaço em chinês que o modelo devolveu derrubava a esteira
+    # inteira ("'charmap' codec can't encode", na troca de narração do zz_teste_animacoes)
+    for fluxo in (sys.stdout, sys.stderr):
+        try:
+            fluxo.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(prog="fabrica", description="Roteiro pronto entra, vídeo narrado sai.")
     sub = parser.add_subparsers(dest="comando", required=True, metavar="comando")
 
@@ -656,7 +805,27 @@ def main():
         s.add_argument("--direto", action="store_true", help="gera as imagens na hora, sem o modo lote do Google")
         s.add_argument("--sem-avatar", action="store_true", help="monta o vídeo sem o quadro do avatar")
         s.add_argument("--sem-corrigir", action="store_true", help="pula a conferência das cenas antes de renderizar")
+        s.add_argument("--vertical", action="store_true",
+                       help="no render, monta só a versão em pé (9:16) em final_vertical.mp4; no tudo, monta as duas")
         s.set_defaults(funcao=funcao)
+
+    s = sub.add_parser("trilha", help="o modelo compõe a trilha pelos blocos do roteiro e o código toca (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--forcar", action="store_true", help="pede uma partitura nova ao modelo e toca de novo")
+    s.add_argument("--efeitos", action="store_true", help="mostra também os efeitos que entram no vídeo")
+    s.set_defaults(funcao=cmd_trilha)
+
+    s = sub.add_parser("revisar-video", help="o modelo principal olha o vídeo pronto e aponta problemas (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--cenas", type=int, nargs="*", help="só essas cenas")
+    s.set_defaults(funcao=cmd_revisar_video)
+
+    s = sub.add_parser("animacoes", help="anima as cenas de diagrama, texto na tela, linha do tempo e mapa (HyperFrames, grátis)")
+    s.add_argument("nome")
+    s.add_argument("--cenas", type=int, nargs="*", help="só essas cenas (também anima cena que tinha voltado para a foto)")
+    s.add_argument("--forcar", action="store_true", help="pede uma animação nova ao modelo mesmo se a atual estiver em dia")
+    s.add_argument("--remover", action="store_true", help="as cenas de --cenas voltam a usar a foto e ficam assim")
+    s.set_defaults(funcao=cmd_animacoes)
 
     s = sub.add_parser("corrigir", help="confere se a mídia de cada cena combina com a narração e troca a que não combina")
     s.add_argument("nome")

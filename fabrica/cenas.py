@@ -8,6 +8,7 @@ se houver. No modo offline as cenas são agrupadas só pelo tempo, sem chamar a 
 import hashlib
 import json
 import re
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
@@ -373,6 +374,34 @@ def _extrair_texto_palavras(palavras, t_ini, t_fim, fallback=""):
     return res if len(res) > 3 else fallback
 
 
+def _sem_a_imagem_da_original(fatia) -> None:
+    """O pedaço novo de uma cena dividida não leva a foto ou o vídeo da original: JAMAIS repetir imagem.
+
+    Antes cada pedaço levava uma cópia do material. Narrar de novo com uma voz mais lenta divide as cenas longas, e
+    o zz_teste_animacoes, narrado três vezes, chegou a 68 cenas repetindo a imagem da vizinha. O pedaço fica sem
+    arquivo, com a foto da original em rejeitadas, até a busca ("Continuar carregamento") trazer uma nova."""
+    m = fatia.pop("midia", None) or {}
+    if m.get("fonte") and m.get("id"):
+        fatia["rejeitadas"] = list(fatia.get("rejeitadas") or []) + [f"{m['fonte']}:{m['id']}"]
+    for campo in ("captura", "conferencia", "animacao", "imagem_da_pessoa"):
+        fatia.pop(campo, None)
+
+
+def _tem_material(cena) -> bool:
+    return bool((cena.get("midia") or {}).get("arquivo"))
+
+
+def _fica_o_visual_de(sai, fica, texto_sai, texto_fica) -> bool:
+    """Na junção de duas cenas, se a que sai passa a busca (e o material) para a que fica.
+
+    Material que já existe vence: só uma das duas com foto ou vídeo, fica o visual dela (antes, a cena "E onde há fogo
+    e carne" do zz_teste_animacoes perdeu a foto da carne no fogo para a busca de um pedaço vizinho sem foto, de texto
+    mais longo). As duas com material, ou nenhuma, vale o texto mais longo, como sempre foi."""
+    if _tem_material(sai) != _tem_material(fica):
+        return _tem_material(sai)
+    return len(texto_sai) > len(texto_fica) or (not fica.get("busca") and bool(sai.get("busca")))
+
+
 def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUNDOS, maximo=ESTILO_MAXIMO_SEGUNDOS, alvo=ESTILO_ALVO_SEGUNDOS, log=print, alinhamento=None):
     """Garante de forma absoluta que TODAS as cenas tenham duração entre minimo (3.0s) e maximo (5.0s).
     Nenhuma cena ultrapassará 5.0 segundos e nenhuma ficará abaixo de 3.0 segundos.
@@ -414,6 +443,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                     fatia["texto_tela"] = None
                     fatia["efeito"] = None
                     fatia["_grupo_dividido"] = c.get("n", 0)
+                    _sem_a_imagem_da_original(fatia)
                     if fatia.get("busca"):
                         fatia["busca"] = _variar_termo_busca(fatia["busca"], k_var=k, alternativa=fatia.get("busca_alternativa", ""))
                     if fatia.get("prompt"):
@@ -427,7 +457,8 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
         while i < len(fatiadas):
             d = fatiadas[i]["fim"] - fatiadas[i]["ini"]
             # cena de enumeração tem um mínimo próprio, menor: cada nome dura menos de um segundo
-            minimo_aqui = ESTILO_MINIMO_ENUMERACAO if fatiadas[i].get("enumeracao") else minimo
+            minimo_aqui = (ESTILO_MINIMO_ENUMERACAO if fatiadas[i].get("enumeracao") or fatiadas[i].get("_curta_aceita")
+                           else minimo)
             if d < minimo_aqui - 0.001 and len(fatiadas) > 1:
                 # Caso 0: item de lista curto ao lado de OUTRO item citado ("alces" dura 0,6s antes de "cavalos-de-
                 # przewalski"). Juntar as duas mostraria um bicho só para os dois nomes: empresta tempo da vizinha
@@ -460,7 +491,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                 if i > 0 and (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"] + d) <= maximo + 0.001:
                     t_ant = fatiadas[i - 1].get("texto", "").strip()
                     t_cur = fatiadas[i].get("texto", "").strip()
-                    if len(t_cur) > len(t_ant) or (not fatiadas[i - 1].get("busca") and fatiadas[i].get("busca")):
+                    if _fica_o_visual_de(fatiadas[i], fatiadas[i - 1], t_cur, t_ant):
                         if fatiadas[i].get("busca") or fatiadas[i].get("prompt"):
                             fatiadas[i - 1]["busca"] = fatiadas[i].get("busca", "")
                             fatiadas[i - 1]["prompt"] = fatiadas[i].get("prompt", "")
@@ -469,6 +500,12 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             # o assunto e o que deve aparecer acompanham a busca que ficou
                             for campo in ("sujeito", "mostrar", "animal", "exato"):
                                 fatiadas[i - 1][campo] = fatiadas[i].get(campo, "")
+                            # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
+                            for campo in ("midia", "captura", "conferencia", "rejeitadas"):
+                                if campo in fatiadas[i]:
+                                    fatiadas[i - 1][campo] = fatiadas[i][campo]
+                                else:
+                                    fatiadas[i - 1].pop(campo, None)
                     fatiadas[i - 1]["fim"] = fatiadas[i]["fim"]
                     fatiadas[i - 1]["texto"] = (t_ant + " " + t_cur).strip()
                     fatiadas[i - 1]["texto_tela"] = None
@@ -479,7 +516,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                 elif i + 1 < len(fatiadas) and (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"] + d) <= maximo + 0.001:
                     t_cur = fatiadas[i].get("texto", "").strip()
                     t_seg = fatiadas[i + 1].get("texto", "").strip()
-                    if len(t_cur) > len(t_seg) or (not fatiadas[i + 1].get("busca") and fatiadas[i].get("busca")):
+                    if _fica_o_visual_de(fatiadas[i], fatiadas[i + 1], t_cur, t_seg):
                         if fatiadas[i].get("busca") or fatiadas[i].get("prompt"):
                             fatiadas[i + 1]["busca"] = fatiadas[i].get("busca", "")
                             fatiadas[i + 1]["prompt"] = fatiadas[i].get("prompt", "")
@@ -488,6 +525,12 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             # o assunto e o que deve aparecer acompanham a busca que ficou
                             for campo in ("sujeito", "mostrar", "animal", "exato"):
                                 fatiadas[i + 1][campo] = fatiadas[i].get(campo, "")
+                            # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
+                            for campo in ("midia", "captura", "conferencia", "rejeitadas"):
+                                if campo in fatiadas[i]:
+                                    fatiadas[i + 1][campo] = fatiadas[i][campo]
+                                else:
+                                    fatiadas[i + 1].pop(campo, None)
                     fatiadas[i + 1]["ini"] = fatiadas[i]["ini"]
                     fatiadas[i + 1]["texto"] = (t_cur + " " + t_seg).strip()
                     fatiadas[i + 1]["texto_tela"] = None
@@ -559,6 +602,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
             c2["texto_tela"] = None
             c2["efeito"] = None
             c2["_grupo_dividido"] = c.get("n", 0)
+            _sem_a_imagem_da_original(c2)
             if c2.get("busca"):
                 c2["busca"] = _variar_termo_busca(c2["busca"], k_var=1, alternativa=c2.get("busca_alternativa", ""))
             if c2.get("prompt"):
@@ -890,17 +934,34 @@ def _simplificar(palavra):
 
 
 def _momento_falado(texto, palavras_cena, ini_cena, reserva):
-    """Segundo, desde o começo da cena, em que a narração fala esse texto. Se não achar, usa a reserva."""
-    alvo = [_simplificar(p) for p in texto.split() if _simplificar(p)][:3]
+    """Segundo, desde o começo da cena, em que a narração fala esse texto. Se não achar, usa a reserva.
+
+    O texto entra quando a PRIMEIRA palavra importante dele é dita: procura trechos de 3, 2 e 1 palavra de qualquer
+    ponto do texto e fica com o que é falado mais cedo. Antes só procurava o começo do texto: "A RIQUEZA EM SÉCULOS DE
+    TRADIÇÃO" não achava "a riqueza" na fala e entrava no começo da cena, embora "séculos de tradição" fosse dito no
+    fim dela (9 de 23 textos do ouro-da-serra-gaucha entravam assim)."""
+    alvo = [_simplificar(p) for p in texto.split() if _simplificar(p)][:8]
     faladas = [_simplificar(p["texto"]) for p in palavras_cena]
-    for tamanho in range(len(alvo), 0, -1):
-        pedaco = alvo[:tamanho]
-        if tamanho == 1 and len(pedaco[0]) <= 3:
-            break  # uma palavra curta sozinha, como "de", casaria no lugar errado
-        for k in range(len(faladas) - tamanho + 1):
-            if faladas[k:k + tamanho] == pedaco and palavras_cena[k]["ini"] is not None:
-                return round(max(0.0, palavras_cena[k]["ini"] - ini_cena), 2)
+    achados = []
+    for tamanho in range(min(3, len(alvo)), 0, -1):
+        for inicio in range(len(alvo) - tamanho + 1):
+            pedaco = alvo[inicio:inicio + tamanho]
+            if tamanho == 1 and (len(pedaco[0]) <= 3 or pedaco[0] in _PALAVRAS_VAZIAS):
+                continue  # uma palavra curta ou vazia sozinha, como "de" ou "para", casaria no lugar errado
+            for k in range(len(faladas) - tamanho + 1):
+                if faladas[k:k + tamanho] == pedaco and palavras_cena[k]["ini"] is not None:
+                    achados.append(palavras_cena[k]["ini"])
+                    break
+    if achados:
+        return round(max(0.0, min(achados) - ini_cena), 2)
     return reserva
+
+
+_PALAVRAS_VAZIAS = {"para", "pela", "pelo", "pelos", "pelas", "mais", "menos", "esse", "essa", "isso", "este", "esta",
+                    "isto", "aquele", "aquela", "como", "quando", "onde", "sobre", "entre", "cada", "todo", "toda",
+                    "todos", "todas", "muito", "muita", "mesmo", "mesma", "ainda", "apenas", "depois", "antes", "porque",
+                    "nossa", "nosso", "seus", "suas", "dele", "dela", "eles", "elas", "voce", "quem", "qual", "quais",
+                    "sera", "seria", "foram", "eram", "sido", "estao", "esta", "tambem", "assim", "entao", "nunca"}
 
 
 def _texto_tela(bruto, frases, ini_cena, palavras_cena=()):
@@ -970,9 +1031,26 @@ def atualizar_tempos(projeto):
         for g in json.loads(arquivo.read_text(encoding="utf-8")):
             originais[(g["primeira_frase"], g["ultima_frase"])] = g.get("texto_tela")
     cenas = dados["cenas"]
+    duracao_antes = {c["n"]: c["fim"] - c["ini"] for c in cenas}
+    # cada cena começa onde as primeiras palavras DELA são faladas. Antes valia o começo da frase: cena cortada no meio
+    # da frase ("podem ver." | "Frotas de colheitadeiras") ficava com duração zero, o corte juntava e dividia tudo, e
+    # regerar o áudio sem mudar nada levava o zz_teste_animacoes de 252 para 260 cenas, com 249 mudadas
+    # o jeito certo: o tempo de cada palavra da narração anterior leva cada corte de cena para o mesmo ponto da fala
+    # (a mesma narração não muda nada; voz mais rápida encolhe tudo junto). Sem ele, ou com o roteiro mudado, cada
+    # cena é achada pelas primeiras palavras dela
+    mapear = None
+    if projeto.existe("alinhamento_anterior.json"):
+        try:
+            mapear = _mapa_de_tempo(projeto.ler_json("alinhamento_anterior.json"), alinhamento)
+        except (OSError, ValueError, KeyError):
+            mapear = None
+    falada = {} if mapear else _inicios_pela_fala(cenas, alinhamento.get("palavras") or [])
+    anterior = 0.0
     for i, c in enumerate(cenas):
         frases = unidades[c["frases"][0]:c["frases"][1] + 1]
-        c["ini"] = 0.0 if i == 0 else frases[0]["ini"]
+        inicio = mapear(c["ini"]) if mapear else falada.get(c["n"], frases[0]["ini"])
+        c["ini"] = 0.0 if i == 0 else max(inicio, anterior)
+        anterior = c["ini"]
         c["_ini_calculo"] = c["ini"]
         if c.get("efeito"):
             c["efeito"] = _efeito(c["efeito"], c["ini"], _palavras_da_cena(alinhamento, frases)) or c["efeito"]
@@ -989,10 +1067,201 @@ def atualizar_tempos(projeto):
             c["texto_tela"] = _texto_tela(base, frases, c["ini"], _palavras_da_cena(alinhamento, frases)) or texto_tela
     for i, c in enumerate(cenas):
         c["fim"] = cenas[i + 1]["ini"] if i + 1 < len(cenas) else duracao
-    cenas = _garantir_limites_estritos(cenas, duracao, ESTILO_MINIMO_SEGUNDOS, ESTILO_MAXIMO_SEGUNDOS, ESTILO_ALVO_SEGUNDOS, alinhamento=alinhamento)
+    # a fala de cada cena no tempo novo, antes do corte: a imagem numerada dela segue essa fala (ver abaixo)
+    trechos = _trechos_pela_fala(cenas, alinhamento.get("palavras") or [], duracao)
+    # a foto que a pessoa subiu do computador manda: sem IA ligada, toda imagem numerada só pode ter vindo dela
+    from .midia import ia_ativa
+    # (cena que já mostra material real tem a imagem numerada escondida, velha: essa não manda)
+    da_pessoa = {c["n"] for c in cenas if (c.get("imagem_da_pessoa") or not ia_ativa(projeto))
+                 and not (c.get("midia") or {}).get("arquivo")}
+    escondidas = {c["n"] for c in cenas if (c.get("midia") or {}).get("arquivo")}
+    # as cenas só mudam se a fala nova desequilibrar alguma: passou de 5 s, ou ficou abaixo do mínimo sem já ser
+    # curta antes. Cena curta que já tinha sido aceita (o "selados." de 1 s) fica protegida no corte
+    desequilibradas = [c["n"] for c in cenas if _desequilibrou(c, duracao_antes.get(c["n"]))]
+    if desequilibradas:
+        for c in cenas:
+            antes = duracao_antes.get(c["n"])
+            if (antes is not None and antes < ESTILO_MINIMO_SEGUNDOS - FOLGA_NA_TROCA_DE_VOZ - 0.001
+                    and c["fim"] - c["ini"] >= antes - 0.3):
+                c["_curta_aceita"] = True
+        cenas = _garantir_limites_estritos(cenas, duracao, ESTILO_MINIMO_SEGUNDOS - FOLGA_NA_TROCA_DE_VOZ,
+                                           ESTILO_MAXIMO_SEGUNDOS + FOLGA_NA_TROCA_DE_VOZ, ESTILO_ALVO_SEGUNDOS,
+                                           alinhamento=alinhamento)
+        for c in cenas:
+            c.pop("_curta_aceita", None)
+    else:
+        for c in cenas:
+            c.pop("_ini_calculo", None)
+            c["ini"], c["fim"] = round(c["ini"], 3), round(c["fim"], 3)
+    _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa, escondidas)
+    # cena com material real e tipo "ia" sem imagem numerada (a junção trouxe o tipo de uma e o material da outra)
+    # volta ao tipo do material
+    for c in cenas:
+        m = c.get("midia") or {}
+        if m.get("arquivo") and c.get("tipo") == "ia" and not projeto.imagem(c["n"]).exists():
+            c["tipo"] = "video_real" if m.get("tipo") == "video" else "foto_real"
     dados["cenas"] = cenas
     _distribuir_simbolos(cenas, alinhamento.get("marcadores") or [], projeto.perfil)
     projeto.salvar_json("cenas.json", dados)
+
+
+def _mapa_de_tempo(anterior: dict, atual: dict):
+    """Função que leva um segundo da narração anterior para o mesmo ponto da fala na atual, ou None.
+
+    Só vale com as mesmas palavras nas duas (o roteiro não mudou): entre duas palavras, o ponto é interpolado."""
+    import bisect
+
+    pa, pn = anterior.get("palavras") or [], atual.get("palavras") or []
+    if not pa or len(pa) != len(pn) or any(a.get("texto") != b.get("texto") for a, b in zip(pa, pn)):
+        return None
+    pares = [(0.0, 0.0)]
+    for a, b in zip(pa, pn):
+        if a.get("ini") is None or b.get("ini") is None:
+            continue
+        if a["ini"] > pares[-1][0] and b["ini"] >= pares[-1][1]:
+            pares.append((float(a["ini"]), float(b["ini"])))
+    fim_a, fim_n = float(anterior.get("duracao") or 0), float(atual.get("duracao") or 0)
+    if fim_a > pares[-1][0] and fim_n >= pares[-1][1]:
+        pares.append((fim_a, fim_n))
+    velhos = [x for x, _ in pares]
+
+    def mapear(t):
+        k = max(0, min(bisect.bisect_right(velhos, t) - 1, len(pares) - 2))
+        (a0, b0), (a1, b1) = pares[k], pares[k + 1]
+        if t >= a1:
+            return b1 + (t - a1)
+        return b0 + (t - a0) * (b1 - b0) / (a1 - a0) if a1 > a0 else b0
+
+    return mapear
+
+
+# folga nos limites quando a narração é trocada: a pessoa quer as mesmas cenas, e uma voz 10% mais rápida ou mais
+# lenta não pode recortar o vídeo inteiro (com o limite seco, a fala 8% mais lenta levava 252 cenas a 260)
+FOLGA_NA_TROCA_DE_VOZ = 0.5
+
+
+def _desequilibrou(cena, duracao_antes) -> bool:
+    """A fala nova deixou a cena fora do limite (3 a 5 s, com a folga da troca de voz), e não porque já era assim."""
+    agora = cena["fim"] - cena["ini"]
+    if agora > ESTILO_MAXIMO_SEGUNDOS + FOLGA_NA_TROCA_DE_VOZ + 0.001:
+        return True
+    minimo = ESTILO_MINIMO_ENUMERACAO if cena.get("enumeracao") else ESTILO_MINIMO_SEGUNDOS
+    if agora >= minimo - FOLGA_NA_TROCA_DE_VOZ - 0.001:
+        return False
+    return duracao_antes is None or agora < duracao_antes - 0.3
+
+
+def _inicios_pela_fala(cenas, palavras) -> dict:
+    """Segundo em que as primeiras palavras de cada cena são faladas, achadas em ordem no tempo de cada palavra."""
+    normal = lambda t: re.sub(r"[^\w]", "", t.lower())
+    sequencia = [normal(p.get("texto", "")) for p in palavras]
+    inicios, cursor = {}, 0
+    for c in cenas:
+        alvo = [w for w in (normal(x) for x in (c.get("texto") or "").split()) if w][:3]
+        if not alvo:
+            continue
+        for j in range(cursor, min(len(sequencia) - len(alvo) + 1, cursor + 400)):
+            if sequencia[j:j + len(alvo)] == alvo and palavras[j].get("ini") is not None:
+                inicios[c["n"]] = float(palavras[j]["ini"])
+                cursor = j + 1
+                break
+    return inicios
+
+
+def _trechos_pela_fala(cenas, palavras, duracao):
+    """Começo e fim da fala de cada cena (pelo número antigo) no tempo da narração nova.
+
+    O ini que atualizar_tempos calcula é o começo da FRASE: duas cenas cortadas no meio da mesma frase ("As facas
+    forjadas nestas fazendas e" | "e pequenas oficinas") ficavam com duração zero. Aqui cada cena é achada pelas
+    primeiras palavras dela, em ordem, no tempo de cada palavra; o trecho vai até o começo da cena seguinte."""
+    inicios = _inicios_pela_fala(cenas, palavras)
+    trechos = {}
+    for i, c in enumerate(cenas):
+        a = inicios.get(c["n"], c["ini"])
+        seguinte = next((inicios[x["n"]] for x in cenas[i + 1:] if x["n"] in inicios), None)
+        b = seguinte if seguinte is not None and seguinte > a else max(c["fim"], a)
+        trechos[c["n"]] = (a, b if i + 1 < len(cenas) else duracao)
+    return trechos
+
+
+def _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa=(), escondidas=()):
+    """Depois de recortar as cenas, cada imagem imagens/NNNN.png vai para a cena nova que mais cobre a fala dela.
+
+    A imagem de IA e a foto que a pessoa subiu do computador ficam guardadas pelo número da cena. Narrar de novo com
+    outra voz muda o ritmo, as cenas se dividem, se juntam e são renumeradas: antes as imagens ficavam com o número
+    velho, a cena dona ficava sem arquivo e outra cena passava a mostrar a imagem errada (no zz_teste_animacoes, a foto
+    da faca artesanal da cena 112 ficou na 112 nova e a 129, a dona, ficou vazia).
+
+    trechos traz, para cada número antigo, o começo e o fim da fala dele no tempo NOVO. A imagem vai para a cena nova
+    sem material real que mais se sobrepõe a esse trecho, uma imagem por cena (a imagem não se repete no vídeo: a
+    outra metade de uma cena dividida fica sem arquivo até o "Continuar carregamento"). A foto que a pessoa subiu
+    (da_pessoa) vai antes e vence o material de acervo: na junção de cenas, a do zz_teste_animacoes "Ela é sempre
+    colocada deitada" perdia o lugar para a foto de banco da cena vizinha. A imagem que estava escondida atrás de
+    material real (escondidas) só vai para outra cena com material real, para não reaparecer numa cena livre. Imagem
+    sem cena vai para imagens/_sem_cena, sem ser apagada."""
+    pasta = projeto.pasta / "imagens"
+    if not pasta.is_dir():
+        return
+    arquivos = {int(a.stem): a for a in pasta.glob("[0-9][0-9][0-9][0-9].png")}
+    if not arquivos:
+        return
+    pares = []
+    for antigo in arquivos:
+        if antigo not in trechos:
+            continue
+        a, b = trechos[antigo]
+        for c in cenas:
+            sobra = min(b, c["fim"]) - max(a, c["ini"])
+            if sobra > 0.05:
+                pares.append((sobra, antigo, c))
+    for c in cenas:
+        c.pop("imagem_da_pessoa", None)  # a marca volta só na cena que ficar com a foto
+    donos, ocupadas = {}, set()
+
+    def dar(antigo, c):
+        if (c.get("midia") or {}).get("arquivo") and antigo not in escondidas:
+            for campo in ("midia", "captura", "conferencia"):
+                c.pop(campo, None)
+        donos[antigo] = c["n"]
+        ocupadas.add(c["n"])
+        if antigo in da_pessoa:
+            c["imagem_da_pessoa"] = True
+        if c.get("tipo") in ("foto_real", "video_real") and not (c.get("midia") or {}).get("arquivo"):
+            c["tipo"] = "ia"  # sem material real, a cena mostra a imagem numerada
+
+    ordem = sorted(pares, key=lambda x: (x[1] not in da_pessoa, -x[0]))
+    # 1ª passada: cena livre que cobre boa parte da fala. 2ª: o que sobrou, e a foto da pessoa pode tirar o acervo
+    for passada in (1, 2):
+        for sobra, antigo, c in ordem:
+            if antigo in donos or c["n"] in ocupadas:
+                continue
+            tem_material = bool((c.get("midia") or {}).get("arquivo"))
+            if antigo in escondidas:
+                if tem_material:
+                    dar(antigo, c)
+                continue
+            if passada == 1:
+                a, b = trechos[antigo]
+                if not tem_material and sobra >= 0.35 * (b - a):
+                    dar(antigo, c)
+            elif not tem_material or antigo in da_pessoa:
+                dar(antigo, c)
+    if all(donos.get(k) == k for k in arquivos):
+        return
+    # duas passadas, por uma pasta de passagem: a 0112 pode ir para a 0128 enquanto a 0128 vai para a 0146
+    passagem = pasta / "_renumerando"
+    passagem.mkdir(exist_ok=True)
+    for arquivo in arquivos.values():
+        arquivo.replace(passagem / arquivo.name)
+    carimbo = time.strftime("%Y%m%d-%H%M%S")
+    for antigo in arquivos:
+        origem = passagem / f"{antigo:04d}.png"
+        if antigo in donos:
+            origem.replace(pasta / f"{donos[antigo]:04d}.png")
+        else:
+            (pasta / "_sem_cena").mkdir(exist_ok=True)
+            origem.replace(pasta / "_sem_cena" / f"{antigo:04d}_{carimbo}.png")
+    passagem.rmdir()
 
 
 def _planejar_com_claude(projeto, unidades, alvo, minimo, maximo, log):

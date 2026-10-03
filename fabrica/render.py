@@ -15,7 +15,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import abertura, avatar, efeitos, textos
+from . import abertura, animacoes, avatar, efeitos, textos, trilha
 from .config import caminho_relativo
 from .util import duracao_audio, rodar
 
@@ -24,6 +24,11 @@ EXTENSOES_AUDIO = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 ESTILO_LEGENDA = (
     "FontName=Arial,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&HA0000000,"
     "BorderStyle=1,Outline=1,Shadow=0,MarginV=18"
+)
+# na tela em pé a legenda sobe para o terço de baixo, acima dos botões e da descrição do Shorts e do Reels
+ESTILO_LEGENDA_VERTICAL = (
+    "FontName=Arial,FontSize=9,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HC0000000,"
+    "BorderStyle=1,Outline=1.4,Shadow=0,MarginL=24,MarginR=24,MarginV=72"
 )
 
 
@@ -38,8 +43,30 @@ def com_avatar(projeto, sem_avatar=False) -> bool:
     return bool((projeto.perfil.get("avatar") or {}).get("ativo")) and not sem_avatar
 
 
-def renderizar(projeto, log=print, sem_avatar=False):
-    cfg = projeto.config.get("render") or {}
+def configuracao(projeto, vertical=False):
+    """Ajustes do render. Na versão em pé (Reels e Shorts) a tela vira 1080x1920 e vale a seção vertical do config.
+
+    A seção vertical fica fora da seção render de propósito: os ajustes do render entram no nome de cada clipe,
+    e mexer neles faria a versão deitada de todo projeto renderizar de novo."""
+    cfg = dict(projeto.config.get("render") or {})
+    if vertical:
+        v = projeto.config.get("vertical") or {}
+        cfg.update({"largura": v.get("largura", 1080), "altura": v.get("altura", 1920), "vertical": True,
+                    "superamostragem": v.get("superamostragem", 2), "recorte": v.get("recorte", 1.0)})
+    return cfg
+
+
+def arquivo_final(projeto, vertical=False):
+    return projeto.pasta / ("final_vertical.mp4" if vertical else "final.mp4")
+
+
+def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
+    cfg = configuracao(projeto, vertical)
+    # a versão em pé tem pastas próprias: a limpeza dos clipes velhos de uma nunca apaga os da outra
+    base = "render_vertical" if vertical else "render"
+    if vertical and not sem_avatar and com_avatar(projeto, False):
+        log("  a versão em pé sai sem o personagem, porque o quadro dele foi pensado para a tela deitada")
+    sem_avatar = sem_avatar or vertical
     fps = cfg.get("fps", 30)
     duracao = projeto.ler_json("alinhamento.json")["duracao"]
     cenas = projeto.ler_json("cenas.json")["cenas"]
@@ -63,10 +90,12 @@ def renderizar(projeto, log=print, sem_avatar=False):
                                  f"ou rode o render com --sem-avatar.")
 
     com_textos = textos.ativo(projeto.perfil)
+    # as animações foram desenhadas para a tela deitada; na versão em pé a cena volta à foto com o texto na tela
+    com_animacoes = bool(animacoes.config(projeto).get("ativo", True)) and not vertical
     sorteio = random.Random(projeto.nome)
-    pasta_clipes = projeto.caminho("render", "clipes", "_").parent
-    pasta_fotos = projeto.caminho("render", "fotos", "_").parent
-    pasta_textos = projeto.caminho("render", "textos", "_").parent
+    pasta_clipes = projeto.caminho(base, "clipes", "_").parent
+    pasta_fotos = projeto.caminho(base, "fotos", "_").parent
+    pasta_textos = projeto.caminho(base, "textos", "_").parent
     tarefas, anterior = [], None
     linha = _linha_do_tempo(projeto, cenas, origens, trechos, duracao)
     faltando = sorted({p["cena"]["n"] for p in linha if p["tipo"] == "cena" and not p["arquivo"].exists()})
@@ -80,8 +109,10 @@ def renderizar(projeto, log=print, sem_avatar=False):
     musica_abertura = faixa_abertura = None
     quadro = com_avatar(projeto, sem_avatar) and avatar.modo(projeto.perfil) != "trechos"
     if abertura.ativa(projeto.perfil) and not avatar.somente_avatar(projeto.perfil) and not quadro:
-        tarefas, musica_abertura, faixa_abertura = _abertura(projeto, cenas, origens, cfg, pasta_clipes, log)
+        tarefas, musica_abertura, faixa_abertura = _abertura(projeto, cenas, origens, cfg, pasta_clipes, log, base)
     atraso = sum(t["frames"] for t in tarefas) / fps
+    # a revisão do vídeo pronto (revisao_video.py) precisa saber quanto a abertura empurra cada cena no final.mp4
+    projeto.salvar_json(f"{base}/linha.json", {"atraso": round(atraso, 3), "fps": fps})
 
     for pedaco in linha:
         f_ini, f_fim = round(pedaco["ini"] * fps), round(pedaco["fim"] * fps)
@@ -99,6 +130,12 @@ def renderizar(projeto, log=print, sem_avatar=False):
         movimento = sorteio.choice([m for m in MOVIMENTOS if m != anterior])
         anterior = movimento
         texto_tela = c.get("texto_tela") if com_textos else None
+        # cena de diagrama, texto na tela, linha do tempo ou mapa com animação em dia: o clipe animado entra no lugar
+        # da foto, e o texto na tela sai, porque a animação já traz o texto no tempo da fala
+        animada = animacoes.valida(projeto, c) if com_animacoes else None
+        if animada is not None:
+            pedaco = {**pedaco, "origem": "animacao", "arquivo": animada, "deslocamento": pedaco["ini"] - c["ini"]}
+            arquivo, texto_tela = animada, None
         simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
         # o nome do clipe muda quando a origem, a duração, o movimento, o texto, o símbolo ou o título mudam
         assinatura = (
@@ -124,7 +161,15 @@ def renderizar(projeto, log=print, sem_avatar=False):
         extras.append((duracao, arquivo))
         duracao_total = duracao + frames / fps
     sons = efeitos.na_linha_do_tempo(projeto, cenas)
-    legenda = _legendas_finais(projeto, trechos, fecho, duracao, atraso)
+    if not efeitos.ativo(projeto.perfil):
+        # sem os efeitos da ElevenLabs, entram os que o código toca: passagem e impacto na troca de bloco,
+        # impacto no cartão de título e um toque curto quando o texto entra na tela
+        try:
+            sons = trilha.efeitos_na_linha(projeto, cenas, log)
+        except (Exception, SystemExit) as erro:
+            log(f"  efeitos gerados ficaram de fora: {str(erro)[:160]}")
+            sons = []
+    legenda = _legendas_finais(projeto, trechos, fecho, duracao, atraso, base)
 
     validos = {t["destino"].name for t in tarefas}
     for velho in pasta_clipes.glob("*.mp4"):
@@ -140,19 +185,20 @@ def renderizar(projeto, log=print, sem_avatar=False):
             if i % 10 == 0 or i == len(futuros):
                 log(f"  clipes {i}/{len(futuros)}")
 
-    arquivo_lista = projeto.caminho("render", "clipes.txt")
+    arquivo_lista = projeto.caminho(base, "clipes.txt")
     arquivo_lista.write_text("".join(f"file '{t['destino']}'\n" for t in tarefas), encoding="utf-8")
-    video = projeto.caminho("render", "video.mp4")
+    video = projeto.caminho(base, "video.mp4")
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", arquivo_lista, "-c", "copy", video])
     partes = ["narração", "música", "legenda"] + (["personagem"] if extras else []) + (["efeitos"] if sons else [])
     log("  juntando " + ", ".join(partes[:-1]) + " e " + partes[-1])
-    final = projeto.caminho("final.mp4")
+    final = arquivo_final(projeto, vertical)
     _mixar(projeto, video, duracao_total + atraso, final, log, sem_avatar, extras,
-           sons=sons, atraso=atraso, musica_abertura=musica_abertura, faixa_abertura=faixa_abertura, legenda=legenda)
+           sons=sons, atraso=atraso, musica_abertura=musica_abertura, faixa_abertura=faixa_abertura, legenda=legenda,
+           cfg=cfg, base=base)
     return final
 
 
-def _abertura(projeto, cenas, origens, cfg, pasta_clipes, log):
+def _abertura(projeto, cenas, origens, cfg, pasta_clipes, log, base="render"):
     """Clipes da abertura sem fala e a música dela."""
     fps = cfg.get("fps", 30)
     ajustes = abertura.configuracao(projeto.perfil)
@@ -177,8 +223,8 @@ def _abertura(projeto, cenas, origens, cfg, pasta_clipes, log):
         log("  abertura sem música, porque o perfil não aponta nenhuma faixa")
         return tarefas, None, None
     inicio = abertura.trecho_mais_forte(faixa, duracao)
-    bruto = projeto.caminho("render", "musica_abertura_bruta.wav")
-    destino = projeto.caminho("render", "musica_abertura.wav")
+    bruto = projeto.caminho(base, "musica_abertura_bruta.wav")
+    destino = projeto.caminho(base, "musica_abertura.wav")
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.3f}", "-t", f"{duracao + 1:.3f}", "-i", faixa,
            "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", bruto])
     volume = ajustes.get("volume_db", -2)
@@ -301,7 +347,12 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
         return _clipe_avatar(tarefa, destino, temporario, cfg)
     if tarefa["tipo"] == "abertura":
         return _clipe_abertura(tarefa, destino, temporario, pasta_fotos, cfg)
-    if tarefa["origem"] == "video":
+    if tarefa["origem"] == "animacao":
+        # a animação já tem a duração da cena e o movimento dela: entra do ponto certo, sem pular nem desacelerar
+        entradas = ["-ss", f"{tarefa.get('deslocamento', 0.0):.3f}", "-i", arquivo]
+        filtro = (f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1,"
+                  f"fps={fps},tpad=stop_mode=clone:stop_duration={frames / fps:.3f},format=yuv420p")
+    elif tarefa["origem"] == "video":
         entradas, filtro = _entrada_video(arquivo, frames, cfg)
     else:
         entradas, filtro = ["-i", _preparar_foto(arquivo, pasta_fotos, cfg)], _filtro_foto(tarefa["movimento"], frames, cfg)
@@ -310,8 +361,12 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
     texto_tela, simbolos, titulos = tarefa["texto_tela"], tarefa["simbolos"], tarefa["titulos"]
     grafo = [f"[0:v]{filtro}[b0]"]
     pasta = pasta_textos / destino.stem
-    camadas = textos.camadas(texto_tela, perfil, pasta, duracao, largura, altura)
-    camadas += textos.camadas_titulo(titulos, perfil, pasta, duracao, largura, altura)
+    if cfg.get("vertical"):
+        camadas = textos.para_vertical(textos.camadas(texto_tela, perfil, pasta, duracao), largura, altura, pasta, "vt")
+        camadas += textos.para_vertical(textos.camadas_titulo(titulos, perfil, pasta, duracao), largura, altura, pasta, "vtt")
+    else:
+        camadas = textos.camadas(texto_tela, perfil, pasta, duracao, largura, altura)
+        camadas += textos.camadas_titulo(titulos, perfil, pasta, duracao, largura, altura)
     camadas += textos.camadas_simbolo(simbolos, perfil, pasta, duracao, largura, altura)
     for i, camada in enumerate(camadas, 1):
         entradas += ["-loop", "1", "-framerate", fps, "-t", f"{duracao:.3f}", "-i", camada["arquivo"]]
@@ -359,6 +414,25 @@ def _filtro_foto(movimento, frames, cfg):
     )
 
 
+def _encaixe(cfg):
+    """Filtro que leva um vídeo de qualquer formato para o tamanho da tela.
+
+    Na tela deitada o vídeo preenche e corta as sobras. Na tela em pé, cortar um vídeo deitado jogaria fora dois
+    terços da imagem: ele perde as laterais só até ficar quadrado e fica sobre uma cópia dele mesmo, desfocada."""
+    largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
+    preencher = f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1"
+    if not cfg.get("vertical"):
+        return preencher
+    recorte = float(cfg.get("recorte", 1.0))
+    l8, a8 = largura // 8, altura // 8
+    return (f"split=2[enc_a][enc_b];"
+            f"[enc_a]scale={l8}:{a8}:force_original_aspect_ratio=increase,crop={l8}:{a8},boxblur=6:1,"
+            f"scale={largura}:{altura},colorchannelmixer=rr=0.45:gg=0.45:bb=0.45,setsar=1[enc_fundo];"
+            f"[enc_b]crop='min(iw,ih*{recorte})':ih,scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
+            f"setsar=1[enc_frente];"
+            f"[enc_fundo][enc_frente]overlay=(W-w)/2:(H-h)/2")
+
+
 def _entrada_video(arquivo, frames, cfg, centro=False):
     largura, altura, fps = cfg.get("largura", 1920), cfg.get("altura", 1080), cfg.get("fps", 30)
     necessario = frames / fps
@@ -370,7 +444,7 @@ def _entrada_video(arquivo, frames, cfg, centro=False):
         inicio = min(1.0, (disponivel - necessario) / 2)  # pula o comecinho, que costuma ter tremida
     elif disponivel < necessario:
         velocidade = max(disponivel / necessario, 0.5)  # desacelera até a metade, depois congela o fim
-    filtro = f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1"
+    filtro = _encaixe(cfg)
     if velocidade < 1:
         filtro += f",setpts=PTS/{velocidade:.4f}"
     filtro += f",fps={fps},tpad=stop_mode=clone:stop_duration={necessario:.3f},format=yuv420p"
@@ -382,8 +456,9 @@ def _preparar_foto(origem, pasta_fotos, cfg):
     from PIL import Image, ImageEnhance, ImageFilter
 
     largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
+    tela = largura / altura
     with Image.open(origem) as imagem:
-        if 1.3 <= imagem.width / imagem.height <= 2.0:
+        if tela * 0.73125 <= imagem.width / imagem.height <= tela * 1.125:  # na tela deitada, de 1,3 a 2,0
             return origem
         codigo = hashlib.sha1(f"{origem}|{origem.stat().st_mtime_ns}".encode()).hexdigest()[:10]
         destino = pasta_fotos / f"{origem.stem}-{codigo}.jpg"
@@ -400,7 +475,15 @@ def _preparar_foto(origem, pasta_fotos, cfg):
     fundo = fundo.filter(ImageFilter.GaussianBlur(6)).resize((tela_l, tela_a), Image.BICUBIC)
     fundo = ImageEnhance.Brightness(fundo).enhance(0.45)
 
-    escala = min(tela_l * 0.9 / imagem.width, tela_a * 0.88 / imagem.height)
+    if cfg.get("vertical"):
+        # na tela em pé a foto deitada perde as laterais até ficar no máximo quadrada e ocupa a largura toda
+        recorte = float(cfg.get("recorte", 1.0))
+        if imagem.width / imagem.height > recorte:
+            sobra = (imagem.width - round(imagem.height * recorte)) // 2
+            imagem = imagem.crop((sobra, 0, imagem.width - sobra, imagem.height))
+        escala = min(tela_l / imagem.width, tela_a * 0.88 / imagem.height)
+    else:
+        escala = min(tela_l * 0.9 / imagem.width, tela_a * 0.88 / imagem.height)
     frente = imagem.resize((round(imagem.width * escala), round(imagem.height * escala)), Image.LANCZOS)
     fundo.paste(frente, ((tela_l - frente.width) // 2, (tela_a - frente.height) // 2))
     fundo.save(destino, quality=92)
@@ -408,12 +491,12 @@ def _preparar_foto(origem, pasta_fotos, cfg):
 
 
 def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(), sons=(), atraso=0.0,
-           musica_abertura=None, faixa_abertura=None, legenda=None):
-    cfg = projeto.config.get("render") or {}
+           musica_abertura=None, faixa_abertura=None, legenda=None, cfg=None, base="render"):
+    cfg = cfg if cfg is not None else (projeto.config.get("render") or {})
     # voz e música chegam prontas, com o tamanho e o volume certos, e aqui só se somam
     # a trilha completa sai antes, num passo só de áudio, porque o filtro de legenda
     # atrasa os fluxos com adelay quando tudo roda no mesmo grafo
-    audio = _trilha(projeto, duracao, extras, sons, atraso, musica_abertura, faixa_abertura)
+    audio = _trilha(projeto, duracao, extras, sons, atraso, musica_abertura, faixa_abertura, base)
     entradas, partes = ["-i", video, "-i", audio], []
 
     atual, reencodar = "0:v", False
@@ -433,6 +516,9 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
     legenda = legenda or projeto.pasta / "legendas_tela.srt"
     if projeto.perfil.get("legenda_na_tela") and legenda.exists():
         estilo = projeto.perfil.get("estilo_legenda") or ESTILO_LEGENDA
+        if cfg.get("vertical"):
+            estilo = ((projeto.perfil.get("vertical") or {}).get("estilo_legenda")
+                      or (projeto.config.get("vertical") or {}).get("estilo_legenda") or ESTILO_LEGENDA_VERTICAL)
         if atual != "0:v" and pip["y"] > cfg.get("altura", 1080) / 2 and not re.search(r"Margin[LR]=", estilo):
             # a legenda desvia do quadro do avatar. As margens do estilo contam numa tela de 384 pontos de largura
             largura_tela = cfg.get("largura", 1920)
@@ -463,13 +549,14 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
     ])
 
 
-def _trilha(projeto, duracao, extras=(), sons=(), atraso=0.0, musica_abertura=None, faixa_abertura=None):
+def _trilha(projeto, duracao, extras=(), sons=(), atraso=0.0, musica_abertura=None, faixa_abertura=None,
+            base="render"):
     """Junta narração, música, clipes do personagem, efeitos e abertura numa faixa só, já no tempo certo.
 
     Tudo o que pertence ao vídeo principal anda atraso segundos para frente, o tempo da abertura.
     """
-    voz = _preparar_voz(projeto)
-    musica = _musica(projeto, duracao - atraso, [faixa_abertura] if faixa_abertura else [])
+    voz = _preparar_voz(projeto, base)
+    musica = _musica(projeto, duracao - atraso, [faixa_abertura] if faixa_abertura else [], base)
     entradas, fontes, partes = [], [], []
 
     def entrada(arquivo):
@@ -492,14 +579,17 @@ def _trilha(projeto, duracao, extras=(), sons=(), atraso=0.0, musica_abertura=No
                       f"{ms(momento + atraso)}[e{n}]")
         fontes.append(f"[e{n}]")
     volume_sons = (projeto.perfil.get("efeitos") or {}).get("volume_db", -9)
-    for momento, arquivo in sons:
+    for som in sons:
+        # os efeitos gerados (trilha.py) trazem o próprio volume; os da ElevenLabs usam o do perfil
+        momento, arquivo = som[0], som[1]
+        volume = som[2] if len(som) > 2 else volume_sons
         n = entrada(arquivo)
-        partes.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={_ganho_pico(arquivo) + volume_sons:.1f}dB,"
+        partes.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={_ganho_pico(arquivo) + volume:.1f}dB,"
                       f"{ms(momento + atraso)}[s{n}]")
         fontes.append(f"[s{n}]")
     if musica_abertura:
         fontes.append(f"[{entrada(musica_abertura)}:a]")
-    destino = projeto.caminho("render", "trilha.wav")
+    destino = projeto.caminho(base, "trilha.wav")
     partes.append("".join(fontes) + f"amix=inputs={len(fontes)}:duration=longest:normalize=0[a]")
     rodar(["ffmpeg", "-y", "-loglevel", "error", *entradas, "-filter_complex", ";".join(partes),
            "-map", "[a]", "-t", f"{duracao:.3f}", "-c:a", "pcm_s16le", destino])
@@ -538,7 +628,7 @@ def _escrever_srt(pedacos, destino):
     destino.write_text("\n".join(blocos), encoding="utf-8")
 
 
-def _legendas_finais(projeto, trechos, fecho, duracao, atraso):
+def _legendas_finais(projeto, trechos, fecho, duracao, atraso, base="render"):
     """Legendas do vídeo pronto, com as falas dos clipes fixos e o tempo da abertura.
 
     A de uma linha vai gravada na imagem. A de duas linhas fica em legendas_final.srt,
@@ -546,7 +636,7 @@ def _legendas_finais(projeto, trechos, fecho, duracao, atraso):
     """
     gravada = None
     for origem, destino, largura, linhas in (
-        (projeto.pasta / "legendas_tela.srt", projeto.caminho("render", "legendas_tela_final.srt"), 38, 1),
+        (projeto.pasta / "legendas_tela.srt", projeto.caminho(base, "legendas_tela_final.srt"), 38, 1),
         (projeto.pasta / "legendas.srt", projeto.caminho("legendas_final.srt"), 42, 2),
     ):
         if not origem.exists():
@@ -587,22 +677,30 @@ def _normalizar(arquivo):
 TRANSICAO_MUSICA = 4  # segundos de transição entre uma faixa e a próxima
 
 
-def _musica(projeto, duracao, faixas_creditadas=()):
-    """Monta a trilha do vídeo com as faixas do perfil em sequência, repetindo e misturando as pontas até cobrir o vídeo."""
+def _musica(projeto, duracao, faixas_creditadas=(), base="render"):
+    """Monta a trilha do vídeo com as faixas do perfil em sequência, repetindo e misturando as pontas até cobrir o vídeo.
+
+    Sem faixas no perfil (ou com a pasta vazia, porque as músicas do canal não vêm no pacote), entra a trilha que o
+    modelo compõe e o código toca (trilha.py). Com trilha.substituir no config, ela entra até no lugar das faixas."""
     origem = projeto.perfil.get("musica")
-    if not origem:
-        return None
-    caminho = caminho_relativo(origem)
-    if caminho.is_file():
-        faixas = [caminho]
-    elif caminho.is_dir():
-        faixas = sorted(f for f in caminho.iterdir() if f.suffix.lower() in EXTENSOES_AUDIO)
-        if not faixas:
-            # sem trilha na pasta (as músicas do canal não vêm no pacote) o vídeo sai só com a narração, em vez de não sair
-            print(f"  aviso: nenhum arquivo de áudio em {caminho}, o vídeo sai sem música")
+    faixas, gerada = [], None
+    if origem and not trilha.config(projeto).get("substituir"):
+        caminho = caminho_relativo(origem)
+        if caminho.is_file():
+            faixas = [caminho]
+        elif caminho.is_dir():
+            faixas = sorted(f for f in caminho.iterdir() if f.suffix.lower() in EXTENSOES_AUDIO)
+        else:
+            raise SystemExit(f"Música não encontrada em {caminho}")
+    if not faixas:
+        try:
+            gerada = trilha.gerar(projeto)
+        except (Exception, SystemExit) as erro:  # a trilha gerada nunca derruba o render
+            print(f"  aviso: a trilha gerada falhou ({str(erro)[:160]})")
+        if not gerada:
+            print("  aviso: sem música no perfil e sem trilha gerada, o vídeo sai só com a narração")
             return None
-    else:
-        raise SystemExit(f"Música não encontrada em {caminho}")
+        faixas = [gerada]
 
     sorteio = random.Random(projeto.nome)
     sequencia, total = [], 0.0
@@ -617,7 +715,7 @@ def _musica(projeto, duracao, faixas_creditadas=()):
             if total >= duracao + 5:
                 break
 
-    emendada = projeto.caminho("render", "musica_emendada.wav")
+    emendada = projeto.caminho(base, "musica_emendada.wav")
     entradas = [item for f in sequencia for item in ("-i", f)]
     grafo = [f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo[m{i}]" for i in range(len(sequencia))]
     anterior = "m0"
@@ -627,8 +725,8 @@ def _musica(projeto, duracao, faixas_creditadas=()):
     rodar(["ffmpeg", "-y", "-loglevel", "error", *entradas, "-filter_complex", ";".join(grafo),
            "-map", f"[{anterior}]", "-c:a", "pcm_s16le", emendada])
 
-    destino = projeto.caminho("render", "musica.wav")
-    volume = projeto.perfil.get("volume_musica_db", -14)
+    destino = projeto.caminho(base, "musica.wav")
+    volume = projeto.perfil.get("volume_musica_db", trilha.config(projeto).get("volume_db", -16) if gerada else -14)
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", emendada, "-af",
            f"atrim=0:{duracao:.3f},{_normalizar(emendada)},volume={volume}dB,aresample=48000,"
            f"aformat=channel_layouts=stereo,afade=t=in:d=2,afade=t=out:st={max(duracao - 4, 0):.3f}:d=4",
@@ -638,9 +736,9 @@ def _musica(projeto, duracao, faixas_creditadas=()):
     return destino
 
 
-def _preparar_voz(projeto):
+def _preparar_voz(projeto, base="render"):
     narracao = projeto.pasta / "narracao.wav"
-    destino = projeto.caminho("render", "voz.wav")
+    destino = projeto.caminho(base, "voz.wav")
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", narracao, "-af",
            f"{_normalizar(narracao)},aresample=48000,aformat=channel_layouts=stereo", "-c:a", "pcm_s16le", destino])
     return destino

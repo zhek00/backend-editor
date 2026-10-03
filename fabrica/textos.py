@@ -264,6 +264,45 @@ def camadas(texto_tela, perfil, pasta, duracao, largura=1920, altura=1080):
     return resultado
 
 
+def para_vertical(camadas_horizontais, largura, altura, pasta, prefixo="v"):
+    """Leva camadas desenhadas para a tela deitada (1920x1080) para a tela em pé (1080x1920).
+
+    Os desenhos de cada tema foram pensados para a tela deitada: em vez de refazer cada um, o grupo inteiro de
+    camadas (o cartão e os itens de uma lista andam juntos) é reduzido só o necessário para caber na largura,
+    centralizado, e levado para a faixa do meio da tela, longe da legenda e dos botões do Shorts e do Reels."""
+    if not camadas_horizontais:
+        return []
+    recortadas = []
+    for camada in camadas_horizontais:
+        with Image.open(camada["arquivo"]) as imagem:
+            imagem = imagem.convert("RGBA")
+            caixa = imagem.getbbox()
+            if not caixa:
+                continue
+            recortadas.append((camada, imagem.crop(caixa), camada["x"] + caixa[0], camada["y"] + caixa[1]))
+    if not recortadas:
+        return []
+    x0 = min(x for _, _, x, _ in recortadas)
+    y0 = min(y for _, _, _, y in recortadas)
+    x1 = max(x + img.width for _, img, x, _ in recortadas)
+    y1 = max(y + img.height for _, img, _, y in recortadas)
+    escala = min(1.0, largura * 0.9 / max(x1 - x0, 1), altura * 0.45 / max(y1 - y0, 1))
+    # o centro do grupo segue a altura que tinha na tela deitada, preso entre 22% e 62% da tela em pé
+    centro = min(max((y0 + y1) / 2 / 1080, 0.22), 0.62) * altura
+    novo_x0 = (largura - (x1 - x0) * escala) / 2
+    novo_y0 = centro - (y1 - y0) * escala / 2
+    pasta.mkdir(parents=True, exist_ok=True)
+    resultado = []
+    for k, (camada, imagem, x, y) in enumerate(recortadas):
+        if escala < 0.999:
+            imagem = imagem.resize((max(1, round(imagem.width * escala)), max(1, round(imagem.height * escala))), Image.LANCZOS)
+        arquivo = pasta / f"{prefixo}_{k}.png"
+        imagem.save(arquivo)
+        resultado.append({**camada, "arquivo": arquivo, "x": round(novo_x0 + (x - x0) * escala),
+                          "y": round(novo_y0 + (y - y0) * escala)})
+    return resultado
+
+
 # ferramentas de desenho
 
 # Fontes do Windows usadas quando a fonte do Mac não existe. A fonte padrão do Pillow não tem

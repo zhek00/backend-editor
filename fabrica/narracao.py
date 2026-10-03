@@ -18,7 +18,7 @@ import wave
 
 import httpx
 
-from . import custos_reais, genaipro
+from . import custos_reais, fish, genaipro
 from . import texto as tx
 from .util import duracao_audio, rodar
 
@@ -49,13 +49,21 @@ def narrar(projeto, log=print) -> float:
         bruto = projeto.caminho("narracao", f"bloco_{i:03d}_bruto.wav")
         return bruto, bruto.with_name(f"bloco_{i:03d}.json")
 
-    # um bloco só é narrado de novo se o texto dele mudou desde a última vez
-    pendentes = []
+    # um bloco só é narrado de novo se o texto OU A VOZ mudou desde a última vez. Antes só o texto contava: trocar a
+    # voz no editor (Nelton para Leo Antonio, no zz_teste_animacoes) reaproveitava os blocos e o vídeo saía com a
+    # voz antiga
+    assinatura = assinatura_da_voz(projeto, voz)
+    pendentes, por_voz = [], 0
     for i, bloco in enumerate(blocos):
         bruto, arquivo_alinhamento = arquivos(i)
         _migrar_bloco_antigo(bruto, arquivo_alinhamento)
         if not (arquivo_alinhamento.exists() and bruto.exists() and _mesmo_texto(arquivo_alinhamento, bloco.texto)):
             pendentes.append(i)
+        elif not _mesma_voz(projeto, arquivo_alinhamento, assinatura, i, len(blocos)):
+            pendentes.append(i)
+            por_voz += 1
+    if por_voz:
+        log(f"  a voz mudou: {por_voz} bloco(s) com o mesmo texto vão ser gravados de novo com a voz nova")
 
     def gravar(i):
         bloco = blocos[i]
@@ -64,27 +72,34 @@ def narrar(projeto, log=print) -> float:
             alinhamento = _voz_do_mac(bloco.texto, voz, bruto)
         elif voz.get("provedor") == "edge-tts":
             alinhamento = _edge_tts(bloco.texto, voz, bruto)
+        elif voz.get("provedor") == "fish":
+            alinhamento = _fish(bloco.texto, voz, bruto, log)
+            custo = alinhamento.pop("_custo_transcricao", 0)
+            if custo:
+                custos_reais.registrar(projeto, "narracao", f"bloco {i + 1}: tempo das palavras da voz da Fish Audio",
+                                       custo, detalhes={"provedor": "fish", "transcricao": True})
         else:
             alinhamento = _genaipro(bloco.texto, voz, bruto, lambda *_: None)
         alinhamento["texto"] = bloco.texto
+        alinhamento["voz"] = assinatura  # a voz que gravou este bloco: trocar a voz grava de novo
         arquivo_alinhamento.write_text(json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8")
 
-    def cobrar(i):
-        # só o que a API cobrou agora entra na conta: bloco reaproveitado do cache não paga de novo
-        texto = blocos[i].texto
-        por_caractere, origem = custos_reais.preco_por_caractere(projeto.config)
-        custos_reais.registrar(
-            projeto, "narracao", f"bloco {i + 1} de {len(blocos)} narrado na GenAIPro",
-            len(texto) * por_caractere, unidades=len(texto),
-            detalhes={"caracteres": len(texto), "voz": voz.get("voice_id", ""),
-                      "modelo": voz.get("modelo", ""), "provedor": "genaipro", "preco": origem})
+    narrados = []
 
-    pago = not projeto.offline and voz.get("provedor") != "edge-tts"
-    if pago and len(pendentes) > 1:
-        # a GenAIPro trabalha por tarefa, então vários blocos são gravados ao mesmo tempo
+    def cobrar(i):
+        # só o que a API cobrou agora entra na conta: bloco reaproveitado do cache não paga de novo.
+        # O valor sai do saldo da GenAIPro, medido no fim (_registrar_gasto_da_narracao)
+        narrados.append(i)
+
+    pago = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish")
+    saldo_antes = _saldo_genaipro() if pago and pendentes else None
+    com_fish = not projeto.offline and voz.get("provedor") == "fish"
+    if (pago or com_fish) and len(pendentes) > 1:
+        # a GenAIPro e a Fish trabalham por pedido, então vários blocos são gravados ao mesmo tempo
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        log(f"  narrando {len(pendentes)} blocos na GenAIPro, {BLOCOS_AO_MESMO_TEMPO} de cada vez")
-        with ThreadPoolExecutor(max_workers=BLOCOS_AO_MESMO_TEMPO) as grupo:
+        juntos = int(fish.config().get("blocos_ao_mesmo_tempo", 3)) if com_fish else BLOCOS_AO_MESMO_TEMPO
+        log(f"  narrando {len(pendentes)} blocos {'na Fish Audio' if com_fish else 'na GenAIPro'}, {juntos} de cada vez")
+        with ThreadPoolExecutor(max_workers=juntos) as grupo:
             tarefas = {grupo.submit(gravar, i): i for i in pendentes}
             prontos, erro = 0, None
             for tarefa in as_completed(tarefas):
@@ -94,17 +109,23 @@ def narrar(projeto, log=print) -> float:
                 except (Exception, SystemExit) as e:
                     erro = erro or e
                     continue
-                cobrar(i)
+                if pago:
+                    cobrar(i)
                 prontos += 1
                 log(f"  bloco {i + 1} pronto ({prontos} de {len(pendentes)})")
+        _registrar_gasto_da_narracao(projeto, blocos, narrados, voz, saldo_antes, log)
         if erro:
             raise erro
     else:
-        for i in pendentes:
-            log(f"  narrando bloco {i + 1} de {len(blocos)}")
-            gravar(i)
+        try:
+            for i in pendentes:
+                log(f"  narrando bloco {i + 1} de {len(blocos)}")
+                gravar(i)
+                if pago:
+                    cobrar(i)
+        finally:
             if pago:
-                cobrar(i)
+                _registrar_gasto_da_narracao(projeto, blocos, narrados, voz, saldo_antes, log)
 
     for i, bloco in enumerate(blocos):
         bruto, arquivo_alinhamento = arquivos(i)
@@ -136,6 +157,10 @@ def narrar(projeto, log=print) -> float:
         else:
             t = next((x for x in reversed(tempos_fim[:m["c"]]) if x is not None), 0.0)
         marcadores.append({**m, "ini": round(min(t, total), 3)})
+    # o tempo de cada palavra da narração anterior fica guardado: cenas.atualizar_tempos leva cada corte de cena para
+    # o mesmo ponto da fala na narração nova, e as cenas não mudam à toa
+    if projeto.existe("alinhamento.json"):
+        shutil.copy2(projeto.pasta / "alinhamento.json", projeto.pasta / "alinhamento_anterior.json")
     projeto.salvar_json("alinhamento.json", {"duracao": total, "unidades": unidades, "palavras": palavras,
                                              "marcadores": marcadores})
     _legendas(unidades, projeto.caminho("legendas.srt"), tempos_ini, tempos_fim)
@@ -207,6 +232,54 @@ def realinhar_edge(projeto, log=print) -> dict:
         projeto.salvar_json("cenas.json", dados)
     log(f"  realinhado: duração {antigo.get('duracao', 0):.1f}s -> {novo['duracao']:.1f}s, cortes das cenas movidos")
     return {"realinhado": True, "duracao_antes": antigo.get("duracao"), "duracao_depois": novo["duracao"]}
+
+
+def assinatura_da_voz(projeto, voz) -> dict:
+    """O que muda o som gravado de um bloco: a voz e os ajustes que vão para quem grava.
+
+    Ritmo e pausa ficam de fora de propósito: são aplicados depois, no áudio guardado, e mudar não custa nada."""
+    if projeto.offline:
+        return {"provedor": "mac", "voz": voz.get("voz_offline", "Luciana")}
+    if voz.get("provedor") == "fish":
+        return {"provedor": "fish", "voz": str(voz.get("voice_id") or "").strip(), "modelo": fish.modelo(voz),
+                "velocidade": round(float(voz.get("velocidade") or 1.0), 2)}
+    if voz.get("provedor") == "edge-tts":
+        return {"provedor": "edge-tts", "voz": (voz.get("voz_edge") or "pt-BR-AntonioNeural").strip(),
+                "velocidade": voz.get("velocidade_edge", "+0%"), "tom": voz.get("tom_edge", "+0Hz")}
+    try:
+        corpo = genaipro.corpo_da_tarefa("", voz)
+    except Exception:
+        return {"provedor": "genaipro", "voice_id": str(voz.get("voice_id") or "").strip()}
+    corpo.pop("input", None)
+    return {"provedor": "genaipro", **corpo}
+
+
+def _mesma_voz(projeto, arquivo_alinhamento, assinatura, indice, total) -> bool:
+    """O bloco guardado foi gravado com esta voz?
+
+    Bloco novo guarda a assinatura. Bloco de antes disso não guarda: a voz dele sai do custos_reais.json, que
+    registrou a voz de cada bloco cobrado ("bloco 2 de 6 narrado na GenAIPro"). Sem registro nenhum, vale o guardado,
+    para não pagar de novo à toa."""
+    try:
+        guardada = json.loads(arquivo_alinhamento.read_text(encoding="utf-8")).get("voz")
+    except (OSError, json.JSONDecodeError):
+        return False
+    if guardada is not None:
+        return guardada == assinatura
+    voz_antiga = _voz_do_bloco_pelo_custo(projeto, indice, total)
+    if voz_antiga is None:
+        return True
+    return assinatura.get("provedor") == "genaipro" and voz_antiga == assinatura.get("voice_id")
+
+
+def _voz_do_bloco_pelo_custo(projeto, indice, total):
+    """voice_id com que o bloco foi cobrado pela última vez, lido do histórico de custos, ou None."""
+    voz = None
+    for h in custos_reais.historico(projeto):
+        achado = re.match(r"bloco (\d+) de (\d+) narrado", h.get("motivo", ""))
+        if achado and int(achado.group(1)) == indice + 1 and int(achado.group(2)) == total:
+            voz = (h.get("detalhes") or {}).get("voz") or voz
+    return voz
 
 
 def _mesmo_texto(arquivo_alinhamento, texto):
@@ -403,6 +476,46 @@ def salvar_voz_criada(generated_voice_id, nome, descricao):
     return r.json()["voice_id"]
 
 
+def _saldo_genaipro():
+    """Créditos da conta GenAIPro agora (consulta grátis), ou None se não deu para ler."""
+    try:
+        return genaipro.conta()["creditos"]
+    except Exception:
+        return None
+
+
+def _registrar_gasto_da_narracao(projeto, blocos, narrados, voz, saldo_antes, log=print):
+    """Grava em custos_reais.json o que a GenAIPro cobrou nesta narração, medido pela diferença do saldo.
+
+    A GenAIPro não diz quanto cada tarefa gastou, e não é 1 crédito por caractere (ver
+    custos_reais.CREDITOS_POR_CARACTERE_PADRAO). Se outra narração rodar ao mesmo tempo na mesma conta, a diferença
+    pega as duas; por isso uma medida fora do razoável (mais de 1 crédito por caractere) vira estimativa."""
+    if not narrados:
+        return
+    caracteres = sum(len(blocos[i].texto) for i in narrados)
+    modelo = voz.get("modelo", "") or genaipro.MODELO_PADRAO
+    saldo_depois = _saldo_genaipro() if saldo_antes is not None else None
+    medido = saldo_antes is not None and saldo_depois is not None and 0 < saldo_antes - saldo_depois <= caracteres
+    if medido:
+        creditos = float(saldo_antes - saldo_depois)
+        custos_reais.guardar_medida(modelo, caracteres, creditos)
+        como = "medido no saldo da GenAIPro"
+    else:
+        taxa, _ = custos_reais.creditos_por_caractere(projeto.config, modelo)
+        creditos = caracteres * taxa
+        como = "estimado (não deu para ler o saldo)"
+    por_credito, origem = custos_reais.preco_por_credito(projeto.config)
+    custos_reais.registrar(
+        projeto, "narracao", f"{len(narrados)} de {len(blocos)} blocos narrados na GenAIPro: "
+                             f"{creditos:.0f} créditos, {como}",
+        creditos * por_credito, unidades=creditos,
+        detalhes={"caracteres": caracteres, "creditos": round(creditos, 1), "voz": voz.get("voice_id", ""),
+                  "modelo": modelo, "provedor": "genaipro", "preco": origem, "medido": medido,
+                  "creditos_por_caractere": round(creditos / caracteres, 4) if caracteres else 0})
+    narrados.clear()
+    log(f"  narração custou {creditos:.0f} créditos (US$ {creditos * por_credito:.4f}), {como}")
+
+
 def _genaipro(texto, voz, wav, log=print):
     """Grava o texto na GenAIPro e devolve o tempo de cada letra, montado a partir do tempo de cada palavra."""
     mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") else wav.with_suffix(".mp3")
@@ -410,6 +523,97 @@ def _genaipro(texto, voz, wav, log=print):
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
     palavras = _encostar_nas_pausas(palavras, _silencios(wav))
     return _alinhar_pelas_palavras(texto, palavras, duracao_audio(wav))
+
+
+def _fish(texto, voz, wav, log=print):
+    """Grava na Fish Audio (OpenRouter, grátis) e mede o tempo de cada palavra pela transcrição.
+
+    Sem a transcrição (falta saldo no OpenRouter, ela caiu), o tempo é estimado pelas pausas do áudio: a legenda e
+    os cortes ficam um pouco menos precisos, mas o vídeo nunca para por causa disso."""
+    mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") else wav.with_suffix(".mp3")
+    fish.narrar(texto, voz, mp3, log)
+    rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
+    duracao = duracao_audio(wav)
+    silencios = _pausas_da_voz(wav)
+    custo = 0.0
+    try:
+        palavras, custo = fish.palavras_com_tempo(mp3, texto, voz.get("idioma") or "pt")
+        como = "medido pela transcrição"
+    except Exception as erro:
+        log(f"    tempo das palavras estimado pelas pausas do áudio ({str(erro)[:120]})")
+        palavras, como = _palavras_estimadas(texto, duracao, wav), "estimado pelas pausas"
+    palavras = _encostar_nas_pausas(palavras, silencios)
+    alinhamento = _alinhar_pelas_palavras(texto, palavras, duracao)
+    alinhamento["tempo_das_palavras"] = como
+    alinhamento["_custo_transcricao"] = custo
+    return alinhamento
+
+
+def _pausas_da_voz(wav, minima=0.12):
+    """Pausas do áudio com o limite de silêncio ajustado ao volume da voz.
+
+    A voz da Fish tem um chiado de fundo perto de -35 dB: com o limite fixo de -40 dB, o silêncio depois de um ponto
+    não aparecia (4 pausas em 49 s). Com o limite 7 dB abaixo do volume médio, aparecem as pausas de verdade."""
+    r = rodar(["ffmpeg", "-hide_banner", "-i", wav, "-af", "volumedetect", "-f", "null", "-"])
+    achado = re.search(r"mean_volume:\s*(-?[\d.]+) dB", r.stderr)
+    limite = min(-25.0, float(achado.group(1)) - 7.0) if achado else -35.0
+    r = rodar(["ffmpeg", "-hide_banner", "-i", wav, "-af", f"silencedetect=noise={limite:.1f}dB:d={minima}", "-f", "null", "-"])
+    inicios = [float(x) for x in re.findall(r"silence_start: ([\d.]+)", r.stderr)]
+    fins = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    return list(zip(inicios, fins))
+
+
+def _palavras_estimadas(texto, duracao, wav):
+    """Tempo de cada palavra sem transcrição, casando a pontuação do roteiro com as pausas reais do áudio.
+
+    Cada ponto ou vírgula, em ordem, procura a pausa mais provável perto de onde a proporção de letras diz que ele
+    cai; o ponto prefere pausa longa. Achada a pausa, o trecho fica preso a ela, e as palavras de cada trecho dividem
+    o tempo dele pelo tamanho. Usado só quando a transcrição não está disponível."""
+    pausas = [(a, b) for a, b in _pausas_da_voz(wav) if b - a >= 0.12]
+    inicio_fala = next((b for a, b in pausas if a <= 0.02), 0.0)
+    fim_fala = next((a for a, b in pausas if b >= duracao - 0.02 and a > inicio_fala), duracao)
+    internas = [(a, b) for a, b in pausas if inicio_fala + 0.1 < a and b < fim_fala - 0.1]
+
+    tokens = [m.group() for m in re.finditer(r"\S+", texto)]
+    pesos = [len(re.sub(r"[^\w]", "", t)) + 1 for t in tokens]
+    acumulado = [0]
+    for peso in pesos:
+        acumulado.append(acumulado[-1] + peso)
+    forca = [2 if re.search(r"[.!?…]$", t) else 1 if re.search(r"[,;:—–-]$", t) else 0 for t in tokens]
+
+    # âncoras: (índice do token depois do qual o trecho fecha, fim da fala do trecho, começo do trecho seguinte)
+    ancoras, t_cur, k_cur, usadas = [], inicio_fala, 0, set()
+    for k in range(len(tokens) - 1):
+        if not forca[k]:
+            continue
+        resto = acumulado[-1] - acumulado[k_cur]
+        previsto = t_cur + (acumulado[k + 1] - acumulado[k_cur]) / max(resto, 1) * (fim_fala - t_cur)
+        janela = max(0.8, 0.3 * (previsto - t_cur))
+        melhor, nota_melhor = None, None
+        for j, (a, b) in enumerate(internas):
+            if j in usadas or a <= t_cur + 0.15:
+                continue
+            distancia = abs((a + b) / 2 - previsto)
+            if distancia > janela:
+                continue
+            nota = distancia - forca[k] * 0.4 * min(b - a, 0.8)
+            if nota_melhor is None or nota < nota_melhor:
+                melhor, nota_melhor = j, nota
+        if melhor is None:
+            continue
+        a, b = internas[melhor]
+        usadas.update(range(melhor + 1))  # as pausas antes desta ficam para trás
+        ancoras.append((k, a, b))
+        t_cur, k_cur = b, k + 1
+    palavras, k_ini, t_ini = [], 0, inicio_fala
+    for k_fim, t_fim, t_seguinte in ancoras + [(len(tokens) - 1, fim_fala, fim_fala)]:
+        soma = acumulado[k_fim + 1] - acumulado[k_ini] or 1
+        for k in range(k_ini, k_fim + 1):
+            t0 = t_ini + (t_fim - t_ini) * (acumulado[k] - acumulado[k_ini]) / soma
+            t1 = t_ini + (t_fim - t_ini) * (acumulado[k + 1] - acumulado[k_ini]) / soma
+            palavras.append((tokens[k], t0, t1))
+        k_ini, t_ini = k_fim + 1, t_seguinte
+    return palavras
 
 
 def _silencios(wav, minimo=0.15):

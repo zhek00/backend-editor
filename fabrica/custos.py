@@ -32,7 +32,8 @@ def estimar(projeto) -> dict:
         reais = round(cenas * proporcao)
 
     # o edge-tts é a voz gratuita da Microsoft: só a GenAIPro cobra por caractere, pelo preço do pacote
-    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "genaipro") == "edge-tts"
+    # a Fish Audio pelo OpenRouter também é grátis (a transcrição do tempo das palavras custa uns centavos por vídeo)
+    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "genaipro") in ("edge-tts", "fish")
     voz = 0.0 if gratuita else caracteres * custos_reais.preco_por_caractere(projeto.config)[0]
     # sem as cenas prontas, conta um efeito de 3 segundos por minuto de vídeo, antes do reaproveitamento
     if not efeitos.ativo(projeto.perfil):
