@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, corrigir, fish, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, fish, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -2677,11 +2677,16 @@ def _gerar_previa(origem: Path, destino: Path, largura: int) -> None:
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "0.5", "-i", str(origem), "-vframes", "1",
                         "-vf", f"scale='min({largura},iw)':-2", "-q:v", "4", str(tmp)], check=True)
     else:
-        from PIL import Image
-        with Image.open(origem) as im:
-            im = im.convert("RGB")
-            im.thumbnail((largura, largura * 4))
-            im.save(tmp, "JPEG", quality=82, optimize=True)
+        # a foto do jeito que ela entra no vídeo (moldura do retrato, recorte pelos rostos), e não a foto esticada
+        # pelo meio: o editor mostrava só o tronco do jogador da cena 16 do virou-filme-em-1996
+        try:
+            quadro = render.quadro_da_foto(origem, largura)
+        except Exception:
+            from PIL import Image
+            with Image.open(origem) as im:
+                quadro = im.convert("RGB")
+                quadro.thumbnail((largura, largura * 4))
+        quadro.save(tmp, "JPEG", quality=82, optimize=True)
     tmp.replace(destino)
 
 
@@ -2696,7 +2701,8 @@ def servir_previa(nome: str, tamanho: str, n: int):
     origem = _origem_da_previa(p, cena) if cena else None
     if origem is None:
         raise HTTPException(status_code=404, detail="Essa cena ainda não tem imagem.")
-    versao = int(origem.stat().st_mtime)
+    # a versão do enquadramento entra no nome: mudou o jeito de montar a prévia, ela é feita de novo
+    versao = f"{int(origem.stat().st_mtime)}q{rostos.VERSAO}"
     destino = p.pasta / "_previas" / tamanho / f"{n:04d}_{versao}.jpg"
     if not destino.exists():
         with _TRAVA_LEVES:

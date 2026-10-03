@@ -15,7 +15,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import abertura, animacoes, avatar, efeitos, textos, trilha
+from . import abertura, animacoes, avatar, efeitos, rostos, textos, trilha
 from .config import caminho_relativo
 from .util import duracao_audio, rodar
 
@@ -136,10 +136,11 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
         if animada is not None:
             pedaco = {**pedaco, "origem": "animacao", "arquivo": animada, "deslocamento": pedaco["ini"] - c["ini"]}
             arquivo, texto_tela = animada, None
+        enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
         simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
         # o nome do clipe muda quando a origem, a duração, o movimento, o texto, o símbolo ou o título mudam
         assinatura = (
-            f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}|"
+            f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}{enquadramento}|"
             f"{textos.assinatura(texto_tela, projeto.perfil)}|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
             f"{textos.assinatura_titulos(titulos, projeto.perfil)}"
         )
@@ -452,19 +453,92 @@ def _entrada_video(arquivo, frames, cfg, centro=False):
 
 
 def _preparar_foto(origem, pasta_fotos, cfg):
-    """Foto horizontal ocupa a tela inteira. Foto em pé, quadrada ou panorâmica ganha moldura com fundo desfocado."""
+    """Foto horizontal ocupa a tela inteira. Foto em pé, quadrada ou panorâmica ganha moldura com fundo desfocado.
+
+    Foto que ocupa a tela é recortada pelo meio, a não ser que isso corte um rosto: aí o recorte segue os rostos
+    (rostos.py). No retrato do jogador da cena 16 do virou-filme-em-1996, o editor mostrava só o tronco."""
+    nome, gerar = _foto_na_tela(origem, cfg)
+    if gerar is None:
+        return origem
+    destino = pasta_fotos / f"{origem.stem}-{nome}.jpg"
+    if not destino.exists():
+        gerar().save(destino, quality=92)
+    return destino
+
+
+def _enquadramento(arquivo, cfg) -> str:
+    """O que muda no nome do clipe quando a foto precisa de um recorte pelos rostos ("" quando não precisa).
+
+    Assim só os clipes dessas fotos renderizam de novo; os outros continuam com o mesmo nome."""
+    try:
+        nome, gerar = _foto_na_tela(arquivo, cfg)
+    except Exception:
+        return ""
+    return f"|{nome}" if gerar is not None and "rosto" in nome else ""
+
+
+def _foto_na_tela(origem, cfg):
+    """(nome, gerar) da foto como ela entra na tela. gerar é None quando a foto entra como está.
+
+    Serve ao render (_preparar_foto) e à prévia do editor (quadro_da_foto), para os dois mostrarem a mesma coisa."""
     from PIL import Image, ImageEnhance, ImageFilter
 
     largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
     tela = largura / altura
     with Image.open(origem) as imagem:
-        if tela * 0.73125 <= imagem.width / imagem.height <= tela * 1.125:  # na tela deitada, de 1,3 a 2,0
-            return origem
-        codigo = hashlib.sha1(f"{origem}|{origem.stat().st_mtime_ns}".encode()).hexdigest()[:10]
-        destino = pasta_fotos / f"{origem.stem}-{codigo}.jpg"
-        if destino.exists():
-            return destino
-        imagem = imagem.convert("RGB")
+        tamanho = (imagem.width, imagem.height)
+    proporcao = tamanho[0] / tamanho[1]
+    marca = f"{origem}|{origem.stat().st_mtime_ns}|r{rostos.VERSAO}"
+    if tela * 0.73125 <= proporcao <= tela * 1.125:  # na tela deitada, de 1,3 a 2,0
+        achados = rostos.rostos(origem)
+        if not rostos.corta_rosto_no_meio(tamanho[0], tamanho[1], tela, achados):
+            return "", None
+        caixa = rostos.recorte(tamanho[0], tamanho[1], tela, achados)
+        codigo = hashlib.sha1(f"{marca}|{tela:.4f}|{caixa}".encode()).hexdigest()[:10]
+
+        def gerar_recorte():
+            with Image.open(origem) as foto:
+                return foto.convert("RGB").crop(caixa)
+
+        return f"rosto-{codigo}", gerar_recorte
+    codigo = hashlib.sha1(f"{marca}|{largura}x{altura}|{bool(cfg.get('vertical'))}".encode()).hexdigest()[:10]
+
+    def gerar_moldura():
+        with Image.open(origem) as foto:
+            return _moldura(foto.convert("RGB"), origem, cfg)
+
+    return codigo, gerar_moldura
+
+
+def quadro_da_foto(origem, largura_px, cfg=None):
+    """A foto do jeito que ela aparece na tela do vídeo deitado, sem o movimento lento: para a prévia do editor.
+
+    Antes a prévia era a foto reduzida, e o editor a esticava pelo meio: o retrato perdia a cabeça na prévia, embora
+    o vídeo mostrasse a foto inteira com moldura."""
+    from PIL import Image
+
+    cfg = {"largura": 1920, "altura": 1080, **(cfg or {})}
+    tela = cfg["largura"] / cfg["altura"]
+    _, gerar = _foto_na_tela(origem, cfg)
+    if gerar is not None:
+        quadro = gerar()
+    else:
+        with Image.open(origem) as foto:
+            quadro = foto.convert("RGB")
+        # entra como está: a tela corta pelo meio, do mesmo jeito que o render
+        if quadro.width / quadro.height > tela:
+            sobra = (quadro.width - round(quadro.height * tela)) // 2
+            quadro = quadro.crop((sobra, 0, sobra + round(quadro.height * tela), quadro.height))
+        else:
+            sobra = (quadro.height - round(quadro.width / tela)) // 2
+            quadro = quadro.crop((0, sobra, quadro.width, sobra + round(quadro.width / tela)))
+    return quadro.resize((largura_px, round(largura_px / tela)), Image.LANCZOS)
+
+    largura, altura = cfg.get("largura", 1920), cfg.get("altura", 1080)
+
+def _moldura(imagem, origem, cfg):
+    """Foto em pé, quadrada ou panorâmica sobre uma cópia dela mesma, desfocada, no tamanho dobrado da tela."""
+    from PIL import Image, ImageEnhance, ImageFilter
 
     tela_l, tela_a = largura * 2, altura * 2
     pequeno = (tela_l // 8, tela_a // 8)
@@ -476,18 +550,21 @@ def _preparar_foto(origem, pasta_fotos, cfg):
     fundo = ImageEnhance.Brightness(fundo).enhance(0.45)
 
     if cfg.get("vertical"):
-        # na tela em pé a foto deitada perde as laterais até ficar no máximo quadrada e ocupa a largura toda
+        # na tela em pé a foto deitada perde as laterais até ficar no máximo quadrada e ocupa a largura toda; o
+        # pedaço que fica é o dos rostos, quando há
         recorte = float(cfg.get("recorte", 1.0))
         if imagem.width / imagem.height > recorte:
-            sobra = (imagem.width - round(imagem.height * recorte)) // 2
-            imagem = imagem.crop((sobra, 0, imagem.width - sobra, imagem.height))
+            caixa = rostos.recorte(imagem.width, imagem.height, recorte, rostos.rostos(origem))
+            if caixa is None:
+                sobra = (imagem.width - round(imagem.height * recorte)) // 2
+                caixa = (sobra, 0, imagem.width - sobra, imagem.height)
+            imagem = imagem.crop(caixa)
         escala = min(tela_l / imagem.width, tela_a * 0.88 / imagem.height)
     else:
         escala = min(tela_l * 0.9 / imagem.width, tela_a * 0.88 / imagem.height)
     frente = imagem.resize((round(imagem.width * escala), round(imagem.height * escala)), Image.LANCZOS)
     fundo.paste(frente, ((tela_l - frente.width) // 2, (tela_a - frente.height) // 2))
-    fundo.save(destino, quality=92)
-    return destino
+    return fundo
 
 
 def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(), sons=(), atraso=0.0,
