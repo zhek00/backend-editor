@@ -227,7 +227,7 @@ funcionando; no editor ele aparece como Fish e regerar troca a voz.
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
 
 Cuidados com esse modelo, que já custaram erro:
-- Ele **mistura pedaços de outros alfabetos** no meio do texto ("uma composição清楚的", "esteiras스타일"). `openrouter_local.perguntar` pede de novo uma vez quando a resposta traz chinês, japonês, coreano, cirílico, árabe e afins, e no fim tira o que sobrar (`_sem_outro_alfabeto`). Acentos do português ficam.
+- Ele **mistura pedaços de outros alfabetos** no meio do texto ("uma composição清楚的", "esteiras스타일"). `openrouter_local.perguntar` avisa em todo pedido que a resposta é só em alfabeto latino (`REGRA_DO_ALFABETO`), pede de novo uma vez quando a resposta traz chinês, japonês, coreano, cirílico, árabe e afins, e se ainda sobrar, **traduz** cada trecho no idioma do texto em volta (`_traduzir_trechos`, uma chamada a mais) em vez de só apagar: apagado, "分布于岩石和灌木之间" (entre rochas e arbustos) sumia da descrição que o Jev lê. Comentário do modelo sobre o próprio raciocínio volta vazio. Se a tradução falhar, o que sobrar é tirado (`_sem_outro_alfabeto`). Acentos do português ficam.
 - Ele **ignora o `response_format`** e inventa os nomes das chaves. Por isso `openrouter_local.perguntar` põe o
   esquema também no texto e **confere se as chaves obrigatórias vieram**, pedindo de novo quando não vêm.
 - Ele **pensa antes de responder**: sem `raciocinio_por_modelo: stealth/: low`, gastava todo o limite pensando e

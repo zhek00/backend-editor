@@ -156,9 +156,13 @@ def _fora_do_ar(rota, minutos, motivo):
     raise RotaIndisponivel(motivo)
 
 
-def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, imagens, temperatura, cadeia=False):
-    """Uma rota da cadeia. Com cadeia=True (há outra depois), o que não volta logo vira RotaIndisponivel."""
+def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, imagens, temperatura, cadeia=False,
+                    traduzir=True):
+    """Uma rota da cadeia. Com cadeia=True (há outra depois), o que não volta logo vira RotaIndisponivel.
+    traduzir=False é a própria chamada de tradução dos trechos de outro alfabeto, que não traduz de novo."""
     cfg = projeto.config.get("openrouter") or {}
+    # o Space Bunny e o Qwen misturam chinês no meio da resposta: o aviso vai antes, em todo pedido
+    instrucoes = instrucoes + REGRA_DO_ALFABETO
     rota = modelo
     url, chave, modelo, provedor = _rota(rota)
     if isinstance(pedido, list):
@@ -275,6 +279,8 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
                 "de chave do esquema.")
             continue
         quebrados = _trechos_de_outro_alfabeto(resposta)
+        if not traduzir:
+            return resposta  # a tradução: o que vier de outro alfabeto é descartado em _traduzir_trechos
         if quebrados and not pediu_sem_quebra:
             # o modelo às vezes mistura pedaços de outros alfabetos no meio do texto ("carvalhočekades",
             # "uma composição清楚的"): pede de novo uma vez, e no fim tira o que sobrar
@@ -284,8 +290,71 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
                 "\n\nATENÇÃO: a resposta anterior misturou caracteres de outros alfabetos (chinês, japonês, coreano, "
                 "cirílico) no meio do texto. Escreva tudo só com o alfabeto latino, em português ou em inglês.")
             continue
+        if quebrados and traduzir:
+            # sobrou outro alfabeto depois de pedir de novo: traduz os trechos em vez de só apagar, senão some a
+            # informação ("分布于岩石和灌木之间" é "entre rochas e arbustos", e o Jev só lê o texto)
+            resposta = _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota)
         return _sem_outro_alfabeto(resposta)
     raise RuntimeError(f"O OpenRouter não respondeu direito na etapa {etapa} ({ultimo_erro}).")
+
+
+REGRA_DO_ALFABETO = (
+    "\n\nIDIOMA: escreva todo o texto da resposta em português do Brasil (ou em inglês só onde o pedido mandar "
+    "inglês, como nos termos de busca), sempre com o alfabeto latino. Nunca escreva em chinês, japonês, coreano, "
+    "cirílico ou outro alfabeto, nem no meio de uma palavra. Não comente o seu raciocínio na resposta.")
+
+
+def _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota):
+    """Pede ao modelo a tradução de cada trecho de outro alfabeto, no idioma do texto em volta, e troca na resposta.
+    Comentário do modelo sobre ele mesmo ("não posso mostrar meu raciocínio") volta vazio. Se falhar, segue
+    sem traduzir (o que sobrar é apagado depois)."""
+    trechos, vistos = [], set()
+    for texto in _textos(resposta):
+        for m in _OUTRO_ALFABETO.finditer(texto):
+            if m.group() not in vistos and len(trechos) < 40:
+                vistos.add(m.group())
+                trechos.append({"trecho": m.group(), "texto_em_volta": texto[max(0, m.start() - 80):m.end() + 80]})
+    if not trechos:
+        return resposta
+    instrucoes = (
+        "Você traduz trechos que um modelo escreveu em outro alfabeto (chinês, japonês, coreano, cirílico) no meio "
+        "de um texto em português ou em inglês. Para cada trecho, devolva a tradução no MESMO idioma do texto em "
+        "volta, curta, para encaixar no lugar do trecho. Se o trecho não faz parte do conteúdo (o modelo comentando "
+        "o próprio raciocínio, uma recusa, lixo), devolva a tradução vazia. Devolva só as traduções, uma por "
+        "trecho, na mesma ordem dos trechos (sem repetir o trecho original).")
+    esquema = {"type": "object", "additionalProperties": False, "required": ["traducoes"], "properties": {
+        "traducoes": {"type": "array", "items": {"type": "string"}}}}
+    try:
+        volta = _perguntar_rota(projeto, f"{etapa} (tradução)", instrucoes, json.dumps(trechos, ensure_ascii=False),
+                                esquema, log, rota, (), 0, traduzir=False)
+    except (RuntimeError, SystemExit, RotaIndisponivel) as e:
+        log(f"  não deu para traduzir os trechos de outro alfabeto ({str(e)[:80]}), apagando")
+        return resposta
+    lista = volta.get("traducoes") if isinstance(volta, dict) else None
+    if not isinstance(lista, list) or len(lista) != len(trechos):
+        log("  a tradução dos trechos de outro alfabeto veio incompleta, apagando")
+        return resposta
+    traducoes = {t["trecho"]: (v if isinstance(v, str) else "").strip() for t, v in zip(trechos, lista)}
+    traducoes = {k: v for k, v in traducoes.items() if not _OUTRO_ALFABETO.search(v)}
+    if traducoes:
+        log(f"  {len(traducoes)} trecho(s) de outro alfabeto traduzido(s) "
+            f"({', '.join(f'{k} = {v or "(vazio)"}' for k, v in list(traducoes.items())[:2])})")
+
+    def trocar(valor):
+        if isinstance(valor, str):
+            mudou = False
+            for trecho in sorted(traducoes, key=len, reverse=True):
+                if trecho in valor:
+                    valor, mudou = valor.replace(trecho, f" {traducoes[trecho]} "), True
+            if mudou:
+                valor = re.sub(r"\s+([,.;:!?)])", r"\1", re.sub(r"[ \t]{2,}", " ", valor)).strip()
+            return valor
+        if isinstance(valor, dict):
+            return {k: trocar(v) for k, v in valor.items()}
+        if isinstance(valor, list):
+            return [trocar(v) for v in valor]
+        return valor
+    return trocar(resposta)
 
 
 # chinês, japonês, coreano, cirílico, árabe, hebraico, tailandês e devanágari: nada disso cabe num roteiro em
