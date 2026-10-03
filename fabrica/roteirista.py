@@ -36,13 +36,15 @@ Devolva SOMENTE um JSON válido, neste formato:
       "nome": "nome do bloco",
       "primeira_frase": "primeiras palavras exatas do trecho onde o bloco começa",
       "ancora": "assunto visual principal do bloco, em inglês, concreto (ex.: 'monitor lizard in the Amazon rainforest')",
-      "contexto": "1 ou 2 palavras em inglês que dizem o que o assunto do bloco É (ex.: 'marsupial animal', 'lizard', 'venomous fish')"
+      "contexto": "1 ou 2 palavras em inglês que dizem o que o assunto do bloco É (ex.: 'marsupial animal', 'lizard', 'venomous fish')",
+      "epoca": "o ano em que se passa o que o bloco conta, quando é passado (ex.: '1898'); vazio quando é hoje ou não tem época"
     }
   ],
   "armadilhas": [
     {"termo": "nome ambíguo", "problema": "o que a busca traria de errado", "usar": "como escrever a busca corretamente"}
   ],
   "pessoas_reais": ["nomes de pessoas reais citadas, que nunca terão rosto gerado por IA"],
+  "quem_e": [{"nome": "nome completo da pessoa real", "quem": "anos de vida, país e o que fez, em até 15 palavras"}],
   "proibidos": ["marcas, séries, filmes, logos ou obras protegidas citadas que não podem aparecer em imagem"],
   "imagens_recorrentes": [
     {"descricao": "imagem que deve voltar em vários momentos para dar coesão", "momentos": "onde ela aparece"}
@@ -57,6 +59,8 @@ REGRAS:
 - O contexto vai junto das buscas do bloco nos bancos de imagens, para um nome ambíguo não trazer outra coisa ("sugar glider" sozinho traz açúcar; "sugar glider marsupial" traz o animal). Use a categoria do assunto, nunca clima ou enquadramento.
 - Em "armadilhas", liste todo nome que, buscado num banco de fotos, traria outra coisa: nome próprio ambíguo (um lugar chamado "Poverty Point" traz fotos de pobreza), apelido, metáfora ou comparação ("pé de elefante" para a massa derretida do reator de Chernobyl, "olho do furacão", "cavalo de Troia" para um vírus). Em "usar", 2 a 5 palavras em inglês que descrevem o que a coisa É, com o lugar ou o assunto do vídeo, e NUNCA a palavra que causa a armadilha: "pé de elefante" vira "Chernobyl reactor corium lava" (sem "elephant", que traria elefantes); "cavalo de Troia" vira "computer virus malware" (sem "horse"). Sem palavras de clima ou enquadramento como dark, moody, close-up.
 - Em "pessoas_reais", só nomes próprios de pessoas citadas pelo nome no roteiro. Se nenhuma é citada pelo nome, devolva a lista vazia.
+- Em "quem_e", um item para cada pessoa de "pessoas_reais", com o nome completo e quem ela é (ex.: "John Henry Patterson" → "1867-1947, oficial do exército britânico, caçou os leões de Tsavo em 1898"). Serve para não confundir com outra pessoa do mesmo nome nos bancos de imagens.
+- Em "epoca", o ano do que o bloco conta quando é passado ("1898" para a construção da ferrovia). Vazio para o que se passa hoje (uma pesquisa de 2009, um museu hoje) ou não tem época.
 - Seja conciso. Este mapa é um guia, não o trabalho final."""
 
 ESQUEMA_MAPA = {
@@ -68,8 +72,8 @@ ESQUEMA_MAPA = {
             "type": "object",
             "properties": {"id": {"type": "integer"}, "nome": {"type": "string"},
                            "primeira_frase": {"type": "string"}, "ancora": {"type": "string"},
-                           "contexto": {"type": "string"}},
-            "required": ["id", "nome", "primeira_frase", "ancora", "contexto"],
+                           "contexto": {"type": "string"}, "epoca": {"type": "string"}},
+            "required": ["id", "nome", "primeira_frase", "ancora", "contexto", "epoca"],
             "additionalProperties": False,
         }},
         "armadilhas": {"type": "array", "items": {
@@ -79,6 +83,12 @@ ESQUEMA_MAPA = {
             "additionalProperties": False,
         }},
         "pessoas_reais": {"type": "array", "items": {"type": "string"}},
+        "quem_e": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"nome": {"type": "string"}, "quem": {"type": "string"}},
+            "required": ["nome", "quem"],
+            "additionalProperties": False,
+        }},
         "proibidos": {"type": "array", "items": {"type": "string"}},
         "imagens_recorrentes": {"type": "array", "items": {
             "type": "object",
@@ -87,7 +97,8 @@ ESQUEMA_MAPA = {
             "additionalProperties": False,
         }},
     },
-    "required": ["titulo", "estilo_ia", "blocos", "armadilhas", "pessoas_reais", "proibidos", "imagens_recorrentes"],
+    "required": ["titulo", "estilo_ia", "blocos", "armadilhas", "pessoas_reais", "quem_e", "proibidos",
+                 "imagens_recorrentes"],
     "additionalProperties": False,
 }
 
@@ -113,6 +124,7 @@ Campos de cada cena (para cada trecho, analise o texto falado e responda):
 - sujeito: o SUJEITO/FOCO PRINCIPAL que tem que estar na cena, sem ambiguidade, em inglês, em 1 a 3 palavras, só o substantivo (ex.: "cobra", "soil core", "hospital"), nunca uma cena descrita
 - descricao: o que aparece na tela, em português, 1 frase com o sujeito concreto E o CENÁRIO/AMBIENTE onde ele está, físico ou digital (nunca "ele", "o lugar", "o animal")
 - exato: o que a foto OBRIGATORIAMENTE precisa mostrar, escrito como estaria na legenda da foto num banco de imagens, em inglês: o nome próprio de um lugar, pessoa, obra, evento ou objeto único ("Pripyat", "Chernobyl", "New Safe Confinement", "Mona Lisa"), o nome de um aparelho ou objeto específico ("Geiger counter", "trail camera") ou a espécie de um animal ("Eurasian lynx"). Vazio quando qualquer representação direta do mesmo tipo serve (um hospital, uma floresta, um gráfico, uma pessoa de costas). A fábrica só aceita foto cujas tags citem esse nome, então não ponha adjetivo nem ação aqui
+- epoca: o ano (ex.: "1898") quando a imagem tem que ser DAQUELA época: pessoas, roupas, construções, veículos, documentos, objetos e acontecimentos do passado, antes de 1950. Vazio para o que não muda com o tempo (um animal, uma paisagem, um rio, o céu) e para o que é de hoje (um laboratório em 2009, um museu hoje). Use o "epoca" do bloco no mapa como referência
 - animal: se a imagem deve mostrar um animal, o nome comum em inglês DAQUELA espécie (ex.: "pangolin", "aye-aye", "glass frog", "spectacled cobra"); vazio quando a imagem não é de um animal (um cientista, um laboratório, uma sala, um gráfico), mesmo num bloco sobre animais
 - query: busca em inglês, 2 a 6 palavras
 - busca_alternativa: uma segunda busca do MESMO sujeito, 1 a 3 palavras em inglês, para quando a query não achar nada (ex.: query "exotic pet risk chart" → alternativa "risk chart"). Diferente da query e nunca de outra coisa. Para ANIMAL use o nome científico dele (ex.: query "spectacled cobra hood" → alternativa "Naja naja")
@@ -120,6 +132,12 @@ Campos de cada cena (para cada trecho, analise o texto falado e responda):
 - overlay: o texto na tela deste trecho, em MAIÚSCULAS, seguindo as regras de QUALIDADE DO TEXTO NA TELA abaixo, ou vazio (o normal)
 - reusar_cena: número da cena reaproveitada, ou 0 quando não reaproveita
 - citacoes: OBRIGATÓRIO sempre que o trecho cita duas ou mais coisas visuais DIFERENTES, de qualquer assunto (bichos: "lobos, alces, cavalos-de-przewalski"; objetos: "cobre, esteatita e pedernal"; lugares, pessoas, aparelhos). Uma citação por coisa, na ordem em que são faladas, e a fábrica corta a cena para cada uma aparecer na hora em que é falada. Em cada citação: palavra é a primeira palavra dela exatamente como está no trecho; descricao é o que a fatia mostra, em português, só daquela coisa; exato e animal seguem as mesmas regras da cena, só daquela coisa; query e prompt_ia mostram só aquela coisa. Se cita uma coisa só, ou nenhuma, devolva vazio.
+
+CENAS DE ÉPOCA (campo epoca preenchido):
+- O que existe de uma época passada é material de ARQUIVO: fotografias tiradas na época, gravuras, ilustrações de livros e jornais da época, mapas antigos, documentos, objetos e espécimes de museu. Não existe foto de banco de imagens de 1898: Pexels e Pixabay só têm gente e obra de hoje.
+- descricao e query pedem esse material, nunca uma reconstituição com ação, hora e luz que ninguém fotografou ("leão entrando na tenda à noite", "engenheiro chegando de costas"). Peça o que o arquivo tem: o lugar, a obra, a pessoa ou o objeto daquela época ("Uganda Railway construction 1899 photograph", "Tsavo bridge 1899", "Victorian hunting rifle").
+- Se o fato virou livro, reportagem ou foi fotografado na época, a query usa isso (ex.: as fotos do livro "The Man-eaters of Tsavo", de 1907: "Man-eaters of Tsavo 1907 photograph"). Marque fonte wikimedia.
+- Pessoa real de época: a query é o nome completo com o ano ou a função ("John Henry Patterson 1907", "Lieutenant Colonel Patterson Tsavo"), nunca só o sobrenome, que traz homônimos.
 
 COMO DECIDIR O TIPO (siga nesta ordem, pare na primeira que servir):
 1. O impacto do trecho está num NÚMERO ou DATA? → texto_tela (fonte: motion)
@@ -180,6 +198,7 @@ ESQUEMA_CENAS = {
             "sujeito": {"type": "string"},
             "animal": {"type": "string"},
             "exato": {"type": "string"},
+            "epoca": {"type": "string"},
             "query": {"type": "string"},
             "busca_alternativa": {"type": "string"},
             "prompt_ia": {"type": "string"},
@@ -187,7 +206,7 @@ ESQUEMA_CENAS = {
             "reusar_cena": {"type": "integer"},
             "citacoes": {"type": "array", "items": CITACAO},
         },
-        "required": ["cena", "tipo", "fonte", "descricao", "sujeito", "animal", "exato", "query", "busca_alternativa", "prompt_ia",
+        "required": ["cena", "tipo", "fonte", "descricao", "sujeito", "animal", "exato", "epoca", "query", "busca_alternativa", "prompt_ia",
                      "overlay", "reusar_cena", "citacoes"],
         "additionalProperties": False,
     }}},
@@ -420,6 +439,12 @@ def _linhas(unidades, cortes, k):
     return f"CENA {k + 1} | {duracao:.1f}s\n  " + " ".join(f["texto"] for f in frases)
 
 
+def _epoca(valor) -> str:
+    """O ano da época que a imagem tem que mostrar, só antes de 1950; depois disso os bancos de stock servem."""
+    anos = [int(a) for a in re.findall(r"\b(1\d{3})\b", str(valor or ""))]
+    return str(anos[0]) if anos and anos[0] < 1950 else ""
+
+
 def _converter(item, m, bloco):
     """A decisão do agente no formato das cenas da fábrica. Motion vira a imagem de baixo até existir animação."""
     armadilhas = m.get("armadilhas") or []
@@ -449,6 +474,8 @@ def _converter(item, m, bloco):
         "animal": (item.get("animal") or "").strip(),
         # o nome que a foto precisa ter (lugar, objeto único, aparelho, espécie); vazio: qualquer representação direta
         "exato": (item.get("exato") or "").strip(),
+        # o ano, quando a imagem tem que ser daquela época: só material de arquivo (midia.e_de_epoca)
+        "epoca": _epoca(item.get("epoca")),
         "prompt": prompt,
         "personagem": False,
         "citacoes": citacoes,

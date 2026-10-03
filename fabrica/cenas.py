@@ -301,7 +301,12 @@ def _balancear_foto_e_video(cenas, log=print):
     Os 30% de vídeo permitidos no total são gastos primeiro no começo. Se as metas do começo não cabem neles,
     os 3 primeiros minutos têm prioridade. Só troca o tipo (foto_real por video_real e o contrário), espalhando
     as trocas pelo trecho, e a busca continua a mesma."""
-    reais = [c for c in cenas if c.get("tipo") in TIPOS_REAIS_CENA and not c.get("personagem")]
+    # cena de época é foto de arquivo: vídeo de banco é sempre de hoje (obras modernas no lugar da ferrovia de 1898)
+    for c in cenas:
+        if c.get("tipo") == "video_real" and re.search(r"\b1\d{3}\b", str(c.get("epoca") or "")):
+            c["tipo"] = "foto_real"
+    reais = [c for c in cenas if c.get("tipo") in TIPOS_REAIS_CENA and not c.get("personagem")
+             and not re.search(r"\b1\d{3}\b", str(c.get("epoca") or ""))]
     if len(reais) < 10:
         return cenas
     limite = int(len(reais) * (1 - ESTILO_MINIMO_FOTOS))  # vídeos permitidos no total
@@ -498,7 +503,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             fatiadas[i - 1]["tipo"] = fatiadas[i].get("tipo", fatiadas[i - 1].get("tipo", "ia"))
                             fatiadas[i - 1]["personagem"] = fatiadas[i].get("personagem", False)
                             # o assunto e o que deve aparecer acompanham a busca que ficou
-                            for campo in ("sujeito", "mostrar", "animal", "exato"):
+                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca"):
                                 fatiadas[i - 1][campo] = fatiadas[i].get(campo, "")
                             # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
                             for campo in ("midia", "captura", "conferencia", "rejeitadas"):
@@ -523,7 +528,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             fatiadas[i + 1]["tipo"] = fatiadas[i].get("tipo", fatiadas[i + 1].get("tipo", "ia"))
                             fatiadas[i + 1]["personagem"] = fatiadas[i].get("personagem", False)
                             # o assunto e o que deve aparecer acompanham a busca que ficou
-                            for campo in ("sujeito", "mostrar", "animal", "exato"):
+                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca"):
                                 fatiadas[i + 1][campo] = fatiadas[i].get(campo, "")
                             # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
                             for campo in ("midia", "captura", "conferencia", "rejeitadas"):
@@ -715,6 +720,8 @@ def planejar(projeto, log=print) -> list[dict]:
             # num projeto antigo, midia.animal_da_cena adivinha pelo bloco
             **({"animal": (g.get("animal") or "").strip()} if "animal" in g else {}),
             **({"exato": (g.get("exato") or "").strip()} if "exato" in g else {}),
+            # o ano, quando a imagem tem que ser daquela época (só arquivo: midia.e_de_epoca)
+            **({"epoca": (g.get("epoca") or "").strip()} if (g.get("epoca") or "").strip() else {}),
             "busca_alternativa": (g.get("busca_alternativa") or "").strip(),
             # do agente de roteiro: o que deve aparecer, a busca pronta caso a cena de IA vire acervo, o texto
             # sugerido e o tipo pensado (mapa, diagrama...), guardado para quando a fábrica desenhar animações

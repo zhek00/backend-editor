@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
-from . import gemini_local, groq_local, imagens, midia, openrouter_local
+from . import animacoes, gemini_local, groq_local, imagens, midia, openrouter_local
 from .util import duracao_audio, rodar
 
 RODADAS = 3
@@ -225,7 +225,14 @@ PERGUNTAS_JEV = {
                          "vem de quem VIU a imagem: o que é (com o grau de certeza), detalhes, cenário, ação, tipo de "
                          "imagem, texto visível e se ela confere com o pedido. Um 'confere: nao' de quem viu pesa muito "
                          "contra; um nome de espécie com certeza baixa não é prova; ilustração ou render no lugar de "
-                         "foto real, ou logotipo e marca d'água, pesam contra."),
+                         "foto real, ou logotipo e marca d'água, pesam contra. Nome de pessoa, lugar ou espécie dito "
+                         "por quem viu só é prova quando também aparece no texto visível ou em "
+                         "como_o_autor_descreveu_o_arquivo: quem descreve às vezes copia o nome do pedido. Quando o "
+                         "estado traz pessoa_citada, a imagem tem que ser DESSA pessoa: se como_o_autor_descreveu_o_arquivo "
+                         "aponta outra pessoa com o mesmo nome (outra época, outro país, outra profissão), reprova. "
+                         "Quando o estado traz epoca_da_cena, a imagem tem que ser daquela época (fotografia antiga, "
+                         "gravura, ilustração de livro ou jornal da época, mapa antigo, objeto de museu): foto atual, "
+                         "com roupas, veículos, obras ou aparelhos de hoje, reprova."),
         "criteria": {
             "true": ("mostra o sujeito citado ou a representação visual direta do conceito, num cenário coerente: um "
                      "carro elétrico carregando para 'carro elétrico moderno', arquitetura romana para 'Roma Antiga', um "
@@ -346,8 +353,17 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
         "o_que_a_imagem_mostra": legenda,
     }
     # escrito pelo agente que leu o roteiro inteiro: "Coincidieron." sozinho não diz que é sobre Watson Brake
-    if cena.get("mostrar"):
+    if cena.get("visual") in animacoes.tipos(projeto) and animacoes.config(projeto).get("ativo", True):
+        # a foto vai por baixo da animação: o que vale é ser do assunto, não ser "um diagrama mostra..."
+        estado["o_que_a_cena_deve_mostrar"] = ("imagem de fundo, escurecida atrás de uma animação com o texto: uma "
+                                               f"imagem direta do assunto ({cena.get('busca') or cena.get('sujeito')})")
+    elif cena.get("mostrar"):
         estado["o_que_a_cena_deve_mostrar"] = cena["mostrar"]
+    if midia.e_de_epoca(cena):
+        estado["epoca_da_cena"] = str(cena["epoca"])
+    pessoa = _pessoa_da_cena(projeto, cena)
+    if pessoa:
+        estado["pessoa_citada"] = pessoa
     if cena.get("item_citado"):
         # a cena é um pedaço de uma lista ("lobos, alces, cavalos-de-przewalski"): a imagem mostra ESTE item
         estado["item_da_lista_nesta_cena"] = cena["item_citado"]
@@ -366,6 +382,32 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
     return {"legenda": legenda, "veredito": veredito, "nota": nota,
             "motivo": f"o Jev deu {nota}% de chance de combinar com a narração",
             "busca_nova": "", "prompt_novo": ""}
+
+
+_QUEM_E = {}
+
+
+def _pessoa_da_cena(projeto, cena) -> str:
+    """Quem é a pessoa real que a cena cita (campo quem_e do mapa): nome, anos de vida e o que fez. Com isso o Jev
+    separa o caçador John Henry Patterson (1867-1947) do homônimo de Dayton, Ohio, e do soldado de 1865, que
+    entraram no virou-filme-em-1996 porque o nome batia."""
+    arquivo = projeto.pasta / "roteiro_mapa.json"
+    try:
+        chave = (str(arquivo), arquivo.stat().st_mtime)
+    except OSError:
+        return ""
+    if chave not in _QUEM_E:
+        try:
+            _QUEM_E[chave] = [p for p in projeto.ler_json("roteiro_mapa.json").get("quem_e") or []
+                              if isinstance(p, dict) and (p.get("nome") or "").strip()]
+        except (OSError, ValueError):
+            _QUEM_E[chave] = []
+    texto = " ".join(str(cena.get(c) or "") for c in ("texto", "exato", "sujeito", "mostrar", "busca"))
+    for pessoa in _QUEM_E[chave]:
+        sobrenome = pessoa["nome"].split()[-1]
+        if re.search(rf"\b{re.escape(sobrenome)}\b", texto, re.I):
+            return f"{pessoa['nome'].strip()}: {(pessoa.get('quem') or '').strip()}"
+    return ""
 
 
 def _buscas_das_reprovadas(projeto, cenas_reprovadas, resultados, log):

@@ -64,18 +64,20 @@ CAMPOS_DO_QUE_SE_VE = {
     "tipo_imagem": {"type": "string", "enum": ["foto real", "quadro de video", "ilustracao", "render 3D",
                                                "mapa ou grafico", "outro"]},
     "texto_visivel": {"type": "string"},
+    "epoca_aparente": {"type": "string", "enum": ["antiga", "atual", "indefinida"]},
     "confere": {"type": "string", "enum": ["sim", "parcial", "nao"]},
     "motivo": {"type": "string"},
 }
 
 INSTRUCOES_DO_QUE_SE_VE = """Para cada imagem, responda o que VOCÊ VÊ nela, campo a campo, em português:
-- o_que_e: o sujeito principal. Dê o nome da espécie, do lugar ou do objeto só se reconhecer de verdade; senão, descreva a aparência ("cobra marrom de capuz aberto", não um palpite de espécie).
+- o_que_e: o sujeito principal. Dê o nome da espécie, do lugar ou do objeto só se reconhecer de verdade; senão, descreva a aparência ("cobra marrom de capuz aberto", não um palpite de espécie). NUNCA tire um nome do pedido: nome de pessoa, de lugar ou de obra só entra se estiver escrito na imagem (vá para texto_visivel) ou se for um monumento inconfundível. Pessoa nunca é identificada pelo rosto: diga "homem de uniforme militar", não o nome dele. Uma cidade no litoral não vira "Lago Vitória" porque o pedido fala do lago.
 - certeza: alta, media ou baixa, sobre o que_e. Um nome errado dito com convicção estraga o julgamento.
 - detalhes: as marcas que identificam o sujeito (capuz, faixas, chifres, formato, cor, estrutura), em até 15 palavras.
 - cenario: onde está (floresta, sala, laboratório, rua, fundo branco de estúdio).
 - acao: o que o sujeito faz, ou "parado".
 - tipo_imagem: foto real, quadro de video, ilustracao, render 3D, mapa ou grafico, outro.
 - texto_visivel: placas, legendas, logotipos ou marca d'água que aparecem, ou "nenhum".
+- epoca_aparente: "antiga" se é foto antiga (preto e branco, sépia, desbotada), gravura, pintura ou ilustração de época, ou mostra roupas, veículos e construções do passado; "atual" se mostra roupas, carros, aparelhos, obras ou acabamentos de hoje, ou é foto digital moderna de gente e cidade; "indefinida" quando não dá para dizer (bicho, paisagem, céu).
 - confere: compare a imagem com o que a cena deve mostrar (vem no pedido). "sim" se mostra exatamente aquilo; "parcial" se é do mesmo assunto mas falta algo (outra espécie parecida, sem a ação citada, espécie que não dá para confirmar); "nao" se é outra coisa.
 - motivo: em até 15 palavras, por que confere ou não.
 Descreva só o que aparece, sem inventar e sem copiar o texto do pedido."""
@@ -89,7 +91,8 @@ def compor_o_que_se_ve(v) -> str:
         return (v.get("frase") or v.get("legenda") or "").strip()
     partes = [f"O que é: {v['o_que_e'].strip()} (certeza {v.get('certeza') or 'media'})"]
     for rotulo, chave in (("Detalhes", "detalhes"), ("Cenário", "cenario"), ("Ação", "acao"),
-                          ("Tipo de imagem", "tipo_imagem"), ("Texto visível", "texto_visivel")):
+                          ("Tipo de imagem", "tipo_imagem"), ("Texto visível", "texto_visivel"),
+                          ("Época aparente", "epoca_aparente")):
         if (v.get(chave) or "").strip():
             partes.append(f"{rotulo}: {v[chave].strip()}")
     if (v.get("confere") or "").strip():
@@ -282,6 +285,8 @@ def _e_de_acervo(cena) -> bool:
     pouco conhecida), a busca ou a descrição falam de história, arte ou acervo, ou citam um ano antes de 1950.
 
     Só nessas cenas os bancos de acervo (bancos.ACERVO) entram; nas outras eles só tomariam vagas com quadros."""
+    if e_de_epoca(cena):
+        return "epoca"  # só arquivo: Wikimedia e os bancos de acervo, nunca a foto moderna dos bancos de stock
     texto = " ".join(str(cena.get(c) or "") for c in ("busca", "busca_alternativa", "mostrar", "sujeito"))
     texto = unicodedata.normalize("NFKD", texto.lower()).encode("ascii", "ignore").decode()
     palavras = set(re.findall(r"[a-z]+", texto))
@@ -292,6 +297,14 @@ def _e_de_acervo(cena) -> bool:
     if cena.get("fonte_sugerida") == "wikimedia" or palavras & _PALAVRAS_DE_ACERVO:
         return True
     return any(1000 <= int(a) < 1950 for a in re.findall(r"\b(1\d{3})s?\b", texto))
+
+
+def e_de_epoca(cena) -> bool:
+    """A cena mostra gente, roupa, construção, veículo, documento ou acontecimento do passado (campo epoca do agente,
+    um ano antes de 1950). Só existe em material de arquivo: foto da época, gravura, ilustração de livro ou jornal,
+    mapa antigo, objeto de museu. No virou-filme-em-1996 (Tsavo, 1898) os bancos de stock puseram obras modernas,
+    estação de trem atual e homem de jaqueta com rifle no lugar do acampamento e da caçada."""
+    return bool(re.search(r"\b1\d{3}\b", str(cena.get("epoca") or "")))
 
 
 class _Todos(set):
@@ -306,6 +319,51 @@ def _cita_o_assunto(assunto, candidato) -> bool:
     if isinstance(assunto, _Todos):
         return bool(descricao) and bool(assunto) and all(bate(a) for a in assunto)
     return bool(descricao) and any(bate(a) for a in assunto)
+
+
+def _cita_bastante(assunto, candidato) -> bool:
+    """Como _cita_o_assunto, mas um assunto de três palavras ou mais precisa de duas delas nas tags. Uma só deixava
+    passar qualquer coisa no tapa-buraco: "human bones dry savanna" aceitou um Mustang, "worker striking metal tin"
+    latas de spray e "historical railway camp construction" a vista de uma cidade com igreja."""
+    if isinstance(assunto, _Todos) or len(assunto or ()) < 3:
+        return _cita_o_assunto(assunto, candidato)
+    descricao = _radicais(candidato.get("descricao") or "")
+    batem = sum(1 for a in assunto if any(a.startswith(d) or d.startswith(a) for d in descricao))
+    return batem >= 2
+
+
+# bichos que os bancos citam nas tags. Cena que não é de animal nunca recebe foto de bicho no tapa-buraco: o filtro
+# "Tsavo" pôs elefante no acampamento, girafa nos "dois machos enormes" e galinha na conta das vítimas
+_BICHOS = {
+    "elephant", "zebra", "giraffe", "lion", "lioness", "tiger", "leopard", "cheetah", "jaguar", "puma", "cougar",
+    "lynx", "antelope", "gazelle", "impala", "buffalo", "bison", "hippo", "hippopotamus", "rhino", "rhinoceros",
+    "hyena", "jackal", "wildebeest", "warthog", "baboon", "gorilla", "chimpanzee", "orangutan", "camel", "horse",
+    "pony", "donkey", "cow", "cows", "cattle", "ox", "goat", "sheep", "pig", "chicken", "hen", "rooster",
+    "duck", "goose", "deer", "elk", "moose", "reindeer", "kangaroo", "koala", "panda", "vulture", "ostrich",
+    "flamingo", "penguin", "pelican", "heron", "stork", "squirrel", "rabbit", "hare", "mouse", "rat", "hamster",
+    "bear", "wolf", "fox", "dog", "puppy", "cat", "kitten", "monkey", "lemur", "snake", "lizard", "crocodile",
+    "alligator", "turtle", "tortoise", "frog", "bird", "parrot", "eagle", "owl", "hawk", "falcon", "fish", "shark",
+    "whale", "dolphin", "insect", "butterfly", "bee", "spider", "crab", "lobster",
+}
+
+
+def _bichos_citados(texto) -> set:
+    palavras = re.findall(r"[a-z]+", unicodedata.normalize("NFKD", (texto or "").lower()).encode("ascii", "ignore").decode())
+    return {p.rstrip("s") if p.rstrip("s") in _BICHOS else p for p in palavras if p in _BICHOS or p.rstrip("s") in _BICHOS}
+
+
+def _mostra_outro_bicho(cena, candidato) -> bool:
+    """As tags do candidato citam um bicho que a cena não cita em nenhum dos campos em inglês do agente."""
+    da_cena = _bichos_citados(" ".join(str(cena.get(c) or "") for c in (
+        "busca", "busca_alternativa", "exato", "animal", "sujeito", "prompt", "item_citado")))
+    return bool(_bichos_citados(candidato.get("descricao") or "") - da_cena)
+
+
+def _cita_o_nome(nome, candidato) -> bool:
+    """O nome inteiro, palavra por palavra, nas tags. Pelas 4 primeiras letras, "Patterson" aceitava "pattern"."""
+    descricao = unicodedata.normalize("NFKD", (candidato.get("descricao") or "").lower()).encode("ascii", "ignore").decode()
+    palavras = re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", (nome or "").lower()).encode("ascii", "ignore").decode())
+    return bool(palavras) and all(re.search(rf"\b{re.escape(p)}\b", descricao) for p in palavras)
 
 
 def contexto_do_bloco(bloco: dict, busca: str) -> str:
@@ -381,7 +439,7 @@ def bloco_de_animal(bloco: dict) -> bool:
 def _generos_cientificos(texto: str) -> set:
     """O gênero do nome científico ("Daubentonia" em "Daubentonia madagascariensis"). Só o gênero: o epíteto
     ("madagascariensis", "atlanticus") deixaria passar uma paisagem de Madagascar ou o Atlântico."""
-    return {genero.lower()[:4] for genero, epiteto in re.findall(r"([A-Z][a-z]{2,}) ([a-z]{3,})", texto or "")
+    return {genero.lower()[:4] for genero, epiteto in re.findall(r"\b([A-Z][a-z]{2,}) ([a-z]{3,})\b", texto or "")
             if re.search(r"(us|is|um|a|ae|i|ensis|oides|ops|ata|atus)$", epiteto)}
 
 
@@ -421,9 +479,19 @@ def assunto_do_video(projeto) -> str:
         texto = projeto.roteiro()
     except (Exception, SystemExit):
         return ""
+    # nome de pessoa nunca é o assunto: "Patterson" (o caçador dos leões de Tsavo) trouxe a cidade de Patterson em
+    # Ohio, uma estação de trem, uma ginasta e fichas de soldados americanos para 20 cenas do virou-filme-em-1996
+    pessoas = set()
+    try:
+        if projeto.existe("roteiro_mapa.json"):
+            for pessoa in projeto.ler_json("roteiro_mapa.json").get("pessoas_reais") or []:
+                pessoas |= {p.lower() for p in re.findall(r"[\wÀ-ÿ'-]+", str(pessoa))}
+    except (OSError, ValueError):
+        pass
     contagem = {}
     for nome in nomes_do_roteiro(projeto):
-        contagem[nome] = len(re.findall(rf"\b{re.escape(nome)}\b", texto))
+        if nome.lower() not in pessoas:
+            contagem[nome] = len(re.findall(rf"\b{re.escape(nome)}\b", texto))
     return max(contagem, key=contagem.get) if contagem else ""
 
 
@@ -464,6 +532,11 @@ def _identificador(exato: str) -> set:
     if len(maiusculas) > 1:
         # nome composto ("Chernobyl Elephant's Foot"): a foto cita TODAS as palavras, senão um elefante passaria
         return _Todos(normal(p) for p in maiusculas)
+    minusculas = [p for p in uteis if not p[0].isupper()]
+    if maiusculas and minusculas:
+        # um nome e a coisa ("Tsavo railway workers camp", "Geiger counter"): a foto cita os dois. Só o nome deixava
+        # passar qualquer foto do lugar (elefante e jipe de safari de Tsavo no lugar do acampamento)
+        return _Todos({normal(maiusculas[0]), normal(minusculas[-1])})
     return {normal(maiusculas[0] if maiusculas else uteis[-1])}
 
 
@@ -474,12 +547,19 @@ def exigido_da_cena(bloco: dict, cena: dict, nomes_roteiro=()) -> set:
     gênero científico quando é animal. Sem o campo (projeto antigo), a fábrica deduz o animal ou o nome próprio."""
     if "exato" in cena:
         exato = (cena.get("exato") or "").strip()
+        if _parece_portugues(exato):
+            exato = ""  # "Palácio de Westminster": os bancos descrevem em inglês e nenhuma foto passaria
+        animal = animal_da_cena(bloco, cena)
         if not exato:
-            return animal_da_cena(bloco, cena)  # o agente disse que qualquer representação direta serve
+            return animal  # o agente disse que qualquer representação direta serve
+        if animal and not _generos_cientificos(exato):
+            # cena de animal: o bicho é obrigatório. Somado ao nome do lugar ("Tsavo" de "Tsavo lion"), qualquer
+            # um dos dois bastava, e zebra, elefante e gazela de Tsavo passaram por leão
+            return animal
         exigido = _identificador(exato)
         if cena.get("animal"):
-            exigido |= animal_da_cena(bloco, cena)
-        if re.fullmatch(r"[A-Z][a-z]+ [a-z]+", exato):
+            exigido = set(exigido) | animal
+        if re.fullmatch(r"[A-Z][a-z]+ [a-z]+", exato) and (_generos_cientificos(exato) or not cena.get("animal")):
             # nome científico ("Naja haje"): os bancos descrevem a foto pelo nome comum ("cobra", "snake"), então
             # vale também o nome comum da busca e o tipo do bicho; a espécie exata quem confere é o juiz
             comum = [r for r in _ordem_dos_radicais(f"{cena.get('sujeito') or ''} {cena.get('busca') or ''}")
@@ -487,6 +567,27 @@ def exigido_da_cena(bloco: dict, cena: dict, nomes_roteiro=()) -> set:
             exigido = set(exigido) | set(comum[:1]) | _tipo_do_bicho(f"{cena.get('sujeito') or ''} {cena.get('busca') or ''}")
         return exigido
     return animal_da_cena(bloco, cena) or nome_proprio_da_cena(cena, nomes_roteiro)
+
+
+def _cabeca_do_animal(nome: str) -> list:
+    """A palavra que diz QUE bicho é: o substantivo, a última palavra do nome comum em inglês ("lion" em "maneless
+    Tsavo lion", "cobra" em "spectacled cobra", "frog" em "glass frog").
+
+    Antes valia a primeira palavra, e com qualquer palavra bastando, o lugar ("Tsavo") e o adjetivo ("maneless",
+    "plains", "glass") deixavam passar zebra de Tsavo, leão com juba e paisagem de planície. Nome com maiúscula no meio
+    de um nome comum é lugar ou gentílico, e palavra em -less é adjetivo; a espécie exata quem confere é o juiz."""
+    palavras = re.findall(r"[A-Za-zÀ-ÿ]{3,}", nome)
+    tem_minuscula = any(p[0].islower() for p in palavras)
+    uteis = []
+    for p in palavras:
+        normal = unicodedata.normalize("NFKD", p.lower()).encode("ascii", "ignore").decode()
+        if (tem_minuscula and p[0].isupper()) or normal.endswith("less") or normal[:4] in _GENERICAS_ANIMAL:
+            continue
+        uteis.append(normal[:4])
+    if not uteis and palavras:
+        # nada sobrou ("Komodo" sozinho): vale a última palavra, para a cena não deixar de ser de animal
+        uteis = [unicodedata.normalize("NFKD", palavras[-1].lower()).encode("ascii", "ignore").decode()[:4]]
+    return uteis[-1:]
 
 
 def animal_da_cena(bloco: dict, cena: dict) -> set:
@@ -501,7 +602,7 @@ def animal_da_cena(bloco: dict, cena: dict) -> set:
         nome = (cena.get("animal") or "").strip()
         if not nome:
             return set()
-        cabeca = [r for r in _ordem_dos_radicais(nome) if r not in _GENERICAS_ANIMAL][:1]
+        cabeca = _cabeca_do_animal(nome)
     else:
         # projeto antigo: adivinha pelo bloco. Só é cena de animal a que fala do bicho do bloco
         if not bloco_de_animal(bloco):
@@ -539,7 +640,11 @@ def sujeito_da_busca(cena) -> str:
     sempre escreve em inglês."""
     sujeito = (cena.get("sujeito") or "").strip()
     if sujeito and not _parece_portugues(sujeito):
-        return sujeito
+        # português sem acento nem palavra de ligação ("tranca quebrada") passava por inglês, e "quebrada" trouxe o
+        # cânion Quebrada de las Conchas. Sujeito que não divide nenhuma palavra com os campos em inglês da cena cede
+        ingles = _radicais(" ".join(str(cena.get(c) or "") for c in ("busca", "busca_alternativa", "prompt", "exato", "animal")))
+        if not ingles or _radicais(sujeito) & ingles:
+            return sujeito
     return (cena.get("busca") or "").strip() or sujeito
 
 
@@ -735,7 +840,7 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
 
     if not projeto.offline and not ia_ativa(projeto):
         # sem IA, uma cena vazia vira buraco no vídeo: melhor uma imagem na dúvida do que nenhuma
-        _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log)
+        _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log, descricoes)
 
     encontrados, sem_resposta = 0, 0
     for cena in alvo:
@@ -760,7 +865,7 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     escrever_creditos(projeto)
 
 
-def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log):
+def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log, descricoes=None):
     """Garante material em toda cena quando a IA está desligada, do melhor para o pior:
 
     1. um candidato ainda não usado da própria cena cujas tags citam o assunto dela ou do bloco. Candidato que
@@ -781,13 +886,25 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
         do_bloco = _assunto_do_bloco(bloco) if bloco else set()
         animal = animal_da_cena(bloco, cena)
         exigido = exigido_da_cena(bloco, cena, buscador.nomes)
-        # cena de animal ou de nome próprio: só entra foto que cita o próprio bicho ou o próprio nome
-        cita = ((lambda x: _cita_o_assunto(exigido, x)) if exigido
-                else (lambda x: _cita_o_assunto(assunto, x) or _cita_o_assunto(do_bloco, x)))
-        opcoes = [x for x in candidatos.get(cena["n"]) or [] if _chave(x) not in usados and cita(x)]
+        acervo = _e_de_acervo(cena)
+
+        # cena de animal ou de nome próprio: só entra foto que cita o próprio bicho ou o próprio nome. Nas outras,
+        # o assunto com duas palavras, e nunca um bicho que a cena não cita
+        def cita(x, exigido=exigido, assunto=assunto, do_bloco=do_bloco, animal=animal, cena=cena):
+            if not animal and _mostra_outro_bicho(cena, x):
+                return False
+            if exigido:
+                return _cita_o_assunto(exigido, x)
+            return _cita_bastante(assunto, x) or _cita_bastante(do_bloco, x)
+
+        # o modelo que escolhe olhou estes candidatos; o que ele descreveu como "não confere" fica de fora (o elefante
+        # da cena 3 do virou-filme-em-1996 foi recusado por ele e posto no vídeo pelo tapa-buraco)
+        recusados = {i for i, frase in ((descricoes or {}).get(cena["n"]) or {}).items() if _disse_que_nao(frase)}
+        opcoes = [x for i, x in enumerate(candidatos.get(cena["n"]) or [])
+                  if i not in recusados and _chave(x) not in usados and cita(x)]
         origem = "candidato não escolhido, do assunto"
         if not opcoes:
-            tipo = "video" if cena["tipo"] == "video_real" else "foto"
+            tipo = "foto" if acervo == "epoca" or cena["tipo"] != "video_real" else "video"
             curta = " ".join(sujeito_da_busca(cena).split()[:2])
             # antes de repetir a vizinha, a busca da própria cena com uma página bem maior: bicho que aparece em
             # muitas cenas (o petauro em 25 cenas) esgota os 8 candidatos de cada busca, mas o banco tem dezenas
@@ -808,7 +925,6 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
                         continue
                     vistos.add(termo.strip().lower())
                     if termo.strip():
-                        acervo = _e_de_acervo(cena)
                         opcoes = [x for x in buscador._das_fontes(tipo, termo.strip(), acervo=acervo)
                                   or buscador._das_fontes("foto", termo.strip(), acervo=acervo)
                                   if _chave(x) not in usados and cita(x)]
@@ -817,11 +933,11 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
                             break
                 if not opcoes and principal:
                     # 4ª camada: o assunto do vídeo inteiro ("Chernobyl"). Sem foto do corium, a do reator de
-                    # Chernobyl é do assunto; um elefante nunca seria
-                    do_video = {principal.lower()[:4]}
+                    # Chernobyl é do assunto; um elefante nunca seria. O nome inteiro, palavra por palavra, e o bicho
+                    # da cena continua obrigatório
                     for termo in (f"{principal} {bloco.get('ancora', '')}", f"{principal} {curta}", principal):
-                        opcoes = [x for x in buscador._das_fontes("foto", termo.strip(), "wikimedia")
-                                  if _chave(x) not in usados and _cita_o_assunto(do_video, x)]
+                        opcoes = [x for x in buscador._das_fontes("foto", termo.strip(), "wikimedia", acervo)
+                                  if _chave(x) not in usados and _serve_pelo_assunto_do_video(cena, x, principal, animal)]
                         if opcoes:
                             origem = f"assunto do vídeo '{termo.strip()}'"
                             break
@@ -847,13 +963,18 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
             continue
         bloco = blocos.get(cena.get("bloco")) or {}
         ancora = bloco.get("ancora", "")
+        animal = animal_da_cena(bloco, cena)
+        do_bloco = _assunto_do_bloco(bloco) if bloco else set()
         termos = [f"{principal} {ancora}".strip(), ancora, bloco.get("contexto", ""), principal]
         opcoes, origem = [], ""
         for termo in dict.fromkeys(t.strip() for t in termos if t and t.strip()):
-            achados = [x for x in buscador._das_fontes("foto", termo, "wikimedia") if _chave(x) not in usados]
-            # primeiro o que cita o assunto do vídeo; se nada citar, o primeiro resultado ainda é da busca do assunto
-            do_video = [x for x in achados if principal and _cita_o_assunto({principal.lower()[:4]}, x)]
-            opcoes = do_video or achados
+            # nunca às cegas: o primeiro resultado da busca "Patterson" era uma ginasta, uma rodovia ou uma placa de
+            # estação. Só entra o que cita o assunto do vídeo ou o do bloco, sem bicho que a cena não cita
+            opcoes = [x for x in buscador._das_fontes("foto", termo, "wikimedia", _e_de_acervo(cena))
+                      if _chave(x) not in usados
+                      and (_serve_pelo_assunto_do_video(cena, x, principal, animal)
+                           or (_cita_bastante(do_bloco, x) and (not animal or _cita_o_assunto(animal, x))
+                               and (animal or not _mostra_outro_bicho(cena, x))))]
             if opcoes:
                 origem = f"imagem nova pelo assunto '{termo}'"
                 break
@@ -874,6 +995,23 @@ def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas
     log(f"  cenas preenchidas para o vídeo não ter buraco: {por_candidato} com um candidato não escolhido, "
         f"{por_busca} por uma busca mais ampla, {por_vizinha} por uma imagem nova do assunto do bloco ou do vídeo "
         "(todas marcadas como suspeitas; nenhuma repetida)")
+
+
+def _disse_que_nao(frase) -> bool:
+    """O modelo que viu o candidato disse que ele não confere com o pedido da cena."""
+    if isinstance(frase, dict):
+        return frase.get("confere") == "nao"
+    return bool(re.search(r"confere com o pedido: n[aã]o\b", str(frase or "")))
+
+
+def _serve_pelo_assunto_do_video(cena, candidato, principal, animal) -> bool:
+    """A última camada do tapa-buraco: cita o assunto do vídeo pelo nome inteiro, o bicho da cena se ela for de
+    animal, e nenhum bicho que a cena não cita."""
+    if not principal or not _cita_o_nome(principal, candidato):
+        return False
+    if animal:
+        return _cita_o_assunto(animal, candidato)
+    return not _mostra_outro_bicho(cena, candidato)
 
 
 def _candidatos_da_cena(buscador, cena):
@@ -914,7 +1052,8 @@ class Buscador:
             self.blocos = {b["id"]: b for b in projeto.ler_json("roteiro_mapa.json").get("blocos", [])}
 
     def candidatos(self, cena):
-        tipo = "video" if cena["tipo"] == "video_real" else "foto"
+        # vídeo de banco é sempre de hoje: cena de época busca foto de arquivo
+        tipo = "video" if cena["tipo"] == "video_real" and not e_de_epoca(cena) else "foto"
         # o agente marca "wikimedia" quando o assunto é um lugar ou objeto específico, que os bancos de stock não têm
         preferida = "wikimedia" if cena.get("fonte_sugerida") == "wikimedia" else None
         # do mais exato para o mais amplo: a busca da cena com o contexto do bloco ("sugar glider marsupial", para não
@@ -970,9 +1109,14 @@ class Buscador:
         from . import bancos
 
         padrao = ["pexels", "pixabay"] if tipo == "video" else ["wikimedia", "pexels", "pixabay"]
+        if acervo == "epoca":
+            tipo = "foto"  # cena de época: vídeo de banco é sempre de hoje
         fontes = list(self.cfg.get("fontes_video" if tipo == "video" else "fontes_foto") or padrao)
         if not acervo:
             fontes = [f for f in fontes if f not in bancos.ACERVO]
+        elif acervo == "epoca":
+            # Pexels, Pixabay e Unsplash só têm foto de hoje: a cena de época busca no arquivo e na Wikimedia
+            fontes = ["wikimedia"] + [f for f in fontes if f in bancos.ACERVO and f != "wikimedia"]
         if tipo == "foto":
             if _e_de_espaco(busca) and "nasa" not in fontes:
                 fontes.append("nasa")
@@ -1281,7 +1425,9 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None):
             f"Narração \"{cena['texto']}\"\n"
             f"O que deveria mostrar {cena.get('mostrar') or cena['prompt']}\n"
             f"Assunto que tem que aparecer {cena.get('sujeito') or cena['busca']}\n"
-            f"Termos buscados {cena['busca']}\n"
+            + (f"Época {cena['epoca']}: só serve imagem daquela época (foto antiga, gravura, ilustração ou objeto de "
+               "museu); foto de hoje não serve\n" if e_de_epoca(cena) else "")
+            + f"Termos buscados {cena['busca']}\n"
             f"Duração {cena['fim'] - cena['ini']:.1f} segundos\n"
             f"Imagem com os candidatos {folha}\n"
             "Candidatos\n" + "\n".join(opcoes)
