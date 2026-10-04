@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import textwrap
 import time
 import wave
@@ -742,10 +743,41 @@ def _alinhar_pelas_palavras(texto, palavras, duracao):
     return {"caracteres": list(texto), "inicio": ini, "fim": fim}
 
 
+def _voz_do_windows(txt, wav):
+    """A voz do próprio Windows (System.Speech), sem custo: a portuguesa (Maria) se estiver instalada, senão a padrão.
+    O comando say só existe no Mac, e o modo offline não rodava no Windows."""
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$pt = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -like 'pt*' } | Select-Object -First 1; "
+        "if ($pt) { $s.SelectVoice($pt.VoiceInfo.Name) }; "
+        f"$s.SetOutputToWaveFile('{wav}'); "
+        f"$s.Speak([IO.File]::ReadAllText('{txt}', [Text.Encoding]::UTF8)); $s.Dispose()")
+    rodar(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
+
+
 def _voz_do_mac(texto, voz, wav):
     txt = wav.with_suffix(".txt")
     aiff = wav.with_suffix(".aiff")
     txt.write_text(texto, encoding="utf-8")
+    if sys.platform == "win32" or not shutil.which("say"):
+        bruto = wav.with_name(wav.stem + "_windows.wav")
+        try:
+            _voz_do_windows(txt, bruto)
+            rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", bruto, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
+        except (RuntimeError, OSError):
+            # sem voz no sistema (Windows sem o motor de voz, Linux): um tom baixo com a duração prevista do texto. É um
+            # teste do fluxo da fábrica, sem custo; o tempo de cada letra sai proporcional. Silêncio puro não serve:
+            # a normalização de volume do render recusa áudio sem som nenhum
+            segundos = max(len(texto) / 15.0, 0.5)
+            rodar(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=220:sample_rate={TAXA}",
+                   "-t", f"{segundos:.2f}", "-af", "volume=0.05", "-ac", "1", "-c:a", "pcm_s16le", wav])
+        bruto.unlink(missing_ok=True)
+        txt.unlink(missing_ok=True)
+        duracao = duracao_audio(wav)
+        n = max(len(texto), 1)
+        return {"caracteres": list(texto), "inicio": [duracao * i / n for i in range(n)],
+                "fim": [duracao * (i + 1) / n for i in range(n)]}
     try:
         rodar(["say", "-v", voz.get("voz_offline", "Luciana"), "-o", aiff, "-f", txt])
     except RuntimeError:
