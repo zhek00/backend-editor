@@ -138,17 +138,24 @@ def depois_da_narracao(projeto, antes: dict) -> dict:
     """O que a troca de narração deixou para refazer: cenas sem imagem (a mesma regra do render), cenas que
     continuam com a foto antiga mas com outra fala (o Jev julga de novo) e cenas com imagem repetida."""
     vazias, mudaram = set(), set()
-    for c in projeto.ler_json("cenas.json").get("cenas", []):
+    dados = projeto.ler_json("cenas.json")
+    marcadas = False
+    for c in dados.get("cenas", []):
         m = c.get("midia") or {}
+        # o recorte deu à cena o pedido de outra frase (cenas._pedido_pela_fala): a foto dela é julgada de novo
+        pedido_mudou = bool(c.pop("pedido_mudou", None))
+        marcadas = marcadas or pedido_mudou
         if m.get("arquivo"):
             if not (projeto.pasta / m["arquivo"]).exists():
                 vazias.add(c["n"])
                 continue
             fala = " ".join((c.get("texto") or "").split()).lower()
-            if antes.get(str(m["arquivo"]).replace("\\", "/")) != fala:
+            if pedido_mudou or antes.get(str(m["arquivo"]).replace("\\", "/")) != fala:
                 mudaram.add(c["n"])
         elif not projeto.imagem(c["n"]).exists():
             vazias.add(c["n"])
+    if marcadas:
+        projeto.salvar_json("cenas.json", dados)
     repetidas = set(midia.cenas_repetidas(projeto))
     return {"vazias": vazias, "mudaram": mudaram, "repetidas": repetidas, "alvo": vazias | mudaram | repetidas}
 

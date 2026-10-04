@@ -84,6 +84,16 @@ def _gerar(projeto, apenas=None, log=print, direto=False):
         log("  nenhuma imagem de IA pendente")
         return gerar_revisao(projeto)
 
+    if not projeto.offline:
+        # cenas de IA seguidas ganham prompts escritos juntos, cada um no momento da própria fala
+        try:
+            if prompts_em_sequencia(projeto, {c["n"] for c in pendentes}, log):
+                cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]
+                pendentes = pendentes_ia(projeto, cenas)
+        except (Exception, SystemExit) as erro:
+            # deixa as imagens saírem com os prompts que já tinham
+            log(f"  a revisão dos prompts em sequência falhou, seguindo com os prompts atuais: {str(erro)[:160]}")
+
     referencias = []
     if not projeto.offline:
         prov = provedor(projeto.perfil)
@@ -131,6 +141,156 @@ def _gerar(projeto, apenas=None, log=print, direto=False):
         log(f"  {len(falhas)} imagens falharam ({', '.join(map(str, sorted(falhas)))}). "
             "Rode o mesmo comando para tentar só essas, ou troque a descrição com fabrica refazer --prompt.")
     return gerar_revisao(projeto)
+
+
+# ------------------------------------------------------------------------- prompts de cenas de IA seguidas
+
+INSTRUCOES_SEQUENCIA = """Você é diretor de fotografia de um documentário narrado para o YouTube. Escreve os prompts das
+imagens de IA de um TRECHO de cenas seguidas, que aparecem uma depois da outra, de 3 a 5 segundos cada.
+
+O problema que você resolve: cenas seguidas do mesmo assunto saíam com a MESMA imagem (o mesmo homem de costas
+andando para a mesma ponte, quatro vezes). O espectador vê isso como repetição.
+
+Regras:
+1. Cada imagem mostra o que a fala DAQUELA cena diz, no momento dela. Leia a fala de cada cena: ela avança a história
+   (alguém chega, é apresentado, é descrito, se engana). A imagem acompanha esse avanço.
+2. Nunca repita a composição da cena vizinha: mude a ação, o momento, o objeto, o lugar ou a hora. Uma pessoa pode
+   aparecer em cenas seguidas, mas fazendo coisas diferentes, em lugares ou momentos diferentes.
+   O PLANO É OBRIGATORIAMENTE DIFERENTE DA CENA ANTERIOR: "geral" (o lugar inteiro, a pessoa pequena nele), "medio"
+   (a pessoa da cintura para cima, ou o grupo), "detalhe" (as mãos, um objeto citado, pegadas, uma ferramenta, um
+   documento, sem o rosto). Pessoa real que não pode mostrar o rosto rende bem em "detalhe".
+   Também não repita a imagem de duas cenas antes (mesmo lugar, mesma pose e mesmo plano).
+3. Precisão literal: o que a fala cita aparece. Nada de metáfora nem de imagem sem relação. Fala abstrata ("ele estava
+   muito enganado", "ninguém imaginava") mostra a pessoa ou o lugar de que a fala trata, num momento concreto e
+   diferente, com a emoção da fala (luz, expressão corporal, clima).
+4. Respeite o que o pedido exige: época, lugar, roupas, a espécie exata, e pessoa real vista de costas ou sem o rosto
+   quando o pedido diz isso. Mesma época e mesmos personagens em todo o trecho, coerentes entre si.
+5. Cenas marcadas "JÁ TEM IMAGEM" não mudam: só servem para você não repetir o que elas mostram.
+6. Prompt em inglês, de 1 a 3 frases: sujeito, ação, enquadramento e ambiente. Nunca peça texto escrito na imagem.
+   Responda um item para cada cena que pode mudar."""
+
+ESQUEMA_SEQUENCIA = {
+    "type": "object",
+    "properties": {"cenas": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"n": {"type": "integer"}, "plano": {"type": "string", "enum": ["geral", "medio", "detalhe"]},
+                       "prompt": {"type": "string"}},
+        "required": ["n", "plano", "prompt"]}}},
+    "required": ["cenas"],
+}
+_TRECHO_MAXIMO = 8  # cenas por pedido; trecho maior vai em partes, cada parte vendo o fim da anterior
+
+
+def _palavras_do_prompt(texto) -> set:
+    return {w for w in re.findall(r"[a-z]+", (texto or "").lower()) if len(w) > 3}
+
+
+def parecidos(a, b) -> float:
+    """Quanto dois prompts dividem as mesmas palavras (0 a 1). Acima de 0,5 é praticamente o mesmo pedido."""
+    pa, pb = _palavras_do_prompt(a), _palavras_do_prompt(b)
+    return len(pa & pb) / max(1, len(pa | pb))
+
+
+def _trechos_de_ia(cenas, pendentes) -> list:
+    """Cenas de IA seguidas, do mesmo bloco, com duas ou mais cenas e pelo menos uma imagem por fazer."""
+    trechos, atual = [], []
+    for c in sorted(cenas, key=lambda c: c["n"]):
+        if midia.precisa_ia(c) and atual and c["n"] == atual[-1]["n"] + 1 and c.get("bloco") == atual[-1].get("bloco"):
+            atual.append(c)
+            continue
+        if len(atual) >= 2 and any(x["n"] in pendentes for x in atual):
+            trechos.append(atual)
+        atual = [c] if midia.precisa_ia(c) else []
+    if len(atual) >= 2 and any(x["n"] in pendentes for x in atual):
+        trechos.append(atual)
+    return trechos
+
+
+def _linha_da_cena(c, muda) -> str:
+    linhas = [f"Cena {c['n']} ({c['fim'] - c['ini']:.1f} s)" + ("" if muda else " - JÁ TEM IMAGEM, não muda"),
+              f"  Fala: \"{(c.get('texto') or '').strip()}\""]
+    for rotulo, campo in (("O agente pediu para esta frase", "mostrar"), ("Mínimo para estar certa", "aceitavel"),
+                          ("Tem que mostrar", "exato"), ("Espécie", "animal"), ("Época", "epoca")):
+        if (c.get(campo) or "").strip():
+            linhas.append(f"  {rotulo}: {c[campo].strip()}")
+    if c.get("plano"):
+        linhas.append(f"  Plano: {c['plano']}")
+    prompt = (c.get("prompt_manual") or c.get("prompt") or "").strip()
+    if prompt:
+        linhas.append(f"  Prompt {'atual' if muda else 'da imagem'}: {prompt}")
+    return "\n".join(linhas)
+
+
+def prompts_em_sequencia(projeto, pendentes, log=print) -> int:
+    """Reescreve juntos os prompts de cenas de IA seguidas, cada um no momento da própria fala e sem repetir a
+    vizinha. Grátis (modelo principal). Devolve quantos prompts mudaram.
+
+    Antes cada prompt era escrito sozinho (pelo agente, pela conferência ou pelo diretor): as cenas 23 a 26 do
+    virou-filme-em-1996 saíram como quatro imagens do mesmo engenheiro de costas andando para a mesma ponte. Só muda
+    cena sem imagem ainda e sem prompt da pessoa (prompt_manual)."""
+    from . import openrouter_local
+
+    dados = projeto.ler_json("cenas.json")
+    cenas = dados["cenas"]
+    por_n = {c["n"]: c for c in cenas}
+    blocos = {}
+    if projeto.existe("roteiro_mapa.json"):
+        try:
+            blocos = {b.get("id"): b for b in projeto.ler_json("roteiro_mapa.json").get("blocos") or []}
+        except (OSError, ValueError):
+            blocos = {}
+    mudaram = 0
+    for trecho in _trechos_de_ia(cenas, pendentes):
+        for k in range(0, len(trecho), _TRECHO_MAXIMO):
+            parte = trecho[max(0, k - 1):k + _TRECHO_MAXIMO]  # a última da parte anterior entra como contexto
+            podem = [c["n"] for c in parte if c["n"] in pendentes and not (c.get("prompt_manual") or "").strip()
+                     and c["n"] in [x["n"] for x in trecho[k:k + _TRECHO_MAXIMO]]]
+            if not podem:
+                continue
+            bloco = blocos.get(parte[0].get("bloco")) or {}
+            antes, depois = por_n.get(parte[0]["n"] - 1), por_n.get(parte[-1]["n"] + 1)
+            pedido = []
+            if bloco:
+                pedido.append(f"Assunto do bloco: {bloco.get('nome', '')}; imagem-âncora: {bloco.get('ancora', '')}"
+                              + (f"; época: {bloco['epoca']}" if bloco.get("epoca") else ""))
+            if antes:
+                pedido.append(f"Antes do trecho (só contexto), a fala: \"{(antes.get('texto') or '').strip()}\"")
+            pedido += [_linha_da_cena(c, c["n"] in podem) for c in parte]
+            if depois:
+                pedido.append(f"Depois do trecho (só contexto), a fala: \"{(depois.get('texto') or '').strip()}\"")
+            pedido.append(f"Escreva o prompt das cenas {', '.join(map(str, podem))}.")
+            novos, planos, queixa = {}, {}, ""
+            for _ in range(2):
+                resposta = openrouter_local.perguntar(
+                    projeto, "prompts de IA em sequência", INSTRUCOES_SEQUENCIA, "\n\n".join(pedido) + queixa,
+                    ESQUEMA_SEQUENCIA, log=log, modelo=openrouter_local.principal(projeto), temperatura=0.5)
+                novos = {int(i["n"]): " ".join(str(i.get("prompt") or "").split())
+                         for i in (resposta.get("cenas") or []) if isinstance(i, dict) and str(i.get("n", "")).isdigit()}
+                novos = {n: t for n, t in novos.items() if n in podem and len(t.split()) >= 8}
+                planos = {int(i["n"]): str(i.get("plano") or "").strip().lower()
+                          for i in (resposta.get("cenas") or []) if isinstance(i, dict) and str(i.get("n", "")).isdigit()}
+                # o código confere: duas cenas seguidas com quase o mesmo pedido ou no mesmo plano voltam uma vez
+                final = [novos.get(c["n"]) or c.get("prompt_manual") or c.get("prompt") or "" for c in parte]
+                plano = [planos.get(c["n"]) if c["n"] in novos else c.get("plano") for c in parte]
+                iguais = [(parte[i]["n"], parte[i + 1]["n"]) for i in range(len(parte) - 1)
+                          if parecidos(final[i], final[i + 1]) >= 0.5
+                          or (plano[i] and plano[i] == plano[i + 1] and (parte[i]["n"] in novos or parte[i + 1]["n"] in novos))]
+                if not iguais:
+                    break
+                queixa = ("\n\nA resposta anterior repetiu o pedido ou o plano entre as cenas "
+                          + ", ".join(f"{a} e {b}" for a, b in iguais)
+                          + ". Cenas seguidas têm planos diferentes e mostram ações ou momentos diferentes.")
+            for n, texto in novos.items():
+                if planos.get(n) in ("geral", "medio", "detalhe"):
+                    por_n[n]["plano"] = planos[n]
+                if texto != (por_n[n].get("prompt") or "").strip():
+                    por_n[n]["prompt_antes_da_sequencia"] = por_n[n].get("prompt") or ""
+                    por_n[n]["prompt"] = texto
+                    mudaram += 1
+    if mudaram:
+        projeto.salvar_json("cenas.json", dados)
+        log(f"  {mudaram} prompt(s) de cenas de IA seguidas reescritos, cada um no momento da própria fala")
+    return mudaram
 
 
 def prompt_final(cena, perfil, com_referencia):

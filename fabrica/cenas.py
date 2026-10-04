@@ -1108,6 +1108,7 @@ def atualizar_tempos(projeto):
             c.pop("_ini_calculo", None)
             c["ini"], c["fim"] = round(c["ini"], 3), round(c["fim"], 3)
     _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa, escondidas)
+    _pedido_pela_fala(projeto, cenas, alinhamento)
     # cena com material real e tipo "ia" sem imagem numerada (a junção trouxe o tipo de uma e o material da outra)
     # volta ao tipo do material
     for c in cenas:
@@ -1117,6 +1118,64 @@ def atualizar_tempos(projeto):
     dados["cenas"] = cenas
     _distribuir_simbolos(cenas, alinhamento.get("marcadores") or [], projeto.perfil)
     projeto.salvar_json("cenas.json", dados)
+
+
+# o que o agente de roteiro decidiu para a frase: a cena recortada leva o pedido da frase que ela fala
+CAMPOS_DO_PEDIDO = {"descricao": "mostrar", "sujeito": "sujeito", "exato": "exato", "animal": "animal", "epoca": "epoca",
+                    "onde_existe": "onde_existe", "aceitavel": "aceitavel", "busca_alternativa": "busca_alternativa",
+                    "prompt": "prompt"}
+
+
+def _pedido_pela_fala(projeto, cenas, alinhamento) -> int:
+    """Depois de recortar as cenas (outra narração), cada cena volta a ter o pedido do agente para a frase que ela fala.
+
+    No recorte, o pedaço novo herdava tudo da cena de onde saiu: as cenas 23 a 26 do virou-filme-em-1996 falavam de
+    quatro frases (chega o engenheiro, Patterson, "experiente, confiante e caçador", "estava muito enganado") e
+    ficaram com a descrição da primeira, "um engenheiro chega a pé à obra, visto de costas". O diretor e a IA fizeram
+    quatro imagens iguais. A frase de cada cena é a que tem mais palavras dela; a escolha da pessoa (busca digitada,
+    imagem ou prompt dela) e a fatia de uma citação ficam como estão. Devolve quantas cenas mudaram."""
+    if not projeto.existe("roteiro_cenas.json"):
+        return 0
+    try:
+        agente = projeto.ler_json("roteiro_cenas.json")
+    except (OSError, ValueError):
+        return 0
+    unidades, palavras = alinhamento.get("unidades") or [], alinhamento.get("palavras") or []
+    if agente.get("frases") != len(unidades) or not palavras:
+        return 0  # a narração é de outro texto: o JSON do agente não se encaixa nas frases
+    grupos = agente.get("cenas") or []
+    grupo_da_frase = {}
+    for g in grupos:
+        for k in range(g["primeira_frase"], g["ultima_frase"] + 1):
+            grupo_da_frase[k] = g
+    grupo_da_descricao = {(g.get("descricao") or "").strip(): g for g in grupos if (g.get("descricao") or "").strip()}
+    inicios = [u["ini"] for u in unidades]
+    import bisect
+    mudaram = 0
+    for c in cenas:
+        conta = {}
+        for w in palavras:
+            if w.get("ini") is not None and c["ini"] - 0.05 <= w["ini"] < c["fim"] - 0.05:
+                k = max(0, bisect.bisect_right(inicios, w["ini"] + 0.01) - 1)
+                conta[k] = conta.get(k, 0) + 1
+        if not conta:
+            continue
+        c["frases"] = [min(conta), max(conta)]
+        g = grupo_da_frase.get(max(conta, key=lambda k: (conta[k], -k)))
+        de_onde = grupo_da_descricao.get((c.get("mostrar") or "").strip())
+        if (g is None or de_onde is None or de_onde is g or c.get("busca_manual") or c.get("pedido_original")
+                or c.get("imagem_da_pessoa") or c.get("prompt_manual") or c.get("item_citado")):
+            continue
+        for campo_agente, campo in CAMPOS_DO_PEDIDO.items():
+            valor = (g.get(campo_agente) or "").strip() if isinstance(g.get(campo_agente), str) else g.get(campo_agente)
+            if valor:
+                c[campo] = valor
+            elif campo not in ("mostrar", "prompt"):
+                c.pop(campo, None)
+        # a imagem que a cena tem foi escolhida para o pedido antigo: a conferência julga de novo pela fala nova
+        c["pedido_mudou"] = True
+        mudaram += 1
+    return mudaram
 
 
 def _mapa_de_tempo(anterior: dict, atual: dict):
