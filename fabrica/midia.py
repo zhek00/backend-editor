@@ -757,13 +757,21 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     geral = projeto.config.get("midia") or {}
     buscador = Buscador(projeto, log)
 
-    # 1. candidatos de cada cena
+    # 1. candidatos de cada cena, já com a segunda leva: a mesma busca traz o dobro, sem pedido a mais aos bancos.
+    # O modelo vê os 12 primeiros; se ele (ou o Jev) recusar todos, vê os 12 seguintes antes de a cena ir para a IA
+    leva = buscador.quantidade
+    buscador.quantidade = leva * 2
     with ThreadPoolExecutor(geral.get("processos", 4)) as executor:
         candidatos = dict(zip((c["n"] for c in alvo), executor.map(lambda c: _candidatos_da_cena(buscador, c), alvo)))
+    buscador.quantidade = leva
     for c in alvo:
         animal = exigido_da_cena(buscador.blocos.get(c.get("bloco")), c, buscador.nomes)
         candidatos[c["n"]] = (_so_do_animal(c, animal, candidatos[c["n"]], log) if animal
                               else _so_do_assunto(c, candidatos[c["n"]], log))
+    segunda_leva = {}
+    for c in alvo:
+        todos = candidatos[c["n"]]
+        candidatos[c["n"]], segunda_leva[c["n"]] = todos[:leva], todos[leva:]
     com_opcoes = [c for c in alvo if candidatos[c["n"]]]
     log(f"  candidatos encontrados para {len(com_opcoes)} de {len(alvo)} cenas")
 
@@ -778,6 +786,7 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     vizinhas = {c["n"]: c.get("texto", "") for c in dados["cenas"]}
     infos = {}
     recusou_tudo = set()  # cenas em que o modelo recusou todos e entraram os candidatos do assunto pelas tags
+    adiadas, na_segunda = set(), set()  # cenas que recusaram a primeira leva, e as que já viram a segunda
     contagem = {"conferidas": 0, "reprovados": 0, "suspeitas": 0}
 
     def aplicar(ordens_parciais):
@@ -785,6 +794,11 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
         escolhidos = {}
         for n, ordem in ordens_parciais.items():
             decididas.add(n)
+            if not ordem and not permissivo and segunda_leva.get(n) and n not in na_segunda and not projeto.offline:
+                # o modelo recusou os 12 primeiros: antes de cair nas tags, ele vê os 12 seguintes
+                adiadas.add(n)
+                decididas.discard(n)
+                continue
             if not ordem and not permissivo:
                 ordem = _do_assunto_quando_recusou(projeto, por_n[n], candidatos[n])
                 if ordem:
@@ -804,6 +818,10 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
                         contagem["conferidas"] += 1
                         contagem["reprovados"] += info.get("reprovados_antes", 0)
                     contagem["suspeitas"] += 1 if info.get("suspeita") else 0
+                elif segunda_leva.get(n) and n not in na_segunda and not projeto.offline:
+                    # o Jev reprovou os escolhidos da primeira leva: a cena vê a segunda
+                    adiadas.add(n)
+                    decididas.discard(n)
                 continue
             for i in ordem:
                 candidato = candidatos[n][i]
@@ -861,6 +879,10 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
             log(f"  {prontas} de {len(alvo)} cena(s) baixadas e gravadas antes da interrupção")
             raise interrupcao
 
+    if adiadas and not projeto.offline:
+        _segunda_leva(projeto, [por_n[n] for n in sorted(adiadas)], candidatos, segunda_leva, na_segunda,
+                      buscador, descricoes if conferir else None, aplicar, log)
+
     if not projeto.offline and not ia_ativa(projeto):
         # sem IA, uma cena vazia vira buraco no vídeo: melhor uma imagem na dúvida do que nenhuma
         _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log, descricoes)
@@ -886,6 +908,28 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     if sem_resposta:
         log(f"  {sem_resposta} cena(s) ficaram pendentes por falha de escolha, de miniatura ou de download. Rode o mesmo comando de novo para tentar outra vez")
     escrever_creditos(projeto)
+
+
+def _segunda_leva(projeto, cenas, candidatos, segunda_leva, na_segunda, buscador, descricoes, aplicar, log):
+    """As cenas que recusaram os 12 primeiros candidatos veem os 12 seguintes, que a mesma busca já trouxe.
+
+    Os 12 seguintes ficam na frente da lista da cena (os números da imagem de candidatos são deles) e os primeiros
+    atrás, para o filtro pelas tags olhar os 24 se o modelo recusar de novo. A escolha e a imagem de candidatos da
+    segunda leva ficam em arquivos próprios (_2), sem apagar os da primeira."""
+    for c in cenas:
+        na_segunda.add(c["n"])
+    log(f"  {len(cenas)} cena(s) sem nada aproveitável nos 12 primeiros candidatos: mostrando os 12 seguintes")
+    folhas = {}
+    for c in cenas:
+        folhas[c["n"]] = _folha_de_contato(projeto, c, segunda_leva[c["n"]], buscador.http, sufixo="_2")
+        candidatos[c["n"]] = segunda_leva[c["n"]] + candidatos[c["n"]]
+    tamanho = (projeto.config.get("midia") or {}).get("cenas_por_escolha", 6)
+    for i in range(0, len(cenas), tamanho):
+        try:
+            aplicar(_escolher_lote(projeto, cenas[i:i + tamanho], candidatos, folhas, descricoes, sufixo="_2"))
+        except Exception as erro:
+            # a segunda leva melhora a captura, nunca a para: a cena segue para as tags ou para a IA
+            log(f"  a segunda leva de candidatos falhou para {len(cenas[i:i + tamanho])} cena(s): {str(erro)[:120]}")
 
 
 def _do_assunto_quando_recusou(projeto, cena, candidatos_da_cena) -> list:
@@ -1425,7 +1469,7 @@ class Buscador:
         return achados
 
 
-def _folha_de_contato(projeto, cena, candidatos, http):
+def _folha_de_contato(projeto, cena, candidatos, http, sufixo=""):
     """Uma imagem só com todos os candidatos da cena, cada um com seu número."""
     from PIL import Image, ImageDraw
 
@@ -1446,7 +1490,7 @@ def _folha_de_contato(projeto, cena, candidatos, http):
         desenho.rectangle([x + 6, y + 6, x + 22 + fonte.getlength(rotulo), y + 52], fill=(0, 0, 0))
         desenho.text((x + 14, y + 8), rotulo, font=fonte, fill=(255, 214, 0))
         validos.append(i)
-    destino = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}.jpg")
+    destino = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}{sufixo}.jpg")
     folha.save(destino, quality=85)
     return destino, validos
 
@@ -1455,7 +1499,7 @@ def _folha_de_contato(projeto, cena, candidatos, http):
 VERSAO_ESCOLHA = 2
 
 
-def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None):
+def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""):
     """Pergunta ao modelo as escolhas de várias cenas de uma vez. As respostas ficam guardadas.
 
     Com descricoes (um dicionário), o modelo também diz o que vê em cada candidato indicado, e essas frases
@@ -1463,7 +1507,7 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None):
     resultado, pendentes = {}, []
     com_descricao = descricoes is not None
     for cena in lote:
-        cache = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}.json")
+        cache = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}{sufixo}.json")
         assinatura = hashlib.sha1(
             (json.dumps([_chave(c) for c in candidatos[cena["n"]]]) + ("|descricao" if com_descricao else "")
              + (f"|v{VERSAO_ESCOLHA}" if VERSAO_ESCOLHA > 1 else "")).encode()
