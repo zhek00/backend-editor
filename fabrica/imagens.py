@@ -30,6 +30,11 @@ from .util import mmss
 ARGUMENTOS_FAL = {"aspect_ratio": "16:9", "resolution": "1K", "output_format": "png"}
 MODELO_GOOGLE = "gemini-3.1-flash-image"
 MODELO_KIE = "grok-imagine-image-2-0/text-to-image"  # Grok Imagine Image 2.0 via Kie.ai
+# modelos do OpenRouter que respondem pela interface de imagens (/api/v1/images), e não pelo chat: os GPT Image da OpenAI.
+# Proporção mais larga que eles aceitam é 3:2 (o render corta para 16:9 perdendo pouco); qualidade: low, medium, high
+PREFIXO_IMAGES_API = ("openai/gpt-image",)
+# preço de tabela por imagem em 3:2, quando o OpenRouter não informa o custo (tokens de imagem a US$ 40 por milhão)
+PRECO_GPT_IMAGE = {"low": 0.017, "medium": 0.064, "high": 0.25, "auto": 0.25}
 MODELO_OPENROUTER = "x-ai/grok-imagine-image-2.0"  # o mesmo Grok Imagine 2, pelo OpenRouter (a chave que a fábrica já usa)
 TIPOS_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 ESTADOS_FINAIS_LOTE = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
@@ -356,7 +361,8 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
             from . import custos_reais
 
             custos_reais.registrar(
-                projeto, "imagem", f"imagem de IA da cena {cena['n']}", custos.preco_da_imagem(projeto),
+                projeto, "imagem", f"imagem de IA da cena {cena['n']}",
+                registro["custo_usd"] if isinstance(registro.get("custo_usd"), (int, float)) else custos.preco_da_imagem(projeto),
                 unidades=1, detalhes={"cena": cena["n"], "provedor": registro.get("provedor", prov),
                                       "modelo": registro.get("modelo", "")})
             return
@@ -576,6 +582,8 @@ def _imagem_openrouter(prompt, img):
     modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
                                               and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
                                               else MODELO_OPENROUTER)
+    if str(modelo).startswith(PREFIXO_IMAGES_API):
+        return _imagem_openrouter_images(prompt, img, modelo)
     corpo = {"model": modelo, "messages": [{"role": "user", "content": prompt}], "modalities": ["image"],
              "image_config": {"aspect_ratio": img.get("proporcao", "16:9")}, "usage": {"include": True}}
     with httpx.Client(timeout=180.0, follow_redirects=True) as cliente:
@@ -603,6 +611,42 @@ def _imagem_openrouter(prompt, img):
             conteudo = baixado.content
     custo = (dados.get("usage") or {}).get("cost")
     return conteudo, {"provedor": "openrouter", "modelo": modelo, "prompt": prompt, "custo_usd": custo}
+
+
+def _imagem_openrouter_images(prompt, img, modelo):
+    """GPT Image (openai/gpt-image-1 e afins) pela interface de imagens do OpenRouter. A qualidade vem de
+    imagens.qualidade no perfil (padrão low: uns US$ 0,017 por imagem em 3:2) e a proporção é 3:2, a mais larga."""
+    import base64
+    from .openrouter_local import _chave
+
+    qualidade = str(img.get("qualidade") or "low").lower()
+    corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
+             "aspect_ratio": img.get("proporcao_gpt_image", "3:2"), "background": "opaque"}
+    with httpx.Client(timeout=300.0, follow_redirects=True) as cliente:
+        r = cliente.post("https://openrouter.ai/api/v1/images", json=corpo,
+                         headers={"Authorization": f"Bearer {_chave()}"})
+        if r.status_code == 402:
+            raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
+        if r.status_code in (401, 403):
+            raise RuntimeError(f"OpenRouter recusou a chave ({r.status_code}). Confira o .env.")
+        if r.status_code != 200:
+            raise RuntimeError(f"OpenRouter falhou ao gerar a imagem ({r.status_code}): {r.text[:300]}")
+        dados = r.json()
+        if dados.get("error"):
+            raise RuntimeError(f"OpenRouter falhou ao gerar a imagem: {str(dados['error'])[:300]}")
+        figuras = dados.get("data") or []
+        if not figuras:
+            raise SemImagem(f"OpenRouter respondeu sem imagem ({str(dados)[:200]})")
+        if figuras[0].get("b64_json"):
+            conteudo = base64.b64decode(figuras[0]["b64_json"])
+        else:
+            baixado = cliente.get(figuras[0].get("url") or "")
+            baixado.raise_for_status()
+            conteudo = baixado.content
+    custo = (dados.get("usage") or {}).get("cost")
+    return conteudo, {"provedor": "openrouter", "modelo": modelo, "qualidade": qualidade, "prompt": prompt,
+                      "custo_usd": custo if custo is not None else PRECO_GPT_IMAGE.get(qualidade, 0.25),
+                      "custo_medido": custo is not None}
 
 
 def _imagem_kie(prompt, img):
