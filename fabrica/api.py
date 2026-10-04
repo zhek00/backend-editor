@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, corrigir, fish, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, qualidade, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -463,6 +463,10 @@ def _esteira(nome: str, task_id: str) -> None:
         except (Exception, SystemExit) as erro_trilha:
             log_w(f"  a trilha não saiu agora, o render tenta de novo: {erro_trilha}")
 
+    try:
+        _atualizar(task_id, qualidade=qualidade.registrar(p, "criação", log_w))
+    except (Exception, SystemExit) as erro_q:
+        log_w(f"  a nota de qualidade não saiu: {erro_q}")
     _atualizar(task_id, status="concluido", etapa="concluido", passo_atual=5, total_passos=5, progresso_pct=100,
                mensagem="Cenas prontas com sucesso! Tudo pronto para renderizar.", pronto_para_edicao=True,
                concluido=True, aguardando_ate=None)
@@ -2093,6 +2097,9 @@ class CorrigirMidiaPayload(BaseModel):
     rodadas: Optional[int] = None
     nota_minima: Optional[int] = None
     ia: bool = False  # só gera imagem de IA nas que sobrarem se isto vier true, o que quem chama confirma como custo
+    # o diretor (diretor.py) lê o roteiro inteiro e decide o que muda antes da conferência do Jev. Sem o campo, ele
+    # entra quando a IA está ligada (ia.ativa), porque a cena que mostra outra coisa recebe IA obrigatoriamente
+    diretor: Optional[bool] = None
 
 
 def _atualizar_progresso(task_id: str, msg: str):
@@ -2111,6 +2118,18 @@ def _atualizar_progresso(task_id: str, msg: str):
         elif "cena(s) de material real ainda sem arquivo" in m:
             t["progresso_pct"] = 15
             t["mensagem"] = "Buscando material real para as cenas sem arquivo..."
+
+
+@app.get("/api/projetos/{nome}/qualidade")
+def qualidade_do_projeto(nome: str):
+    """A nota do vídeo: quanto das cenas mostra o que a fala diz, quantas mostram outra coisa, de onde veio cada
+    imagem, e o histórico (fim da criação, de cada Corrigir). Grátis: só lê as notas que o Jev já deu."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    historico = p.ler_json("qualidade.json").get("historico", []) if p.existe("qualidade.json") else []
+    return {"atual": qualidade.calcular(p), "historico": historico,
+            "texto": qualidade.formatar(qualidade.calcular(p))}
 
 
 @app.post("/api/projetos/{nome}/limpar-midia")
@@ -2147,17 +2166,27 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
             numeros = set(payload.cenas) if payload.cenas else None
 
             prep = corrigir.preparar_gratis(p, log=log_w)
+            # primeira ação: o diretor, que conhece o roteiro inteiro, aponta e resolve as cenas que mostram outra coisa
+            usar_diretor = payload.diretor if payload.diretor is not None else midia.ia_ativa(p)
+            resultado_diretor = None
+            if usar_diretor:
+                _atualizar_progresso(task_id, "  o diretor está lendo o roteiro inteiro e revisando as cenas")
+                decisoes = diretor.revisar(p, log=log_w)
+                if numeros:
+                    decisoes = {**decisoes, "mudar": [m for m in decisoes["mudar"] if m["n"] in numeros]}
+                resultado_diretor = {**diretor.aplicar(p, decisoes, log=log_w), "decisoes": decisoes["mudar"]}
             total = len(corrigir.conferiveis(p, numeros))
             log_w(f"  conferindo {total} cena(s) de material real (cenas de IA ficam de fora)")
             resumo = corrigir.corrigir(
                 p, numeros=numeros, rodadas=payload.rodadas or cfg.get("rodadas", corrigir.RODADAS),
                 nota_minima=payload.nota_minima or cfg.get("nota_minima", corrigir.NOTA_MINIMA), log=log_w)
 
-            geradas = 0
+            # com a IA ligada, as cenas que mostravam outra coisa já saíram com imagem de IA (corrigir.resolver_com_ia)
+            geradas = len(resumo.get("geradas_com_ia") or []) + len((resultado_diretor or {}).get("ia") or [])
             if payload.ia and resumo["precisam_ia"]:
                 log_w(f"  gerando {len(resumo['precisam_ia'])} imagem(ns) de IA, pedido explícito de quem chamou")
                 corrigir.regerar_com_ia(p, resumo["precisam_ia"], log=log_w)
-                geradas = len(resumo["precisam_ia"])
+                geradas += len(resumo["precisam_ia"])
 
             depois = modulo_uso.resumo_uso(p) or {}
             reprovadas = resumo["avaliadas"] - resumo["aprovadas_de_primeira"]
@@ -2183,6 +2212,8 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
                 "provedor": corrigir.provedor(p),
                 "custo_usd": round(depois.get("custo", 0) - antes.get("custo", 0), 4),
                 "mensagem": corrigir.formatar(resumo),
+                "diretor": resultado_diretor,
+                "qualidade": qualidade.registrar(p, "corrigir mídia", log_w),
             }
             with TAREFAS_LOCK:
                 if task_id in TAREFAS:

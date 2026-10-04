@@ -83,6 +83,14 @@ INSTRUCOES_DO_QUE_SE_VE = """Para cada imagem, responda o que VOCÊ VÊ nela, ca
 Descreva só o que aparece, sem inventar e sem copiar o texto do pedido."""
 
 
+# a mesma descrição, sem comparar com o pedido: o Corrigir descreve sem mostrar o que a cena deveria ter (quem compara
+# é o Jev). Vendo o pedido, o modelo escrevia o nome que estava nele ("Lago Vitória" para uma cidade no litoral)
+CAMPOS_SEM_PEDIDO = {k: v for k, v in CAMPOS_DO_QUE_SE_VE.items() if k not in ("confere", "motivo")}
+INSTRUCOES_SEM_PEDIDO = "\n".join(
+    linha for linha in INSTRUCOES_DO_QUE_SE_VE.splitlines()
+    if not linha.startswith(("- confere:", "- motivo:"))).replace(" e sem copiar o texto do pedido", "")
+
+
 def compor_o_que_se_ve(v) -> str:
     """O texto que o Jev lê, montado dos campos. Aceita a frase antiga, de projetos e respostas de antes."""
     if not isinstance(v, dict):
@@ -1115,8 +1123,9 @@ class Buscador:
         if not acervo:
             fontes = [f for f in fontes if f not in bancos.ACERVO]
         elif acervo == "epoca":
-            # Pexels, Pixabay e Unsplash só têm foto de hoje: a cena de época busca no arquivo e na Wikimedia
-            fontes = ["wikimedia"] + [f for f in fontes if f in bancos.ACERVO and f != "wikimedia"]
+            # Pexels, Pixabay e Unsplash só têm foto de hoje: a cena de época busca no arquivo e na Wikimedia, também
+            # pelas categorias do assunto (o acervo inteiro dele, como as fotos de um livro da época)
+            fontes = ["wikimedia", "wikimedia_categoria"] + [f for f in fontes if f in bancos.ACERVO and f != "wikimedia"]
         if tipo == "foto":
             if _e_de_espaco(busca) and "nasa" not in fontes:
                 fontes.append("nasa")
@@ -1145,7 +1154,8 @@ class Buscador:
         if not busca or fonte in self.desligadas:
             return []
         from . import bancos
-        funcoes = {"wikimedia": self._wikimedia, "pexels": self._pexels, "pixabay": self._pixabay,
+        funcoes = {"wikimedia": self._wikimedia, "wikimedia_categoria": self._wikimedia_categoria,
+                   "pexels": self._pexels, "pixabay": self._pixabay,
                    # os bancos extras (iNaturalist, NASA, Unsplash, Smithsonian, Europeana, Harvard)
                    **{nome: (lambda t, b, _f=funcao: _f(self, t, b)) for nome, funcao in bancos.FONTES.items()}}
         if fonte not in funcoes:
@@ -1256,6 +1266,31 @@ class Buscador:
             "iiextmetadatafilter": "License|LicenseShortName|Artist|ImageDescription",
         })
         self._checar(r, "Wikimedia")
+        return self._paginas_wikimedia(r)
+
+    def _wikimedia_categoria(self, tipo, busca):
+        """As fotos das categorias da Wikimedia que o assunto tem, só em cena de época. A busca por palavra acha o
+        arquivo que cita a palavra; a categoria junta o acervo inteiro do assunto: "The Man-eaters of Tsavo" tem as
+        fotos do livro de 1907 (acampamento, ponte, armadilha, os leões mortos), e a fábrica achou só uma delas."""
+        if tipo != "foto" or not self.contato:
+            return []
+        r = self.http.get("https://commons.wikimedia.org/w/api.php", params={
+            "action": "query", "format": "json", "list": "search", "srnamespace": 14, "srsearch": busca, "srlimit": 2})
+        self._checar(r, "Wikimedia")
+        categorias = [c["title"] for c in (r.json().get("query") or {}).get("search", [])]
+        achados = []
+        for categoria in categorias:
+            r = self.http.get("https://commons.wikimedia.org/w/api.php", params={
+                "action": "query", "format": "json", "generator": "categorymembers", "gcmtitle": categoria,
+                "gcmtype": "file", "gcmlimit": 50,
+                "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1920,
+                "iiextmetadatafilter": "License|LicenseShortName|Artist|ImageDescription",
+            })
+            self._checar(r, "Wikimedia")
+            achados += [a for a in self._paginas_wikimedia(r) if a["id"] not in {x["id"] for x in achados}]
+        return achados
+
+    def _paginas_wikimedia(self, r):
         paginas = sorted(((r.json().get("query") or {}).get("pages") or {}).values(), key=lambda p: p.get("index", 0))
         achados = []
         for p in paginas:

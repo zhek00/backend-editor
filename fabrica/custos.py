@@ -4,10 +4,11 @@ from . import texto as tx
 from .util import mmss
 
 TIPOS_REAIS = ("foto_real", "video_real")
-# a IA só entra onde o acervo não tem o assunto (teto de 15% no plano); em geral fica bem abaixo disso
-PROPORCAO_IA_TIPICA = 0.08
-# das cenas reais planejadas, a fatia que a busca não acha e cai para IA
-FALHA_BUSCA_TIPICA = 0.1
+# o agente marca como IA o que não existe em foto (sem teto desde 2026-10-03)
+PROPORCAO_IA_TIPICA = 0.15
+# das cenas reais planejadas, a fatia que vem errada do banco e vai obrigatoriamente para a IA. Medido no
+# virou-filme-em-1996 (Tsavo, 1898): 86 de 155 cenas mostravam outra coisa; num vídeo de animais é bem menos
+FALHA_BUSCA_TIPICA = 0.3
 
 
 def estimar(projeto) -> dict:
@@ -46,7 +47,10 @@ def estimar(projeto) -> dict:
     # parte das cenas reais não acha material e cai para IA, e 10% das imagens vão para refações
     em_lote = em_lote_no_google(projeto)
     preco_imagem = preco_da_imagem(projeto)
-    imagens = (cenas - reais * (1 - FALHA_BUSCA_TIPICA)) * 1.1 * preco_imagem
+    from .midia import ia_ativa
+
+    # com a IA desligada nenhuma imagem é gerada; ligada, 10% das imagens são feitas de novo pela conferência
+    imagens = (cenas - reais * (1 - FALHA_BUSCA_TIPICA)) * 1.1 * preco_imagem if ia_ativa(projeto) else 0.0
     if (projeto.perfil.get("avatar") or {}).get("somente_avatar"):
         cenas, reais, imagens = 0, 0, 0.0  # o personagem fala o vídeo inteiro
 

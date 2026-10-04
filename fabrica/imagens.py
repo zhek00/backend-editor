@@ -54,7 +54,23 @@ def pendentes_ia(projeto, cenas):
     return [c for c in cenas if midia.precisa_ia(c) and not projeto.imagem(c["n"]).exists()]
 
 
-def gerar(projeto, apenas=None, log=print, direto=False):
+def gerar(projeto, apenas=None, log=print, direto=False, conferir=True):
+    """Gera as imagens de IA que faltam e, com a IA ligada, o Jev confere cada uma (corrigir.conferir_ia): imagem que
+    mostra outra coisa é feita de novo. conferir=False quando a pessoa pediu a imagem com o próprio prompt."""
+    resultado = _gerar(projeto, apenas, log, direto)
+    from .midia import ia_ativa
+
+    if conferir and ia_ativa(projeto) and not projeto.offline:
+        from . import corrigir
+        try:
+            corrigir.conferir_ia(projeto, set(apenas) if apenas is not None else None, log)
+        except (Exception, SystemExit) as erro:
+            # a conferência melhora o vídeo, nunca o para
+            log(f"  a conferência das imagens de IA falhou, seguindo sem ela: {str(erro)[:160]}")
+    return resultado
+
+
+def _gerar(projeto, apenas=None, log=print, direto=False):
     cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]
     pendentes = pendentes_ia(projeto, cenas)
     from .midia import ia_ativa
@@ -125,8 +141,16 @@ def prompt_final(cena, perfil, com_referencia):
     elif cena["personagem"] and personagem.get("descricao"):
         partes.append(f"Main character: {personagem['descricao'].strip()}")
     partes.append(f"Scene: {(cena.get('prompt_manual') or cena['prompt']).strip()}")
-    if img.get("estilo"):
+    if midia.e_de_epoca(cena):
+        # cena de época junto de fotos de arquivo: a imagem de IA tem cara de foto daquele tempo, não de cinema atual
+        partes.append(f"Style: authentic photograph taken around {cena['epoca']}, period-accurate clothing, objects and "
+                      "buildings, black and white or faded sepia, film grain, natural light of the time, documentary "
+                      "framing. Nothing modern in the image.")
+    elif img.get("estilo"):
         partes.append(f"Style: {img['estilo'].strip()}")
+    if cena.get("ia_motivo") and (cena.get("mostrar") or "").strip():
+        # a cena veio para a IA porque a foto do banco mostrava outra coisa: o que ela tem que mostrar, sem erro
+        partes.append(f"The image must clearly show: {cena['mostrar'].strip()}")
     if img.get("evitar"):
         partes.append(f"Do not include: {img['evitar'].strip()}")
     return "\n".join(partes)
@@ -587,7 +611,7 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
             termos = ", ".join(f"'{buscas_pedidas.get(c['n'], '')}'" for c in faltando)
             raise RuntimeError(f"Não achei foto ou vídeo no acervo para {termos}. Tente outros termos de busca, em inglês.")
         return []
-    return gerar(projeto, apenas=set(numeros), log=log)
+    return gerar(projeto, apenas=set(numeros), log=log, conferir=False)
 
 
 def _a_busca_da_pessoa_manda(cena, digitada, em_ingles):

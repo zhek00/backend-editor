@@ -12,6 +12,8 @@ import copy
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
 
 from PIL import Image
 
@@ -21,6 +23,11 @@ from .util import duracao_audio, rodar
 RODADAS = 3
 NOTA_MINIMA = 40      # abaixo disso a cena entra no relatório como "não combina"
 NOTA_PARA_TROCAR = 20  # só abaixo disso o sistema troca sozinho. Entre os dois, ele só aponta e você decide
+# a imagem mostra OUTRA coisa no lugar do sujeito (pergunta "sujeito" do Jev): a cena está errada, qualquer que seja a
+# nota de combinar. Com o sujeito certo e a nota baixa, a cena é só genérica e fica (três leões sem juba tiravam 4%
+# contra o pedido ideal "dois leões entre tendas à noite" e seriam trocados à toa)
+NOTA_SUJEITO_ERRADO = 35
+NOTA_EPOCA_ERRADA = 30  # cena de época com foto de hoje
 LADO_MAXIMO = 640  # imagem reduzida: uns 300 tokens em vez de 800. O plano gratuito do Groq limita tokens por minuto
 
 VEREDITOS = ("combina", "em_parte", "nao_combina")
@@ -81,7 +88,7 @@ Regras
 
 
 def aprovada(conferencia, nota_minima=NOTA_MINIMA) -> bool:
-    return conferencia["veredito"] == "combina" or conferencia["nota"] >= nota_minima
+    return (conferencia["veredito"] == "combina" or conferencia["nota"] >= nota_minima) and not errada(conferencia)
 
 
 def _reduzir(origem, destino):
@@ -97,9 +104,10 @@ def _quadros(projeto, cena):
     pasta.mkdir(parents=True, exist_ok=True)
     n = cena["n"]
     m = cena.get("midia")
-    if not m:
-        return []  # cena de IA ou sem material: o conferidor só olha material real
-    origem = projeto.pasta / m["arquivo"]
+    if m:
+        origem = projeto.pasta / m["arquivo"]
+    else:
+        origem = projeto.imagem(n)  # a imagem de IA da cena (conferir_ia)
     if not origem.exists():
         return []
     if origem.suffix.lower() in (".mp4", ".mov", ".webm", ".mkv"):
@@ -190,8 +198,8 @@ ESQUEMA_LEGENDA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"n": {"type": "integer"}, **midia.CAMPOS_DO_QUE_SE_VE},
-                "required": ["n", *midia.CAMPOS_DO_QUE_SE_VE],
+                "properties": {"n": {"type": "integer"}, **midia.CAMPOS_SEM_PEDIDO},
+                "required": ["n", *midia.CAMPOS_SEM_PEDIDO],
                 "additionalProperties": False,
             },
         }
@@ -204,9 +212,10 @@ INSTRUCOES_LEGENDA = """Você olha as imagens das cenas de um vídeo e diz o que
 
 As imagens anexadas vêm na ordem indicada no pedido: uma imagem por cena, na mesma ordem em que as cenas aparecem. Conte as imagens na ordem para não trocar uma cena pela outra.
 
-Para cada cena devolva um item com o mesmo n. O pedido traz, de cada cena, a narração e o que ela deve mostrar: é com isso que você compara no campo confere.
+Para cada cena devolva um item com o mesmo n. Você NÃO sabe o que a cena deveria mostrar, de propósito: descreva só o
+que está na imagem. Quem compara com a narração é o juiz.
 
-""" + midia.INSTRUCOES_DO_QUE_SE_VE + """
+""" + midia.INSTRUCOES_SEM_PEDIDO + """
 
 Devolva um item por cena pedida, na mesma ordem. Nunca pule uma cena."""
 
@@ -254,6 +263,54 @@ PERGUNTAS_JEV = {
     },
 }
 
+PERGUNTA_SUJEITO = {
+    "type": "noul",
+    "instructions": ("A imagem descrita mostra o SUJEITO certo da cena (a coisa, pessoa, animal, lugar ou objeto que a "
+                     "narração cita, ou o assunto direto do trecho quando ela não cita nada concreto), mesmo que o "
+                     "momento, a ação ou o cenário sejam outros? Não é sobre a imagem ser perfeita: é sobre ela mostrar "
+                     "AQUILO e não outra coisa. Quando o estado traz o_que_basta, esse é o mínimo para estar certa."),
+    "criteria": {
+        "true": ("mostra o sujeito certo, ainda que genérico: um leão sem juba para os leões de Tsavo, uma foto antiga "
+                 "da ferrovia para a construção da ferrovia, um laboratório para a pesquisa, a pessoa citada (e não "
+                 "um homônimo)"),
+        "false": ("mostra outra coisa: outro animal (um elefante ou uma zebra no lugar do leão), outro lugar, outra "
+                  "pessoa com o mesmo nome, uma cidade, um carro, um objeto sem relação, ou nada do assunto do trecho"),
+    },
+}
+
+PERGUNTA_EPOCA = {
+    "type": "noul",
+    "instructions": ("A cena se passa na época em epoca_da_cena. A imagem descrita é dessa época (fotografia antiga, "
+                     "gravura, ilustração de livro ou jornal da época, objeto de museu, ou cena sem nada que denuncie "
+                     "o tempo, como um bicho ou uma paisagem)?"),
+    "criteria": {
+        "true": "foto antiga, gravura, ilustração da época, objeto de museu, ou natureza sem sinal de época",
+        "false": "mostra roupas, carros, aparelhos, obras ou acabamentos de hoje, ou é foto digital moderna de gente",
+    },
+}
+
+
+def _perguntas(estado) -> dict:
+    """As perguntas da cena, numa chamada só e pelo mesmo preço: combina, sujeito e, em cena de época, época."""
+    perguntas = {**PERGUNTAS_JEV, "sujeito": PERGUNTA_SUJEITO}
+    if estado.get("epoca_da_cena"):
+        perguntas["epoca"] = PERGUNTA_EPOCA
+    return perguntas
+
+
+def errada(avaliacao, nota_para_trocar=NOTA_PARA_TROCAR) -> bool:
+    """A cena mostra outra coisa (sujeito errado), é de outra época, ou não combina de jeito nenhum. Só essa troca
+    sozinha, e com a IA ligada vai para a IA. Sujeito certo com nota baixa é cena genérica e fica."""
+    if avaliacao is None:
+        return False
+    sujeito, epoca = avaliacao.get("sujeito"), avaliacao.get("epoca")
+    if sujeito is not None and sujeito < NOTA_SUJEITO_ERRADO:
+        return True
+    if epoca is not None and epoca < NOTA_EPOCA_ERRADA:
+        return True
+    return avaliacao["nota"] < nota_para_trocar and (sujeito is None or sujeito < 60)
+
+
 ESQUEMA_BUSCAS = {
     "type": "object",
     "properties": {
@@ -292,7 +349,8 @@ def _legenda_guardada(cena):
     """A descrição fica junto da mídia: a mesma foto nunca é descrita duas vezes. Só vale a do formato novo
     (com "O que é:" e a conferência com o pedido); a frase curta antiga é descrita de novo."""
     legenda = ((cena.get("midia") or {}).get("legenda") or "").strip()
-    return legenda if legenda.startswith("O que é:") else ""
+    # a descrição feita vendo o pedido (a da escolha, com "confere com o pedido") é refeita sem ele
+    return legenda if legenda.startswith("O que é:") and "confere com o pedido" not in legenda else ""
 
 
 def _guardar_legendas(projeto, legendas):
@@ -313,11 +371,9 @@ def _descrever_lote(projeto, lote, log):
     quantas = len(lote)
     blocos, imagens = [], []
     for cena, quadros in lote:
-        # o que a cena deve mostrar vai junto: quem vê a imagem é quem melhor diz se ela confere
-        deve = cena.get("mostrar") or cena.get("busca") or ""
-        item = f" | item da lista: {cena['item_citado']}" if cena.get("item_citado") else ""
-        exato = f" | tem que ser: {cena['exato']}" if cena.get("exato") else ""
-        blocos.append(f"Cena {cena['n']} | narração: \"{cena.get('texto', '')}\" | deve mostrar: {deve}{exato}{item}")
+        # sem o pedido: vendo o que a cena deveria mostrar, o modelo escrevia "Lago Vitória" para uma cidade no litoral
+        # (nota 81) e "armadilha de madeira para leões" para uma gaiola de caranguejo. Quem compara é o Jev
+        blocos.append(f"Cena {cena['n']}")
         imagens.extend(quadros)
     pedido = f"Diga o que você vê nas imagens destas {quantas} cenas, campo a campo.\n\n" + "\n".join(blocos)
     try:
@@ -352,6 +408,17 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
         "trecho_seguinte": (vizinhas or {}).get(cena["n"] + 1, ""),
         "o_que_a_imagem_mostra": legenda,
     }
+    # o assunto do bloco: "Mas ainda faltava um." sozinho não diz que é o segundo leão de Tsavo
+    bloco = _bloco_da_cena_no_mapa(projeto, cena)
+    if bloco:
+        estado["assunto_do_trecho"] = bloco
+    if (cena.get("aceitavel") or "").strip():
+        # o mínimo para a cena estar certa: o ideal (o_que_a_cena_deve_mostrar) quase nunca existe em banco
+        estado["o_que_basta"] = cena["aceitavel"].strip()
+    if cena.get("exato"):
+        estado["tem_que_ser"] = cena["exato"]
+    if cena.get("tipo") == "ia" and not cena.get("midia"):
+        estado["imagem_gerada_por_ia"] = "sim: não pese contra por ser imagem gerada; julgue se mostra o certo"
     # escrito pelo agente que leu o roteiro inteiro: "Coincidieron." sozinho não diz que é sobre Watson Brake
     if cena.get("visual") in animacoes.tipos(projeto) and animacoes.config(projeto).get("ativo", True):
         # a foto vai por baixo da animação: o que vale é ser do assunto, não ser "um diagrama mostra..."
@@ -373,15 +440,51 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
     if fonte:
         estado["como_o_autor_descreveu_o_arquivo"] = fonte
     try:
-        respostas = jev_local.decidir(projeto, "julgar mídia", estado, PERGUNTAS_JEV, log=log)
+        respostas = jev_local.decidir(projeto, "julgar mídia", estado, _perguntas(estado), log=log)
     except RuntimeError as e:
         log(f"  o Jev não julgou a cena {cena['n']} ({e})")
         return None
     nota = round(float(respostas["combina"]["noul"]) * 100)
+
+    def outra(chave):
+        try:
+            return round(float(respostas[chave]["noul"]) * 100)
+        except (KeyError, TypeError, ValueError):
+            return None
+    sujeito, epoca = outra("sujeito"), outra("epoca") if "epoca_da_cena" in estado else None
     veredito = "combina" if nota >= 80 else "em_parte" if nota >= 50 else "nao_combina"
-    return {"legenda": legenda, "veredito": veredito, "nota": nota,
-            "motivo": f"o Jev deu {nota}% de chance de combinar com a narração",
-            "busca_nova": "", "prompt_novo": ""}
+    motivo = f"o Jev deu {nota}% de chance de combinar com a narração"
+    if sujeito is not None:
+        motivo += f", {sujeito}% de mostrar o sujeito certo"
+    if epoca is not None:
+        motivo += f" e {epoca}% de ser da época"
+    return {"legenda": legenda, "veredito": veredito, "nota": nota, "sujeito": sujeito, "epoca": epoca,
+            "motivo": motivo, "busca_nova": "", "prompt_novo": ""}
+
+
+_MAPAS = {}
+
+
+def _mapa(projeto) -> dict:
+    """O mapa do agente (roteiro_mapa.json), lido uma vez enquanto não muda."""
+    arquivo = projeto.pasta / "roteiro_mapa.json"
+    try:
+        chave = (str(arquivo), arquivo.stat().st_mtime)
+    except OSError:
+        return {}
+    if chave not in _MAPAS:
+        try:
+            _MAPAS[chave] = projeto.ler_json("roteiro_mapa.json")
+        except (OSError, ValueError):
+            _MAPAS[chave] = {}
+    return _MAPAS[chave]
+
+
+def _bloco_da_cena_no_mapa(projeto, cena) -> str:
+    bloco = next((b for b in _mapa(projeto).get("blocos") or [] if b.get("id") == cena.get("bloco")), None)
+    if not bloco:
+        return ""
+    return f"{bloco.get('nome', '')}: {bloco.get('ancora', '')}".strip(": ")
 
 
 _QUEM_E = {}
@@ -546,6 +649,10 @@ def _avaliar(projeto, numeros, log, nota_minima=NOTA_MINIMA):
     todas = projeto.ler_json("cenas.json")["cenas"]
     vizinhas = {c["n"]: (c.get("texto") or "").strip() for c in todas}
     cenas = conferiveis(projeto, numeros)
+    if numeros:
+        # a imagem de IA também é conferida quando a cena é pedida pelo número (conferir_ia)
+        cenas += [c for c in todas if c["n"] in numeros and c.get("tipo") == "ia" and not c.get("midia")
+                  and projeto.imagem(c["n"]).exists() and (c.get("texto") or "").strip()]
     if provedor(projeto) == "jev":
         return _avaliar_com_jev(projeto, cenas, vizinhas, log, nota_minima)
     por_chamada = max(1, (projeto.config.get("corrigir") or {}).get("cenas_por_chamada", 1))
@@ -567,7 +674,8 @@ def _guardar(projeto, avaliacoes, rodada):
         if c["n"] in avaliacoes:
             a = avaliacoes[c["n"]]
             c["conferencia"] = {"legenda": a["legenda"], "veredito": a["veredito"], "nota": a["nota"],
-                                "motivo": a["motivo"], "rodada": rodada}
+                                "motivo": a["motivo"], "rodada": rodada,
+                                **{k: a[k] for k in ("sujeito", "epoca", "prompt_novo") if a.get(k) is not None}}
     projeto.salvar_json("cenas.json", dados)
 
 
@@ -628,7 +736,7 @@ def _restaurar(projeto, snapshots):
 
 
 def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, nota_para_trocar=NOTA_PARA_TROCAR,
-             so_avaliar=False, log=print) -> dict:
+             so_avaliar=False, log=print, ia=None) -> dict:
     """Confere as cenas e troca, de graça, o material real que não combina com a narração.
 
     Devolve um resumo. Em precisam_ia ficam as cenas que só uma imagem nova de IA resolve, com o
@@ -641,6 +749,12 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
     precisam_ia = {}
     melhor, nota_atual = {}, {}
     alvo = set(numeros) if numeros else None
+    # IA obrigatória para cena errada (ia.ativa): uma busca nova só, e o que continuar errado vai para a IA. Rodar
+    # três rodadas de busca quando o banco não tem a coisa só trouxe mais lixo (o virou-filme-em-1996 terminou o
+    # Corrigir com 77 imagens que ninguém conferiu)
+    ia = midia.ia_ativa(projeto) if ia is None else ia
+    if ia:
+        rodadas = min(rodadas, 2)
 
     def devolver_as_melhores():
         """Volta cada cena para a melhor mídia que ela teve. Roda mesmo se o comando for interrompido,
@@ -665,14 +779,167 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
         devolver_as_melhores()
         raise
     if not so_avaliar:
-        # a melhor imagem que a cena teve pode ser de OUTRA coisa (elefantes para "pé de elefante"): essa sai
-        for n in _tirar_outra_coisa(projeto, nota_minima, log):
-            precisam_ia.pop(n, None)
+        if ia:
+            # a melhor imagem que a cena teve ainda mostra OUTRA coisa: com a IA ligada ela vai para a IA, sem nova
+            # busca no banco que já não tinha a coisa
+            for n, a in _ainda_erradas(projeto, alvo).items():
+                precisam_ia.setdefault(n, {"cena": n, "prompt": a.get("prompt_novo") or "", "motivo": a.get("motivo", "")})
+        else:
+            # a melhor imagem que a cena teve pode ser de OUTRA coisa (elefantes para "pé de elefante"): essa sai
+            for n in _tirar_outra_coisa(projeto, nota_minima, log):
+                precisam_ia.pop(n, None)
         # regra fixa: jamais repetir imagem. A devolução da "melhor imagem que a cena teve" podia trazer de volta
         # uma foto que outra cena passou a usar (o lince2 ficou com a mesma foto nas cenas 75 e 77)
         midia.tirar_repetidas(projeto, log)
+        # nunca piorar: toda imagem que mudou e ninguém julgou é julgada agora
+        for n, a in _conferir_sem_nota(projeto, alvo, nota_minima, log).items():
+            if ia and errada(a, nota_para_trocar):
+                precisam_ia.setdefault(n, {"cena": n, "prompt": a.get("prompt_novo") or "", "motivo": a["motivo"]})
+        if ia and precisam_ia:
+            resumo["geradas_com_ia"] = resolver_com_ia(projeto, list(precisam_ia.values()), log)
+            precisam_ia = {}
     resumo["precisam_ia"] = [precisam_ia[n] for n in sorted(precisam_ia)]
     return resumo
+
+
+def _ainda_erradas(projeto, alvo) -> dict:
+    """As cenas de material real cuja última conferência diz que mostram outra coisa."""
+    saida = {}
+    for c in projeto.ler_json("cenas.json")["cenas"]:
+        conf = c.get("conferencia") or {}
+        if (alvo is None or c["n"] in alvo) and c.get("tipo") in midia.TIPOS_REAIS and c.get("midia") \
+                and conf.get("nota") is not None and (errada(conf) or conf["nota"] < midia.NOTA_OUTRA_COISA):
+            saida[c["n"]] = conf
+    return saida
+
+
+def _conferir_sem_nota(projeto, alvo, nota_minima, log) -> dict:
+    """Julga as cenas de material real que mudaram de imagem e ficaram sem conferência (troca por repetida, busca
+    nova do fim). Devolve as avaliações novas."""
+    dados = projeto.ler_json("cenas.json")
+    faltam = {c["n"] for c in dados["cenas"]
+              if (alvo is None or c["n"] in alvo) and c.get("tipo") in midia.TIPOS_REAIS and c.get("midia")
+              and not (c.get("conferencia") or {}).get("legenda")}
+    if not faltam:
+        return {}
+    log(f"  {len(faltam)} cena(s) com imagem nova sem conferência: conferindo antes de terminar")
+    avaliacoes = _avaliar(projeto, faltam, log, nota_minima)
+    _guardar(projeto, avaliacoes, rodada=0)
+    return avaliacoes
+
+
+# ---------------------------------------------------------------------------------------- IA obrigatória
+
+def mandar_para_ia(projeto, itens, log=print) -> list[int]:
+    """A cena errada passa a usar imagem de IA. A foto que ela tinha fica guardada (ia_reserva) e volta se a imagem
+    de IA sair pior ou não puder ser feita: nunca piorar."""
+    from . import imagens
+
+    por_n = {int(i["cena"]): i for i in itens}
+    dados = projeto.ler_json("cenas.json")
+    carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
+    mandadas = []
+    for c in dados["cenas"]:
+        item = por_n.get(c["n"])
+        if item is None or c.get("personagem"):
+            continue
+        conf = c.get("conferencia") or {}
+        reserva = {"midia": copy.deepcopy(c.get("midia")), "tipo": c.get("tipo"), "busca": c.get("busca"),
+                   "nota": conf.get("nota"), "sujeito": conf.get("sujeito"),
+                   "movidos": imagens._guardar_versao_antiga(projeto, c, carimbo)}
+        if c.get("midia") and c["midia"].get("fonte"):
+            c.setdefault("rejeitadas", []).append(f"{c['midia']['fonte']}:{c['midia']['id']}")
+        c["ia_reserva"] = reserva
+        c["midia"] = None
+        c["tipo"] = "ia"
+        c.pop("sem_midia_real", None)
+        c.pop("conferencia", None)
+        if (item.get("prompt") or "").strip() and not (c.get("prompt") or "").strip():
+            c["prompt"] = item["prompt"].strip()
+        c["ia_motivo"] = item.get("motivo") or "a imagem do banco mostrava outra coisa"
+        mandadas.append(c["n"])
+    projeto.salvar_json("cenas.json", dados)
+    if mandadas:
+        log(f"  {len(mandadas)} cena(s) erradas vão para imagem de IA: {', '.join(map(str, mandadas[:40]))}")
+    return mandadas
+
+
+def _voltar_reserva(projeto, n, log) -> bool:
+    """A cena volta para a foto que tinha antes da IA."""
+    dados = projeto.ler_json("cenas.json")
+    c = next((x for x in dados["cenas"] if x["n"] == n), None)
+    reserva = (c or {}).get("ia_reserva")
+    if not reserva or not reserva.get("midia"):
+        return False
+    for origem, destino in reserva.get("movidos") or []:
+        if Path(origem).exists() and not Path(destino).exists():
+            shutil.move(origem, destino)
+    imagem = projeto.imagem(n)
+    if imagem.exists():
+        destino = projeto.caminho("antigas", f"{imagem.stem}-ia-{datetime.now():%Y%m%d-%H%M%S}{imagem.suffix}")
+        shutil.move(imagem, destino)
+    c["midia"], c["tipo"], c["busca"] = reserva["midia"], reserva.get("tipo") or "foto_real", reserva.get("busca")
+    c["captura"] = {**(c.get("captura") or {}), "suspeita": True}
+    c.pop("ia_reserva", None)
+    projeto.salvar_json("cenas.json", dados)
+    log(f"  cena {n}: a imagem de IA saiu pior, voltou a foto que estava")
+    return True
+
+
+def conferir_ia(projeto, numeros=None, log=print) -> dict:
+    """O Jev confere a imagem de IA como confere uma foto. Sujeito errado (espécie trocada, pessoa de frente, outra
+    coisa): a imagem é feita de novo uma vez, com o motivo no pedido. Se ainda sair pior que a foto que a cena tinha,
+    a foto volta. Devolve {n: avaliação}."""
+    from . import imagens
+
+    dados = projeto.ler_json("cenas.json")
+    alvo = {c["n"] for c in dados["cenas"]
+            if c.get("tipo") == "ia" and not c.get("midia") and projeto.imagem(c["n"]).exists()
+            and (numeros is None or c["n"] in numeros) and not (c.get("conferencia") or {}).get("legenda")}
+    if not alvo:
+        return {}
+    log(f"  conferindo {len(alvo)} imagem(ns) de IA com o Jev")
+    avaliacoes = _avaliar(projeto, alvo, log, NOTA_MINIMA)
+    _guardar(projeto, avaliacoes, rodada=0)
+    refazer = {n: a for n, a in avaliacoes.items() if errada(a)}
+    if refazer:
+        log(f"  {len(refazer)} imagem(ns) de IA mostram outra coisa: fazendo de novo, com o motivo no pedido")
+        por_n = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+        for n, a in refazer.items():
+            cena = por_n[n]
+            base = (cena.get("prompt_manual") or cena.get("prompt") or "").strip()
+            correcao = (f"{base}\nIMPORTANT: the previous image was wrong ({a['legenda'][:200]}). The image must clearly "
+                        f"show: {cena.get('mostrar') or cena.get('sujeito') or cena.get('busca')}.")
+            try:
+                imagens.refazer(projeto, [n], prompt=correcao, log=log)
+            except (Exception, SystemExit) as erro:
+                log(f"  cena {n}: não deu para refazer a imagem de IA ({str(erro)[:120]})")
+        de_novo = _avaliar(projeto, set(refazer), log, NOTA_MINIMA)
+        _guardar(projeto, de_novo, rodada=0)
+        avaliacoes.update(de_novo)
+        por_n = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+        for n, a in de_novo.items():
+            reserva = (por_n[n].get("ia_reserva") or {})
+            if errada(a) and reserva.get("nota") is not None and reserva["nota"] > a["nota"] \
+                    and (reserva.get("sujeito") or 0) > (a.get("sujeito") or 0):
+                _voltar_reserva(projeto, n, log)
+    return avaliacoes
+
+
+def resolver_com_ia(projeto, itens, log=print) -> list[int]:
+    """Cena errada vai para a IA: marca, gera as imagens e confere cada uma. Devolve as cenas que ficaram com IA."""
+    from . import imagens
+
+    mandadas = mandar_para_ia(projeto, itens, log)
+    if not mandadas:
+        return []
+    try:
+        imagens.gerar(projeto, apenas=set(mandadas), log=log, conferir=False)
+    except (Exception, SystemExit) as erro:
+        log(f"  as imagens de IA não saíram agora ({str(erro)[:160]}); as cenas seguem marcadas e saem na próxima rodada")
+        return mandadas
+    conferir_ia(projeto, set(mandadas), log)
+    return [c["n"] for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] in mandadas and c.get("tipo") == "ia"]
 
 
 def _nota_final(cena):
@@ -737,10 +1004,10 @@ def _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, r
     for rodada in range(1, rodadas + 1):
         avaliacoes = _avaliar(projeto, alvo, log, nota_minima)
         _guardar(projeto, avaliacoes, rodada)
-        reprovadas = {n for n, a in avaliacoes.items() if not aprovada(a, nota_minima)}
-        # trocar sozinho só o que está claramente errado. A faixa do meio vira sugestão na tela:
-        # das 118 trocas de uma execução anterior, só 41 vingaram, e o resto girou à toa
-        erradas = {n for n in reprovadas if avaliacoes[n]["nota"] < nota_para_trocar}
+        # trocar sozinho só o que está claramente errado: sujeito errado, época errada ou nota muito baixa. A faixa do
+        # meio vira sugestão na tela: das 118 trocas de uma execução anterior, só 41 vingaram, e o resto girou à toa
+        erradas = {n for n, a in avaliacoes.items() if errada(a, nota_para_trocar)}
+        reprovadas = {n for n, a in avaliacoes.items() if not aprovada(a, nota_minima)} | erradas
         duvidosas = reprovadas - erradas
         cenas = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
         nota_atual.update({n: a["nota"] for n, a in avaliacoes.items()})

@@ -25,7 +25,9 @@ ESTILO_PROPORCAO_REAL = 0.9
 ESTILO_MINIMO_FOTOS = 0.70  # do material real, pelo menos isso tem que ser foto
 # nos primeiros minutos, esta fatia do material real é vídeo, para prender a atenção: (até o segundo, fatia)
 ESTILO_VIDEO_NO_INICIO = ((180.0, 0.80), (420.0, 0.40))
-ESTILO_TETO_IA = 0.15  # IA só quando não há material real, e nunca mais que isso das cenas
+# Sem teto de IA (desde 2026-10-03, pedido do usuário): cena que não existe em foto ou que veio errada recebe imagem de
+# IA, quantas forem. O teto de 15% transformava em foto de banco as cenas que o agente marcou como IA, e foi assim que
+# o virou-filme-em-1996 saiu com 86 cenas de outra coisa. Com a IA desligada (ia.ativa: false), nenhuma cena é de IA
 # quando a narração enumera coisas ("tigres, tubarões, crocodilos, aranhas"), uma imagem só para a
 # lista inteira desperdiça o trecho. Nesses momentos a cena é quebrada item a item e pode ficar mais
 # curta que o mínimo normal, porque cada nome dura menos de um segundo na fala
@@ -134,11 +136,10 @@ Em busca escreva SEMPRE de 2 a 4 palavras-chave simples e diretas em inglês, co
 Escreva o prompt em todas as cenas: ele descreve o que a foto deveria mostrar e ajuda a escolher entre os candidatos."""
 
 SECAO_MIDIA = """Material real de acervo ou imagem de IA
-REGRA OBRIGATÓRIA DE EDIÇÃO: Use material real de acervo (Pixabay e Pexels) sempre que existir algo parecido. Imagem de IA só quando o acervo não teria o assunto, e no máximo {teto}% das cenas.
+REGRA OBRIGATÓRIA DE EDIÇÃO: Use material real de acervo (Pixabay e Pexels) sempre que existir o assunto de verdade. Imagem de IA quando o acervo não teria o assunto: um momento que ninguém fotografou, uma cena do passado com ação específica.
 - foto_real para objetos, artefatos, manuscritos, lugares, mapas, estruturas, animais, documentos, fotos de época e pessoas.
 - video_real para cenas de ação, natureza, pessoas em movimento, atmosfera, elementos visuais, cidades, tecnologia.
-- ia APENAS para momentos excepcionais que não existem em banco de imagens (limite máximo de {teto}% das cenas).
-REGRA ESTRITA: Pelo menos {pct}% de TODAS as cenas devem ser foto_real ou video_real. Na dúvida, escolha real.
+- ia para o que não existe em banco de imagens. Nunca troque por uma foto de outra coisa só para evitar a IA: foto errada é o pior erro.
 Em busca escreva SEMPRE de 2 a 4 palavras-chave simples e diretas em inglês que existam com fartura no Pixabay e Pexels (ex: 'ancient ruins wall', 'hands holding seeds', 'golden coins desk', 'forest river sunset'). Em cenas ia deixe busca vazia.
 Escreva o prompt em todas as cenas, inclusive nas reais, porque ele é usado caso seja necessário gerar uma imagem."""
 
@@ -275,12 +276,11 @@ def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, lo
 
 
 def _balancear_proporcao_90_10(cenas, log=print, sem_ia=False):
-    """Usa IA só quando faltar material real: converte o excesso acima do teto e nunca cria cenas de IA.
-
-    Com sem_ia (ia.ativa: false no config.yaml) o teto é zero: toda cena vira foto ou vídeo de acervo."""
-    if not cenas:
+    """Com a IA desligada (ia.ativa: false no config.yaml), toda cena de IA vira foto ou vídeo de acervo. Ligada, nada
+    muda: não existe teto de IA, e a cena que não existe em foto fica com a IA."""
+    if not cenas or not sem_ia:
         return cenas
-    teto_ia = 0 if sem_ia else max(1, round(len(cenas) * ESTILO_TETO_IA))
+    teto_ia = 0
     cenas_ia = [c for c in cenas if c.get("tipo") == "ia"]
     if len(cenas_ia) > teto_ia:
         excesso = len(cenas_ia) - teto_ia
@@ -305,8 +305,12 @@ def _balancear_foto_e_video(cenas, log=print):
     for c in cenas:
         if c.get("tipo") == "video_real" and re.search(r"\b1\d{3}\b", str(c.get("epoca") or "")):
             c["tipo"] = "foto_real"
+    # vídeo de banco só para o que existe em banco: o que só existe em arquivo (retrato, foto de época) nunca vira vídeo
+    for c in cenas:
+        if c.get("tipo") == "video_real" and c.get("onde_existe") == "arquivo":
+            c["tipo"] = "foto_real"
     reais = [c for c in cenas if c.get("tipo") in TIPOS_REAIS_CENA and not c.get("personagem")
-             and not re.search(r"\b1\d{3}\b", str(c.get("epoca") or ""))]
+             and not re.search(r"\b1\d{3}\b", str(c.get("epoca") or "")) and c.get("onde_existe") != "arquivo"]
     if len(reais) < 10:
         return cenas
     limite = int(len(reais) * (1 - ESTILO_MINIMO_FOTOS))  # vídeos permitidos no total
@@ -503,7 +507,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             fatiadas[i - 1]["tipo"] = fatiadas[i].get("tipo", fatiadas[i - 1].get("tipo", "ia"))
                             fatiadas[i - 1]["personagem"] = fatiadas[i].get("personagem", False)
                             # o assunto e o que deve aparecer acompanham a busca que ficou
-                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca"):
+                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca", "onde_existe", "aceitavel"):
                                 fatiadas[i - 1][campo] = fatiadas[i].get(campo, "")
                             # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
                             for campo in ("midia", "captura", "conferencia", "rejeitadas"):
@@ -528,7 +532,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                             fatiadas[i + 1]["tipo"] = fatiadas[i].get("tipo", fatiadas[i + 1].get("tipo", "ia"))
                             fatiadas[i + 1]["personagem"] = fatiadas[i].get("personagem", False)
                             # o assunto e o que deve aparecer acompanham a busca que ficou
-                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca"):
+                            for campo in ("sujeito", "mostrar", "animal", "exato", "epoca", "onde_existe", "aceitavel"):
                                 fatiadas[i + 1][campo] = fatiadas[i].get(campo, "")
                             # e o material real também vai junto, senão a cena mostra uma coisa e busca outra
                             for campo in ("midia", "captura", "conferencia", "rejeitadas"):
@@ -722,6 +726,9 @@ def planejar(projeto, log=print) -> list[dict]:
             **({"exato": (g.get("exato") or "").strip()} if "exato" in g else {}),
             # o ano, quando a imagem tem que ser daquela época (só arquivo: midia.e_de_epoca)
             **({"epoca": (g.get("epoca") or "").strip()} if (g.get("epoca") or "").strip() else {}),
+            # onde a imagem existe (banco, arquivo, nao_existe) e o mínimo para a cena estar certa (o Jev julga contra ele)
+            **({"onde_existe": g["onde_existe"]} if g.get("onde_existe") else {}),
+            **({"aceitavel": g["aceitavel"]} if (g.get("aceitavel") or "").strip() else {}),
             "busca_alternativa": (g.get("busca_alternativa") or "").strip(),
             # do agente de roteiro: o que deve aparecer, a busca pronta caso a cena de IA vire acervo, o texto
             # sugerido e o tipo pensado (mapa, diagrama...), guardado para quando a fábrica desenhar animações
@@ -1505,13 +1512,11 @@ def _decidir_cenas_groq(projeto, sistema, unidades, cortes, lote, antes, depois,
     uma decisão reserva feita do próprio texto, só para o vídeo não parar.
     """
     lote = list(lote)
-    teto_ia = max(1, round(len(lote) * ESTILO_TETO_IA))
     blocos = []
     if len(antes):
         blocos.append("Contexto anterior, não devolva:\n" + "\n".join(_linhas_cena(unidades, cortes, k) for k in antes))
     blocos.append(
         f"Cenas para decidir. Devolva exatamente {len(lote)} itens, com n de {lote[0] + 1} a {lote[-1] + 1}. "
-        f"No máximo {teto_ia} delas podem ser do tipo ia.\n"
         + "\n".join(_linhas_cena(unidades, cortes, k) for k in lote))
     if len(depois):
         blocos.append("Contexto seguinte, não devolva:\n" + "\n".join(_linhas_cena(unidades, cortes, k) for k in depois))
@@ -1826,7 +1831,7 @@ def _secoes(perfil):
             secao_midia += "\n" + midia["orientacao"].strip()
     elif midia:
         # a proporção também é do estilo de vídeo, fixa em qualquer perfil — proporcao no YAML é ignorada
-        secao_midia = SECAO_MIDIA.format(pct=round((1 - ESTILO_TETO_IA) * 100), teto=round(ESTILO_TETO_IA * 100))
+        secao_midia = SECAO_MIDIA
         if midia.get("orientacao"):
             secao_midia += "\n" + midia["orientacao"].strip()
     else:

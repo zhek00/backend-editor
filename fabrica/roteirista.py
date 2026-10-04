@@ -57,7 +57,8 @@ REGRAS:
 - Em primeira_frase copie as primeiras 6 a 10 palavras do trecho exatamente como estão no roteiro, com a mesma grafia e acentos.
 - A âncora deve ser algo que se possa ver, nunca um conceito abstrato, e sempre escrita em inglês.
 - O contexto vai junto das buscas do bloco nos bancos de imagens, para um nome ambíguo não trazer outra coisa ("sugar glider" sozinho traz açúcar; "sugar glider marsupial" traz o animal). Use a categoria do assunto, nunca clima ou enquadramento.
-- Em "armadilhas", liste todo nome que, buscado num banco de fotos, traria outra coisa: nome próprio ambíguo (um lugar chamado "Poverty Point" traz fotos de pobreza), apelido, metáfora ou comparação ("pé de elefante" para a massa derretida do reator de Chernobyl, "olho do furacão", "cavalo de Troia" para um vírus). Em "usar", 2 a 5 palavras em inglês que descrevem o que a coisa É, com o lugar ou o assunto do vídeo, e NUNCA a palavra que causa a armadilha: "pé de elefante" vira "Chernobyl reactor corium lava" (sem "elephant", que traria elefantes); "cavalo de Troia" vira "computer virus malware" (sem "horse"). Sem palavras de clima ou enquadramento como dark, moody, close-up.
+- Só liste em "armadilhas" termos que estão no roteiro.
+- Em "armadilhas", liste todo nome que, buscado num banco de fotos, traria outra coisa: nome próprio ambíguo (um lugar chamado "Poverty Point" traz fotos de pobreza), palavra de duplo sentido ("plataforma" de caça vira estação de trem; "tranca quebrada" vira o cânion Quebrada de las Conchas; sobrenome de pessoa vira a cidade com o mesmo nome), apelido, metáfora ou comparação ("pé de elefante" para a massa derretida do reator de Chernobyl, "olho do furacão", "cavalo de Troia" para um vírus). Em "usar", 2 a 5 palavras em inglês que descrevem o que a coisa É, com o lugar ou o assunto do vídeo, e NUNCA a palavra que causa a armadilha: "pé de elefante" vira "Chernobyl reactor corium lava" (sem "elephant", que traria elefantes); "cavalo de Troia" vira "computer virus malware" (sem "horse"). Sem palavras de clima ou enquadramento como dark, moody, close-up.
 - Em "pessoas_reais", só nomes próprios de pessoas citadas pelo nome no roteiro. Se nenhuma é citada pelo nome, devolva a lista vazia.
 - Em "quem_e", um item para cada pessoa de "pessoas_reais", com o nome completo e quem ela é (ex.: "John Henry Patterson" → "1867-1947, oficial do exército britânico, caçou os leões de Tsavo em 1898"). Serve para não confundir com outra pessoa do mesmo nome nos bancos de imagens.
 - Em "epoca", o ano do que o bloco conta quando é passado ("1898" para a construção da ferrovia). Vazio para o que se passa hoje (uma pesquisa de 2009, um museu hoje) ou não tem época.
@@ -124,6 +125,12 @@ Campos de cada cena (para cada trecho, analise o texto falado e responda):
 - sujeito: o SUJEITO/FOCO PRINCIPAL que tem que estar na cena, sem ambiguidade, em inglês, em 1 a 3 palavras, só o substantivo (ex.: "cobra", "soil core", "hospital"), nunca uma cena descrita
 - descricao: o que aparece na tela, em português, 1 frase com o sujeito concreto E o CENÁRIO/AMBIENTE onde ele está, físico ou digital (nunca "ele", "o lugar", "o animal")
 - exato: o que a foto OBRIGATORIAMENTE precisa mostrar, escrito como estaria na legenda da foto num banco de imagens, em inglês: o nome próprio de um lugar, pessoa, obra, evento ou objeto único ("Pripyat", "Chernobyl", "New Safe Confinement", "Mona Lisa"), o nome de um aparelho ou objeto específico ("Geiger counter", "trail camera") ou a espécie de um animal ("Eurasian lynx"). Vazio quando qualquer representação direta do mesmo tipo serve (um hospital, uma floresta, um gráfico, uma pessoa de costas). A fábrica só aceita foto cujas tags citem esse nome, então não ponha adjetivo nem ação aqui
+- onde_existe: onde a imagem certa desta cena existe de verdade:
+  - "banco": em banco de imagens de stock (Pexels, Pixabay): animal, paisagem, objeto, lugar ou situação de hoje;
+  - "arquivo": em acervo e na Wikimedia: foto ou gravura de época, retrato de pessoa real, documento, lugar, obra ou espécie específica;
+  - "nao_existe": ninguém fotografou: um momento específico do passado ou da história (o leão dentro da armadilha, o caçador na plataforma à noite), uma cena reconstruída, uma ação que só a narração descreve. Essas cenas viram imagem de IA.
+  Na dúvida entre "banco" e "nao_existe", pense se uma busca acharia AQUELE momento, e não uma coisa parecida
+- aceitavel: em português, o MÍNIMO que a imagem precisa mostrar para a cena estar certa, quando o ideal da descricao não existir: o sujeito, sem o momento exato (descricao "dois leões sem juba entre tendas à noite" → aceitavel "leão sem juba"; descricao "engenheiro britânico chegando à obra da ponte" → aceitavel "obra de ponte ferroviária antiga"). É contra isso que a imagem é julgada
 - epoca: o ano (ex.: "1898") quando a imagem tem que ser DAQUELA época: pessoas, roupas, construções, veículos, documentos, objetos e acontecimentos do passado, antes de 1950. Vazio para o que não muda com o tempo (um animal, uma paisagem, um rio, o céu) e para o que é de hoje (um laboratório em 2009, um museu hoje). Use o "epoca" do bloco no mapa como referência
 - animal: se a imagem deve mostrar um animal, o nome comum em inglês DAQUELA espécie (ex.: "pangolin", "aye-aye", "glass frog", "spectacled cobra"); vazio quando a imagem não é de um animal (um cientista, um laboratório, uma sala, um gráfico), mesmo num bloco sobre animais
 - query: busca em inglês, 2 a 6 palavras
@@ -198,6 +205,8 @@ ESQUEMA_CENAS = {
             "sujeito": {"type": "string"},
             "animal": {"type": "string"},
             "exato": {"type": "string"},
+            "onde_existe": {"type": "string", "enum": ["banco", "arquivo", "nao_existe"]},
+            "aceitavel": {"type": "string"},
             "epoca": {"type": "string"},
             "query": {"type": "string"},
             "busca_alternativa": {"type": "string"},
@@ -206,7 +215,8 @@ ESQUEMA_CENAS = {
             "reusar_cena": {"type": "integer"},
             "citacoes": {"type": "array", "items": CITACAO},
         },
-        "required": ["cena", "tipo", "fonte", "descricao", "sujeito", "animal", "exato", "epoca", "query", "busca_alternativa", "prompt_ia",
+        "required": ["cena", "tipo", "fonte", "descricao", "sujeito", "animal", "exato", "onde_existe", "aceitavel",
+                     "epoca", "query", "busca_alternativa", "prompt_ia",
                      "overlay", "reusar_cena", "citacoes"],
         "additionalProperties": False,
     }}},
@@ -241,25 +251,52 @@ def _modelo_agente(projeto):
     from . import gemini_local, groq_local, openrouter_local
     from .cenas import _ComReserva, _modelo
 
-    if (projeto.config.get("roteirista") or {}).get("provedor", "mimo") != "mimo":
+    cfg = projeto.config.get("roteirista") or {}
+    provedor = cfg.get("provedor", "mimo")
+    principal = ("modelo principal", openrouter_local, openrouter_local.principal(projeto))
+    if provedor == "openrouter" and cfg.get("modelo"):
+        # um modelo do OpenRouter só para o agente e o diretor (roteirista.modelo, hoje o DeepSeek V4 Flash: bom em
+        # seguir instruções longas e JSON, uns US$ 0,01 por vídeo). Se ele falhar, a cadeia de principais responde
+        return _ComReserva([(cfg["modelo"], openrouter_local, cfg["modelo"]), principal])
+    if provedor == "claude":
+        # o Claude da assinatura do Claude Code: não cobra além da mensalidade e escreve o JSON limpo. O modelo
+        # principal gratuito escreveu "exércitoBritish" e copiou descrições de uma cena para as seguintes. Se o
+        # Claude falhar (sem login, limite da assinatura), o modelo principal responde, sem esperar
+        return _ComReserva([("Claude da assinatura", _PeloClaude(), None), principal])
+    if provedor != "mimo":
         return _modelo(projeto)
-    # só o modelo principal (hoje o Space Bunny): MiMo, Groq e Gemini não são mais usados
-    return _ComReserva([("modelo principal", openrouter_local, openrouter_local.principal(projeto))])
+    return _ComReserva([principal])
+
+
+class _PeloClaude:
+    """O claude_local com a mesma assinatura dos outros modelos (log, temperatura e modelo são ignorados)."""
+
+    def perguntar(self, projeto, etapa, instrucoes, pedido, esquema, log=print, **_):
+        from . import claude_local
+
+        esforco = (projeto.config.get("roteirista") or {}).get("esforco_claude", "medium")
+        return claude_local.perguntar(projeto, etapa, instrucoes, pedido, esquema, esforco=esforco)
 
 
 def estimar(projeto, quantas_cenas) -> dict:
     """Custo do agente em dólares: o mapa (roteiro inteiro) e as cenas (um pedido por lote). Zero se não usar o MiMo.
 
-    Tamanhos medidos nos testes: cada lote de cenas lê uns 3,3 mil tokens e escreve uns 2 mil; o mapa escreve uns 3 mil."""
-    if not ativo(projeto) or (projeto.config.get("roteirista") or {}).get("provedor", "mimo") != "mimo":
+    Tamanhos medidos: cada lote de cenas lê uns 6,5 mil tokens e escreve uns 6 mil (com o raciocínio do DeepSeek); o
+    mapa escreve uns 3 mil."""
+    provedor = (projeto.config.get("roteirista") or {}).get("provedor", "mimo")
+    if not ativo(projeto) or provedor not in ("mimo", "openrouter"):
         return {"mapa": 0.0, "cenas": 0.0}
     precos = projeto.config.get("precos") or {}
-    entrada = precos.get("mimo_entrada_por_milhao", 0.11) / 1e6
-    saida = precos.get("mimo_saida_por_milhao", 0.25) / 1e6
+    if provedor == "openrouter":
+        entrada = precos.get("agente_entrada_por_milhao", 0.03) / 1e6
+        saida = precos.get("agente_saida_por_milhao", 0.06) / 1e6
+    else:
+        entrada = precos.get("mimo_entrada_por_milhao", 0.11) / 1e6
+        saida = precos.get("mimo_saida_por_milhao", 0.25) / 1e6
     roteiro = tx.normalizar(projeto.roteiro())
     lidos_mapa = (len(PROMPT_MAPA) + len(roteiro) + len(json.dumps(ESQUEMA_MAPA))) / 3.3
     lotes = -(-max(1, quantas_cenas) // (projeto.config.get("roteirista") or {}).get("cenas_por_lote", 10))
-    return {"mapa": lidos_mapa * entrada + 3000 * saida, "cenas": lotes * (3300 * entrada + 2000 * saida)}
+    return {"mapa": lidos_mapa * entrada + 3000 * saida, "cenas": lotes * (6500 * entrada + 6000 * saida)}
 
 
 def _nicho(perfil):
@@ -439,6 +476,47 @@ def _linhas(unidades, cortes, k):
     return f"CENA {k + 1} | {duracao:.1f}s\n  " + " ".join(f["texto"] for f in frases)
 
 
+# palavra grudada em outra ("exércitoBritish", "presenteReality") ou com lixo depois de sublinhado ("ferroviários_dpklsy"):
+# o modelo principal gratuito escrevia assim no meio das descrições, e a busca e o Jev liam o lixo
+_GRUDADA = re.compile(r"[a-zà-ÿ]{3,}[A-Z][a-z]{2,}|[a-zà-ÿ]_[A-Za-z]{3,}")
+_CAMPOS_DE_TEXTO = ("descricao", "query", "busca_alternativa", "exato", "sujeito", "aceitavel", "prompt_ia")
+
+
+def problemas_do_lote(respostas, textos) -> list:
+    """O que está errado nas cenas que o agente devolveu, para pedir de novo. textos: {cena: fala da cena}."""
+    problemas = []
+    por_cena = {r.get("cena"): r for r in respostas}
+    for r in respostas:
+        n = r.get("cena")
+        for campo in _CAMPOS_DE_TEXTO:
+            achado = _GRUDADA.search(str(r.get(campo) or ""))
+            if achado:
+                problemas.append(f"cena {n}, campo {campo}: palavras grudadas ou lixo (\"{achado.group()}\"); "
+                                 "escreva palavras separadas, só em português na descricao e no aceitavel e só em inglês na query")
+                break
+        exato = (r.get("exato") or "").strip()
+        if exato and re.search(r"[ãõçáéíóúâêô]|\b(de|do|da|dos|das)\b", exato.lower()):
+            problemas.append(f"cena {n}: exato em português (\"{exato}\"); escreva em inglês, como na legenda da foto")
+        anterior = por_cena.get(n - 1) if isinstance(n, int) else None
+        if anterior and (r.get("descricao") or "").strip() and \
+                (r.get("descricao") or "").strip() == (anterior.get("descricao") or "").strip() and \
+                textos.get(n, "").strip() != textos.get(n - 1, "").strip():
+            problemas.append(f"cena {n}: a descricao é a mesma da cena {n - 1}, mas a fala é outra; descreva o que "
+                             f"ESTA fala cita (\"{textos.get(n, '')[:80]}\")")
+    return problemas
+
+
+def _limpar_resposta(r) -> dict:
+    """O que sobrou de palavra grudada depois de pedir de novo ganha um espaço; o lixo depois de sublinhado sai."""
+    limpo = dict(r)
+    for campo in _CAMPOS_DE_TEXTO:
+        valor = str(limpo.get(campo) or "")
+        valor = re.sub(r"_[A-Za-z]{3,}", "", valor)
+        valor = re.sub(r"([a-zà-ÿ]{3,})([A-Z][a-z]{2,})", r"\1 \2", valor)
+        limpo[campo] = valor
+    return limpo
+
+
 def _epoca(valor) -> str:
     """O ano da época que a imagem tem que mostrar, só antes de 1950; depois disso os bancos de stock servem."""
     anos = [int(a) for a in re.findall(r"\b(1\d{3})\b", str(valor or ""))]
@@ -452,7 +530,11 @@ def _converter(item, m, bloco):
     visual = item.get("tipo", "ia")
     # a busca fica só com o assunto e no máximo 6 palavras, mesmo que o modelo tenha escrito mais
     busca = _limpa(aplicar_armadilhas((item.get("query") or "").strip(), armadilhas))
-    if visual == "foto_real" or (visual in TIPOS_MOTION and busca):
+    onde = (item.get("onde_existe") or "").strip()
+    if onde == "nao_existe":
+        # ninguém fotografou: a cena nasce como IA (com a IA desligada, cenas.py devolve ela ao acervo)
+        tipo = "ia"
+    elif visual == "foto_real" or (visual in TIPOS_MOTION and busca) or onde in ("banco", "arquivo"):
         tipo = "foto_real"
     else:
         tipo = "ia"
@@ -476,6 +558,9 @@ def _converter(item, m, bloco):
         "exato": (item.get("exato") or "").strip(),
         # o ano, quando a imagem tem que ser daquela época: só material de arquivo (midia.e_de_epoca)
         "epoca": _epoca(item.get("epoca")),
+        # onde a imagem existe (banco, arquivo, nao_existe) e o mínimo para a cena estar certa, contra o qual o Jev julga
+        "onde_existe": onde,
+        "aceitavel": (item.get("aceitavel") or "").strip(),
         "prompt": prompt,
         "personagem": False,
         "citacoes": citacoes,
@@ -484,7 +569,7 @@ def _converter(item, m, bloco):
         "descricao": (item.get("descricao") or "").strip(),
         "overlay": (item.get("overlay") or "").strip(),
         "visual": visual,
-        "fonte": item.get("fonte", ""),
+        "fonte": "wikimedia" if onde == "arquivo" else item.get("fonte", ""),
         "bloco": bloco["id"],
     }
 
@@ -545,14 +630,25 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
             if arquivo.exists():
                 respostas = json.loads(arquivo.read_text(encoding="utf-8"))
             else:
-                try:
-                    respostas = _modelo_agente(projeto).perguntar(projeto, "roteirista: cenas", PROMPT_CENAS, pedido,
-                                                                  ESQUEMA_CENAS, log=log).get("cenas", [])
-                except (RuntimeError, SystemExit) as e:
-                    log(f"  o agente não decidiu as cenas {lote[0] + 1} a {lote[-1] + 1} ({str(e)[:90]})")
-                    respostas = []
                 validas = {k + 1 for k in lote}
-                respostas = [r for r in respostas if r.get("cena") in validas]
+                textos_do_lote = {k + 1: " ".join(f["texto"] for f in unidades[cortes[k]["primeira_frase"]:
+                                                                               cortes[k]["ultima_frase"] + 1])
+                                  for k in lote}
+                respostas, problemas = [], []
+                for tentativa in range(2):
+                    extra = ("\n\nA RESPOSTA ANTERIOR FOI RECUSADA. Corrija:\n- " + "\n- ".join(problemas)) if problemas else ""
+                    try:
+                        respostas = _modelo_agente(projeto).perguntar(projeto, "roteirista: cenas", PROMPT_CENAS,
+                                                                      pedido + extra, ESQUEMA_CENAS, log=log).get("cenas", [])
+                    except (RuntimeError, SystemExit) as e:
+                        log(f"  o agente não decidiu as cenas {lote[0] + 1} a {lote[-1] + 1} ({str(e)[:90]})")
+                        respostas = []
+                    respostas = [r for r in respostas if r.get("cena") in validas]
+                    problemas = problemas_do_lote(respostas, textos_do_lote)
+                    if not problemas or not respostas:
+                        break
+                    log(f"  o agente errou nas cenas {lote[0] + 1} a {lote[-1] + 1}, pedindo de novo: {problemas[0][:120]}")
+                respostas = [_limpar_resposta(r) for r in respostas]
                 if len(respostas) == len(lote):
                     arquivo.write_text(json.dumps(respostas, ensure_ascii=False, indent=2), encoding="utf-8")
             for item in respostas:

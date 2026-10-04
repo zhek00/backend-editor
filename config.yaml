@@ -14,6 +14,8 @@ precos:                                # usados só para estimar o gasto, atuali
   gemini_saida_por_milhao: 3.75        # tokens escritos, o pensamento conta aqui
   mimo_entrada_por_milhao: 0            # agente pelo modelo principal (Space Bunny, hoje gratuito)
   mimo_saida_por_milhao: 0
+  agente_entrada_por_milhao: 0.15       # agente pelo roteirista.modelo (DeepSeek V4 Flash). A tabela diz 0,03 e 0,06, mas
+  agente_saida_por_milhao: 1.5          # o OpenRouter cobrou uns US$ 0,01 por lote (medido no Tsavo: US$ 0,22 por 8,5 min)
 
 # O que você paga pela narração, para saber quanto cada vídeo consome. O preço por caractere sai de
 # preco_mensal / incluido_no_mes, e é ele que entra na conta do vídeo. Deixe preco_mensal em 0 para
@@ -83,9 +85,14 @@ openrouter:
   principais:
     - stealth/space-bunny-alpha
     - qwen/qwen3.8-27b:free
+    - qwen/qwen3.8-flash        # última reserva, PAGA (US$ 0,15 e 0,47 por milhão de tokens; uns US$ 0,80 por vídeo
+                                # se fizer tudo): só entra quando os gratuitos acabam (o limite de 1.000 chamadas por dia
+                                # vale para a conta inteira) ou saem do ar. É o mais barato que enxerga imagem
   raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high
     xiaomi/mimo: nenhum         # com o raciocínio ligado, alguns lotes de cenas gastavam tudo pensando e voltavam vazios
     stealth/: low               # o Space Bunny pensa antes de responder: sem limite, gastava tudo pensando numa descrição
+    deepseek/: low              # o DeepSeek V4 Flash pensava uns 8 mil tokens por lote de cenas, levava 30 min para um vídeo de
+                                # 8 min e às vezes estourava o limite só pensando
 
 groq:
   modelo: openai/gpt-oss-120b  # aceita esquema JSON estrito. Alternativa: llama-3.3-70b-versatile
@@ -98,14 +105,19 @@ groq:
   contexto_depois: 2         # cenas seguintes mostradas só para dar contexto
 
 ia:
-  ativa: false               # false: vídeo só com banco de imagens, nenhuma imagem de IA é gerada. true volta a usar IA
+  ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA, obrigatoriamente e
+                             # sem teto (conferida pelo Jev). false: vídeo só com banco de imagens, nenhuma IA
 
 roteirista:
   # O agente de roteiro lê o roteiro inteiro (fabrica mapa) e decide as cenas bloco a bloco, com o assunto
   # de cada bloco e as armadilhas de busca. Os cortes de 3 a 5 segundos continuam sendo os do código.
   # Não entra em perfis com personagem ou com efeitos sonoros, que seguem pelo caminho antigo.
   ativo: true
-  provedor: mimo             # o agente usa openrouter.modelo_principal (Space Bunny); sem MiMo, Groq e Gemini
+  provedor: openrouter       # openrouter: o modelo de roteirista.modelo, com a cadeia de principais de reserva.
+                             # mimo: só a cadeia de principais. claude: o Claude da assinatura (não usar na fábrica)
+  modelo: deepseek/deepseek-v4-flash  # agente de roteiro (mapa e cenas) e diretor do Corrigir. Medido no roteiro de
+                             # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas
+  esforco_claude: medium     # low, medium ou high: quanto o Claude pensa em cada lote de cenas
   cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
   paralelo: 4                # blocos do roteiro decididos ao mesmo tempo. Cada pedido ao MiMo leva uns 20 segundos
 

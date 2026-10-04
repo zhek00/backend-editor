@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
-from . import custos_reais
+from . import custos_reais, qualidade
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
 from .projeto import PROJETOS, Projeto
@@ -373,7 +373,7 @@ def etapa_corrigir(p, a, aprovado=False):
         return
     if not aprovado:
         valor = custos.dinheiro(total * p.config["precos"].get("correcao_por_cena", 0.0005))
-        if not confirmar(f"Conferir {total} cena(s) custa cerca de {valor}. Continuar?", a.sim):
+        if not confirmar(f"Conferir {total} cena(s) custa cerca de {valor}.{_aviso_ia(p)} Continuar?", a.sim):
             raise SystemExit("Cancelado.")
     log("Conferindo se as cenas combinam com a narração")
     # regra fixa, igual à da criação pelo site: abaixo da nota mínima a cena é trocada sozinha, de graça no acervo
@@ -381,6 +381,15 @@ def etapa_corrigir(p, a, aprovado=False):
     resumo = corrigir.corrigir(
         p, rodadas=cfg.get("rodadas", corrigir.RODADAS), nota_minima=minima, nota_para_trocar=minima, log=log)
     log(corrigir.formatar(resumo))
+    qualidade.registrar(p, "conferência", log)
+
+
+def _aviso_ia(p) -> str:
+    """Com a IA ligada, cena que mostra outra coisa recebe imagem de IA, obrigatoriamente e sem teto."""
+    if not midia.ia_ativa(p) or p.offline:
+        return ""
+    return (f" As cenas que mostrarem outra coisa recebem imagem de IA, a {custos.dinheiro(custos.preco_da_imagem(p))} "
+            "cada.")
 
 
 def cmd_tudo(a):
@@ -406,9 +415,38 @@ def cmd_tudo(a):
             log(f"Tudo pronto menos o personagem. Faltam {lista}.")
             log(f"Gere no HeyGen com os áudios da pasta avatar e depois rode uv run fabrica render {p.nome}")
             return
+    qualidade.registrar(p, "criação", log)
     etapa_render(p, a, aprovado=True)
     etapa_revisao_video(p, a)
     log(f"Revise as cenas com uv run fabrica revisar {p.nome}")
+
+
+def cmd_diretor(a):
+    from . import diretor
+
+    p = Projeto(a.nome)
+    if not p.existe("cenas.json"):
+        raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
+    log("O diretor está lendo o roteiro inteiro e revisando as cenas")
+    resultado = diretor.revisar(p, log=log)
+    for m in resultado["mudar"]:
+        log(f"  cena {m['n']}: {m['decisao']} | {m['motivo']}" + (f" | busca: {m['busca']}" if m.get("busca") else ""))
+    if not resultado["mudar"]:
+        log("Nenhuma cena precisa mudar.")
+        return
+    gasto = diretor.custo(p, resultado)
+    duracao = p.ler_json("alinhamento.json")["duracao"] if p.existe("alinhamento.json") else 0
+    por_minuto = f" ({custos.dinheiro(gasto / (duracao / 60))} por minuto)" if duracao else ""
+    if not a.aplicar:
+        log(f"Para aplicar, rode com --aplicar. As imagens de IA custam cerca de {custos.dinheiro(gasto)}{por_minuto}.")
+        return
+    if not p.offline and gasto and not confirmar(
+            f"Aplicar custa cerca de {custos.dinheiro(gasto)}{por_minuto} em imagens de IA. Continuar?", a.sim):
+        raise SystemExit("Cancelado.")
+    feito = diretor.aplicar(p, resultado, numeros=set(a.cenas) if a.cenas else None, log=log)
+    log(f"Pronto: {len(feito['buscas'])} cena(s) resolvidas na busca, {len(feito['ia'])} com imagem de IA"
+        + (f", {len(feito['sem_solucao'])} sem solução ({', '.join(map(str, feito['sem_solucao']))})" if feito["sem_solucao"] else ""))
+    qualidade.registrar(p, "diretor", log)
 
 
 def cmd_avatar_partes(a):
@@ -450,7 +488,7 @@ def cmd_corrigir(a):
     com_jev = corrigir.provedor(p) in ("jev", "openrouter")
     if com_jev and not p.offline:
         valor = custos.dinheiro(total * CUSTO_CONFERENCIA_JEV_POR_CENA)
-        if not confirmar(f"Conferir {total} cena(s) com o Jev pelo OpenRouter custa cerca de {valor} por rodada (o preço varia com o modelo que o roteador escolhe). Continuar?", a.sim):
+        if not confirmar(f"Conferir {total} cena(s) com o Jev pelo OpenRouter custa cerca de {valor} por rodada (o preço varia com o modelo que o roteador escolhe).{_aviso_ia(p)} Continuar?", a.sim):
             raise SystemExit("Cancelado.")
     if com_gemini and not p.offline:
         valor = custos.dinheiro(total * CUSTO_CONFERENCIA_POR_CENA)
@@ -473,6 +511,8 @@ def cmd_corrigir(a):
     lidos, escritos = fim["lidos"] - inicio["lidos"], fim["escritos"] + fim["pensamento"] - inicio["escritos"] - inicio["pensamento"]
     gasto = lidos * 0.75 / 1e6 + escritos * 3.75 / 1e6
     log(corrigir.formatar(resumo))
+    if not a.avaliar:
+        qualidade.registrar(p, "corrigir", log)
     if com_jev:
         fim_or = openrouter_local.resumo_uso(p) or inicio_or
         fim_jev = jev_local.resumo_uso(p) or inicio_jev
@@ -566,6 +606,7 @@ def cmd_status(a):
         prontas = sum(p.imagem(c["n"]).exists() for c in com_ia)
         resumo = f"  {len(lista)} cenas, {reais} com material real, {prontas} de {len(com_ia)} imagens de IA prontas"
         log(resumo + (f", {esperando} esperando busca de material real" if esperando else ""))
+        log("  " + qualidade.formatar(qualidade.calcular(p)))
     else:
         log("  cenas pendentes")
     if render.com_avatar(p) and p.existe("alinhamento.json"):
@@ -837,6 +878,14 @@ def main():
     s.add_argument("--ia", action="store_true", help="depois das trocas de graça, gera imagem nova de IA nas que sobrarem, com custo")
     s.add_argument("--sim", action="store_true", help="aprova o gasto sem perguntar")
     s.set_defaults(funcao=cmd_corrigir)
+
+    s = sub.add_parser("diretor", help="o diretor lê o roteiro inteiro, aponta as cenas que mostram outra coisa e resolve "
+                                       "(busca nova grátis, ou imagem de IA)")
+    s.add_argument("nome")
+    s.add_argument("--aplicar", action="store_true", help="aplica as decisões (sem isto, só mostra a lista e o custo)")
+    s.add_argument("--cenas", type=int, nargs="*", help="só aplica nessas cenas")
+    s.add_argument("--sim", action="store_true", help="aprova o gasto sem perguntar")
+    s.set_defaults(funcao=cmd_diretor)
 
     s = sub.add_parser("avatar-partes", help="corta a narração nos áudios que vão para o HeyGen")
     s.add_argument("nome")
