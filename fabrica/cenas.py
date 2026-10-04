@@ -756,6 +756,14 @@ def planejar(projeto, log=print) -> list[dict]:
     textos_no_video = [(c["ini"] + c["texto_tela"]["inicio"], c["texto_tela"]) for c in cenas if c.get("texto_tela")]
     # Aplica garantia estrita de cortes de 3 a 5 segundos
     cenas = _garantir_limites_estritos(cenas, alinhamento["duracao"], minimo=minimo, maximo=maximo, alvo=alvo, log=log, alinhamento=alinhamento)
+    # juntar as curtas e dividir as longas copia o pedido de uma cena para a outra: cada cena volta a ter o pedido do
+    # agente para a frase que ela fala. No natureza-nos-ensina, "e algumas cabem na ponta do seu dedo" (o agente pediu
+    # o mosquito) foi juntada com a frase do elefante, dividida de novo e mostrou um elefante; 27 pares assim
+    corrigidas = _pedido_pela_fala(projeto, cenas, alinhamento)
+    for c in cenas:
+        c.pop("pedido_mudou", None)  # nada foi buscado ainda: não há foto antiga para julgar de novo
+    if corrigidas:
+        log(f"  {corrigidas} cena(s) voltaram a ter o pedido do agente para a frase que falam")
     
     for momento, texto_tela in textos_no_video:
         destino = next((c for c in cenas if c["ini"] <= momento < c["fim"]), None)
@@ -1172,6 +1180,11 @@ def _pedido_pela_fala(projeto, cenas, alinhamento) -> int:
                 c[campo] = valor
             elif campo not in ("mostrar", "prompt"):
                 c.pop(campo, None)
+        # a busca também: a cena do mosquito seguia buscando "African elephant savanna". Cena de IA guarda a busca do
+        # agente como reserva (o caminho do acervo, se ela voltar para ele)
+        busca = (g.get("busca") or "").strip()
+        if busca:
+            c["busca" if c.get("tipo") in ("foto_real", "video_real") else "busca_reserva"] = busca
         # a imagem que a cena tem foi escolhida para o pedido antigo: a conferência julga de novo pela fala nova
         c["pedido_mudou"] = True
         mudaram += 1

@@ -95,3 +95,15 @@ def test_parecidos():
     a = "A British engineer walking toward the Tsavo railway bridge, seen from behind"
     assert imagens.parecidos(a, "Alternative angle, " + a) >= 0.5
     assert imagens.parecidos(a, "Close detail of a hunting rifle and survey tools on the ground") < 0.2
+
+
+def test_cena_recortada_leva_a_busca_da_propria_frase():
+    # natureza-nos-ensina: "e algumas cabem na ponta do seu dedo" seguia buscando o elefante da frase anterior
+    cenas = [{"n": i + 1, "ini": i * 4.0, "fim": i * 4.0 + 4.0, "mostrar": CHEGA, "tipo": tipo, "busca": "engineer"}
+             for i, tipo in enumerate(("foto_real", "foto_real", "ia"))]
+    projeto, alinhamento = _projeto(cenas)
+    for g, busca in zip(projeto.arquivos["roteiro_cenas.json"]["cenas"], ("engineer", "rifle hunter", "camp dusk")):
+        g["busca"] = busca
+    cenas_mod._pedido_pela_fala(projeto, cenas, alinhamento)
+    assert cenas[1]["busca"] == "rifle hunter"
+    assert cenas[2]["busca"] == "engineer" and cenas[2]["busca_reserva"] == "camp dusk"
