@@ -37,8 +37,8 @@ midia_real:
     o tema é parecido.
 
 imagens:
-  provedor: kie                        # Kie.ai, já testado e funcionando nesta instalação
-  modelo: grok-imagine-image-2-0/text-to-image
+  provedor: openrouter                 # o Grok Imagine 2 pela chave do OpenRouter (a Kie ficou sem saldo)
+  modelo: x-ai/grok-imagine-image-2.0
   proporcao: "16:9"
   estilo: >-
     Hyper-realistic, 8k resolution, IMAX film aesthetic, National Geographic documentary wildlife photography,

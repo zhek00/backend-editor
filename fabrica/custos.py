@@ -95,8 +95,11 @@ def preco_da_imagem(projeto) -> float:
     precos = projeto.config.get("precos") or {}
     if em_lote_no_google(projeto):
         return precos.get("imagem_lote", 0.034)
-    if ((projeto.perfil.get("imagens") or {}).get("provedor") or "google").lower() in ("kie", "kie.ai"):
+    provedor = ((projeto.perfil.get("imagens") or {}).get("provedor") or "google").lower()
+    if provedor in ("kie", "kie.ai"):
         return precos.get("imagem_kie", 0.02)
+    if provedor == "openrouter":
+        return precos.get("imagem_openrouter", 0.02)
     return precos.get("imagem", 0.08)
 
 

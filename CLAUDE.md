@@ -218,7 +218,7 @@ Cada projeto vive em `projetos/NOME`. As etapas são estas.
 1. **Narração.** A GenAIPro (`fabrica/genaipro.py`) grava cada bloco como uma tarefa, 4 blocos ao mesmo tempo. O tempo de cada palavra vem da legenda que ela gera com um caractere por linha (uma palavra por bloco da legenda), e o fim de cada palavra é encostado no silêncio real do áudio (`narracao._encostar_nas_pausas`), porque na legenda a pausa depois do ponto fica dentro da palavra anterior. Isso sustenta a legenda e os textos animados. A tarefa criada fica anotada em `bloco_NNN.mp3.tarefa.json` antes da espera: se a fábrica cair, rodar de novo retoma a mesma tarefa sem pagar outra vez. O áudio bruto de cada bloco fica guardado, então mudar ritmo ou pausa não custa nada.
 2. **Cenas.** O Claude recebe as frases com a duração e devolve grupos, dizendo se cada cena é foto real, vídeo real ou imagem de IA, com os termos de busca e o prompt.
 3. **Material real.** Busca no Wikimedia, no Pexels e no Pixabay, o Claude escolhe pelas miniaturas e o sistema grava `creditos.txt`, que vai na descrição do vídeo.
-4. **Imagens.** O Google gera as que faltam, por padrão no modo lote, que custa metade e pode demorar horas.
+4. **Imagens.** O Grok Imagine 2 pelo OpenRouter gera as que faltam (`imagens.provedor: openrouter`, padrão desde 2026-10-04, US$ 0,04 por imagem, na chave do OpenRouter que a fábrica já usa; `imagens._imagem_openrouter`). A Kie (o mesmo modelo, US$ 0,02, saldo à parte) e o Google (Nano Banana 2, com modo lote) continuam como opção no perfil e no editor.
 5. **Render.** O FFmpeg monta tudo com movimento lento nas fotos, textos animados, música e legenda.
 
 Arquivos importantes de um projeto: `alinhamento.json` com o tempo de cada frase, `cenas.json` com o plano de cena, `revisao.html` para revisar e `final.mp4`.
@@ -277,6 +277,7 @@ funcionando; no editor ele aparece como Fish e regerar troca a voz.
 | Escolha das fotos e vídeos do acervo (olha as miniaturas) | modelo principal |
 | Descrição das imagens para a conferência | modelo principal |
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
+| Imagens de IA | Grok Imagine 2 pelo OpenRouter (`x-ai/grok-imagine-image-2.0`), padrão do perfil base |
 
 Cuidados com esse modelo, que já custaram erro:
 - Ele **mistura pedaços de outros alfabetos** no meio do texto ("uma composição清楚的", "esteiras스타일"). `openrouter_local.perguntar` avisa em todo pedido que a resposta é só em alfabeto latino (`REGRA_DO_ALFABETO`), pede de novo uma vez quando a resposta traz chinês, japonês, coreano, cirílico, árabe e afins, e se ainda sobrar, **traduz** cada trecho no idioma do texto em volta (`_traduzir_trechos`, uma chamada a mais) em vez de só apagar: apagado, "分布于岩石和灌木之间" (entre rochas e arbustos) sumia da descrição que o Jev lê. Comentário do modelo sobre o próprio raciocínio volta vazio. Se a tradução falhar, o que sobrar é tirado (`_sem_outro_alfabeto`). Acentos do português ficam.

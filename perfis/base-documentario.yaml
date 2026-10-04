@@ -60,8 +60,9 @@ midia_real:
     Nunca continue mostrando o sujeito da parte anterior depois que a narração passou para outro.
 
 imagens:
-  provedor: kie                      # kie (Grok Imagine, mais barato) ou google (Nano Banana 2)
-  modelo: grok-imagine-image-2-0/text-to-image
+  provedor: openrouter               # openrouter (Grok Imagine 2 pela chave do OpenRouter, US$ 0,04), kie (o mesmo
+                                     # modelo pela Kie.ai, US$ 0,02, com saldo à parte) ou google (Nano Banana 2)
+  modelo: x-ai/grok-imagine-image-2.0
   proporcao: "16:9"
   estilo: >-
     Cinematic still, photorealistic, dramatic lighting, strong contrast, one clear focal subject,

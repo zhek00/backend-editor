@@ -88,6 +88,8 @@ MODELOS_NARRACAO = [
 
 MODELO_GOOGLE = getattr(imagens, "MODELO_GOOGLE", "gemini-3.1-flash-lite-image")
 MODELO_KIE = getattr(imagens, "MODELO_KIE", "grok-imagine-image-2-0/text-to-image")
+MODELO_OPENROUTER_IMAGEM = getattr(imagens, "MODELO_OPENROUTER", "x-ai/grok-imagine-image-2.0")
+PROVEDORES_IMAGEM = {"google": MODELO_GOOGLE, "kie": MODELO_KIE, "openrouter": MODELO_OPENROUTER_IMAGEM}
 
 def _frame_do_video(video: Path, saida: Path, tempo: float = 0.5):
     cmd = ["ffmpeg", "-y", "-ss", str(tempo), "-i", str(video), "-vframes", "1", "-q:v", "2", str(saida)]
@@ -526,7 +528,7 @@ class CriarProjetoPayload(BaseModel):
     voz_similaridade: Optional[float] = None
     voz_estilo: Optional[float] = None
     voz_velocidade: Optional[float] = None
-    imagens_provedor: Optional[str] = None  # "google" (Nano Banana 2) ou "kie" (Kie.ai). None usa o padrão do perfil
+    imagens_provedor: Optional[str] = None  # "openrouter" (Grok Imagine 2), "google" (Nano Banana 2) ou "kie" (Kie.ai). None usa o perfil
 
 
 class RefazerCenaPayload(BaseModel):
@@ -538,7 +540,7 @@ class RefazerCenaPayload(BaseModel):
 
 class ImagensAjustesPayload(BaseModel):
     """Ajuste de provedor de imagem de IA só deste projeto, sem tocar no perfil do canal."""
-    provedor: Optional[str] = None  # "google" (Nano Banana 2) ou "kie" (Kie.ai)
+    provedor: Optional[str] = None  # "openrouter" (Grok Imagine 2), "google" (Nano Banana 2) ou "kie" (Kie.ai)
     modelo: Optional[str] = None  # se não vier, assume o modelo padrão do provedor escolhido
 
 
@@ -919,11 +921,10 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
         })
     elif payload.voz:
         p.definir_voz_override({"provedor": "edge-tts", "voz_edge": voz_req})
-    if payload.imagens_provedor in ("google", "kie"):
-        modelo_padrao = {"google": MODELO_GOOGLE, "kie": MODELO_KIE}
+    if payload.imagens_provedor in PROVEDORES_IMAGEM:
         p.definir_imagens_override({
             "provedor": payload.imagens_provedor,
-            "modelo": modelo_padrao[payload.imagens_provedor],
+            "modelo": PROVEDORES_IMAGEM[payload.imagens_provedor],
         })
 
     task_id = iniciar_criacao(nome, {
@@ -1132,27 +1133,35 @@ def creditos_genaipro():
 
 @app.get("/api/imagens/provedores")
 def listar_provedores_imagem():
-    """Os dois provedores de imagem de IA que o usuário pode escolher por projeto."""
+    """Os provedores de imagem de IA que o usuário pode escolher por projeto. O padrão é o OpenRouter."""
     precos = (config_geral().get("precos") or {})
     preco_google = precos.get("imagem", 0.0336)
     preco_google_lote = precos.get("imagem_lote", 0.0168)
     return {
         "provedores": [
             {
+                "id": "openrouter",
+                "nome": "Grok Imagine 2.0 (OpenRouter)",
+                "modelo": MODELO_OPENROUTER_IMAGEM,
+                "custo": f"US$ {precos.get('imagem_openrouter', 0.04):.4f}/imagem, no saldo do OpenRouter que a fábrica já usa",
+                "descricao": "O padrão da fábrica: o mesmo Grok Imagine 2.0, pela chave do OpenRouter, sem conta à parte.",
+                "recomendado": True,
+            },
+            {
                 "id": "google",
                 "nome": "Nano Banana 2 Lite (Google)",
                 "modelo": "gemini-3.1-flash-lite-image",
                 "custo": f"US$ {preco_google:.4f}/imagem (ou US$ {preco_google_lote:.4f} no modo lote, metade do preço)",
                 "descricao": "Ótima qualidade fotorrealista cobrada na mesma chave GEMINI_API_KEY que o resto da fábrica já usa.",
-                "recomendado": True,
+                "recomendado": False,
             },
             {
                 "id": "kie",
                 "nome": "Kie.ai (Grok Imagine 2.0)",
                 "modelo": "grok-imagine-image-2-0/text-to-image",
                 "custo": "cobrado à parte, em créditos da sua conta na Kie.ai",
-                "descricao": "Geração fotorrealista com Grok Imagine 2.0 via Kie.ai, precisa de KIE_API_KEY no .env.",
-                "recomendado": True,
+                "descricao": "Geração fotorrealista com Grok Imagine 2.0 via Kie.ai, precisa de KIE_API_KEY no .env e saldo na Kie.",
+                "recomendado": False,
             },
         ]
     }
@@ -1555,13 +1564,12 @@ def definir_provedor_imagem(nome: str, payload: ImagensAjustesPayload):
     pasta = PROJETOS / nome
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
-    if payload.provedor not in ("google", "kie"):
-        raise HTTPException(status_code=400, detail="provedor precisa ser 'google' ou 'kie'.")
+    if payload.provedor not in PROVEDORES_IMAGEM:
+        raise HTTPException(status_code=400, detail="provedor precisa ser 'openrouter', 'google' ou 'kie'.")
     p = Projeto(nome)
-    modelo_padrao = {"google": MODELO_GOOGLE, "kie": MODELO_KIE}
     p.definir_imagens_override({
         "provedor": payload.provedor,
-        "modelo": payload.modelo or modelo_padrao[payload.provedor],
+        "modelo": payload.modelo or PROVEDORES_IMAGEM[payload.provedor],
     })
     return {"sucesso": True, "imagens": p.perfil.get("imagens") or {}}
 

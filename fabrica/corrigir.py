@@ -910,10 +910,18 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
             base = (cena.get("prompt_manual") or cena.get("prompt") or "").strip()
             correcao = (f"{base}\nIMPORTANT: the previous image was wrong ({a['legenda'][:200]}). The image must clearly "
                         f"show: {cena.get('mostrar') or cena.get('sujeito') or cena.get('busca')}.")
+            # a imagem atual fica guardada: se a nova não sair (provedor fora do ar, sem saldo), ela volta. Sem isso, as
+            # 9 cenas do virou-filme-em-1996 ficaram vazias quando o saldo da Kie acabou no meio
+            guarda = projeto.imagem(n).with_name(f"{projeto.imagem(n).stem}_guarda{projeto.imagem(n).suffix}")
+            if projeto.imagem(n).exists():
+                shutil.copy2(projeto.imagem(n), guarda)
             try:
                 imagens.refazer(projeto, [n], prompt=correcao, log=log)
             except (Exception, SystemExit) as erro:
-                log(f"  cena {n}: não deu para refazer a imagem de IA ({str(erro)[:120]})")
+                log(f"  cena {n}: não deu para refazer a imagem de IA ({str(erro)[:120]}); fica a que estava")
+            if not projeto.imagem(n).exists() and guarda.exists():
+                shutil.move(guarda, projeto.imagem(n))
+            guarda.unlink(missing_ok=True)
         de_novo = _avaliar(projeto, set(refazer), log, NOTA_MINIMA)
         _guardar(projeto, de_novo, rodada=0)
         avaliacoes.update(de_novo)

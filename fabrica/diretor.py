@@ -10,8 +10,11 @@ a imagem veio e o que a revisão do vídeo pronto apontou. E decide, para as cen
 Cena que mostra o assunto certo, mesmo genérico, fica. Quem responde é o Claude da assinatura (sem custo além da
 mensalidade), com o modelo principal de reserva. A decisão fica em diretor.json.
 """
+import copy
 import json
+import shutil
 from datetime import datetime
+from pathlib import Path
 
 INSTRUCOES = """Você é o diretor de um canal de documentários no YouTube e revisa o vídeo antes de publicar. Conhece o
 roteiro inteiro. Recebe, de cada cena: a fala, o que o agente de roteiro pediu, o mínimo aceitável, onde a imagem
@@ -110,7 +113,7 @@ def revisar(projeto, log=print) -> dict:
             log(f"  o diretor não revisou as cenas {lote[0]['n']} a {lote[-1]['n']} ({str(erro)[:120]})")
             continue
         validos = {c["n"] for c in lote}
-        mudar += [m for m in resposta.get("mudar", []) if m.get("n") in validos]
+        mudar += [_limpar(m) for m in resposta.get("mudar", []) if m.get("n") in validos]
         log(f"  diretor: cenas {lote[0]['n']} a {lote[-1]['n']} revisadas")
     resultado = {"quando": datetime.now().isoformat(timespec="seconds"), "mudar": sorted(mudar, key=lambda m: m["n"])}
     projeto.salvar_json("diretor.json", resultado)
@@ -118,6 +121,34 @@ def revisar(projeto, log=print) -> dict:
     log(f"  o diretor pediu para mudar {len(mudar)} cena(s): {contagem['ia']} para IA, {contagem['arquivo']} para "
         f"arquivo de época e {contagem['busca']} para busca nova")
     return resultado
+
+
+def _limpar(m) -> dict:
+    """O DeepSeek às vezes escreve a decisão inteira em JSON dentro do campo busca ({"id": 3, "decisao": "arquivo",
+    "busca": "Tsavo railway camp 1898"}): a busca sairia com esse texto. Aqui os campos de dentro valem."""
+    m = dict(m)
+    for campo in ("busca", "prompt"):
+        valor = str(m.get(campo) or "").strip()
+        if valor.startswith("{"):
+            try:
+                dentro = json.loads(valor)
+            except ValueError:
+                continue
+            if isinstance(dentro, dict):
+                m["busca"] = str(dentro.get("busca") or (m["busca"] if campo != "busca" else "")).strip()
+                m["prompt"] = str(dentro.get("prompt") or (m["prompt"] if campo != "prompt" else "")).strip()
+    if m.get("decisao") == "ia" and not (m.get("prompt") or "").strip() and len((m.get("busca") or "").split()) > 4:
+        m["prompt"] = m["busca"]  # a descrição da imagem veio no campo errado
+    return m
+
+
+def guardado(projeto):
+    """A revisão do diretor em diretor.json, se ela é mais nova que o cenas.json (nada mudou nas cenas desde ela)."""
+    arquivo, cenas = projeto.pasta / "diretor.json", projeto.pasta / "cenas.json"
+    if arquivo.exists() and cenas.exists() and arquivo.stat().st_mtime > cenas.stat().st_mtime:
+        resultado = projeto.ler_json("diretor.json")
+        return {**resultado, "mudar": [_limpar(m) for m in resultado.get("mudar", [])]}
+    return None
 
 
 def custo(projeto, resultado) -> float:
@@ -136,14 +167,52 @@ def aplicar(projeto, resultado, numeros=None, log=print) -> dict:
                for m in escolhidas if m["decisao"] == "ia"]
     buscas = [m for m in escolhidas if m["decisao"] in ("arquivo", "busca") and (m.get("busca") or "").strip()]
     resolvidas_na_busca = []
-    for m in buscas:
-        try:
-            imagens.refazer(projeto, [m["n"]], busca=m["busca"].strip(), tipo="foto_real", log=log)
-        except (RuntimeError, SystemExit) as erro:
-            log(f"  cena {m['n']}: a busca do diretor não achou nada ({str(erro)[:100]})")
-            para_ia.append({"cena": m["n"], "prompt": m.get("prompt", ""), "motivo": f"diretor: {m.get('motivo', '')}"})
-            continue
-        resolvidas_na_busca.append(m["n"])
+    if buscas:
+        # todas as buscas numa rodada só, com a escolha de várias cenas ao mesmo tempo (midia.buscar). Cena por cena
+        # (imagens.refazer) levava um minuto cada: 60 buscas do virou-filme-em-1996 passaram de uma hora
+        por_n = {m["n"]: m for m in buscas}
+        dados = projeto.ler_json("cenas.json")
+        carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
+        anteriores = {}
+        for c in dados["cenas"]:
+            m = por_n.get(c["n"])
+            if m is None:
+                continue
+            anteriores[c["n"]] = (copy.deepcopy(c.get("midia")), c.get("tipo"), c.get("busca"),
+                                  imagens._guardar_versao_antiga(projeto, c, carimbo))
+            if c.get("midia") and c["midia"].get("fonte"):
+                c.setdefault("rejeitadas", []).append(f"{c['midia']['fonte']}:{c['midia']['id']}")
+            c["midia"] = None
+            for campo in ("sem_midia_real", "conferencia"):
+                c.pop(campo, None)
+            c["busca"] = m["busca"].strip()
+            c["tipo"] = c["tipo"] if c.get("tipo") in midia.TIPOS_REAIS else "foto_real"
+            if m["decisao"] == "arquivo":
+                c["fonte_sugerida"] = "wikimedia"
+        projeto.salvar_json("cenas.json", dados)
+        log(f"  buscando de novo {len(por_n)} cena(s) com os termos do diretor, numa rodada só")
+        midia.buscar(projeto, apenas=set(por_n), log=log, permissivo=True)
+        dados = projeto.ler_json("cenas.json")
+        voltar = False
+        for c in dados["cenas"]:
+            m = por_n.get(c["n"])
+            if m is None:
+                continue
+            if c.get("midia"):
+                resolvidas_na_busca.append(c["n"])
+            elif midia.ia_ativa(projeto):
+                para_ia.append({"cena": c["n"], "prompt": m.get("prompt", ""), "motivo": f"diretor: {m.get('motivo', '')}"})
+            else:
+                # sem IA, a cena volta para o que tinha: busca sem resultado nunca deixa buraco
+                midia_antiga, tipo_antigo, busca_antiga, movidos = anteriores[c["n"]]
+                for origem, destino in movidos:
+                    if Path(origem).exists() and not Path(destino).exists():
+                        shutil.move(origem, destino)
+                c["midia"], c["tipo"], c["busca"] = midia_antiga, tipo_antigo, busca_antiga
+                c.pop("sem_midia_real", None)
+                voltar = True
+        if voltar:
+            projeto.salvar_json("cenas.json", dados)
     if resolvidas_na_busca:
         # a imagem nova da busca é julgada; a que ainda mostra outra coisa vai para a IA
         avaliacoes = corrigir._avaliar(projeto, set(resolvidas_na_busca), log)

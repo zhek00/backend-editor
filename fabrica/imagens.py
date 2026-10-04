@@ -30,6 +30,7 @@ from .util import mmss
 ARGUMENTOS_FAL = {"aspect_ratio": "16:9", "resolution": "1K", "output_format": "png"}
 MODELO_GOOGLE = "gemini-3.1-flash-image"
 MODELO_KIE = "grok-imagine-image-2-0/text-to-image"  # Grok Imagine Image 2.0 via Kie.ai
+MODELO_OPENROUTER = "x-ai/grok-imagine-image-2.0"  # o mesmo Grok Imagine 2, pelo OpenRouter (a chave que a fábrica já usa)
 TIPOS_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 ESTADOS_FINAIS_LOTE = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
 LIMITE_LOTE_BYTES = 18 * 1024 * 1024  # o Google aceita até 20 MB de pedidos em linha por lote
@@ -90,6 +91,9 @@ def _gerar(projeto, apenas=None, log=print, direto=False):
             chave("GEMINI_API_KEY")
         elif prov in ("kie", "kie.ai"):
             chave("KIE_API_KEY")
+        elif prov == "openrouter":
+            from .openrouter_local import _chave
+            _chave()
         else:
             chave("FAL_KEY")
         if any(c["personagem"] for c in pendentes):
@@ -175,6 +179,8 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
                 registro = {"provedor": "google", "modelo": img.get("modelo", MODELO_GOOGLE), "prompt": prompt}
             elif prov in ("kie", "kie.ai"):
                 dados, registro = _imagem_kie(prompt, img)
+            elif prov == "openrouter":
+                dados, registro = _imagem_openrouter(prompt, img)
             else:
                 dados, registro = _imagem_fal(prompt, img, usar)
             temporario = destino.with_name(destino.stem + ".baixando")
@@ -393,6 +399,44 @@ def _referencias(perfil, log):
     if not referencias:
         log("  aviso, o perfil não tem foto de referência e a personagem pode mudar de rosto entre as cenas")
     return referencias
+
+
+def _imagem_openrouter(prompt, img):
+    """Gera imagem por um modelo de imagem do OpenRouter (padrão: Grok Imagine Image 2.0). A imagem volta na própria
+    resposta, em base64 ou como endereço. Usa a chave do OpenRouter que a fábrica já tem no .env."""
+    import base64
+    from .openrouter_local import _chave
+
+    modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
+                                              and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
+                                              else MODELO_OPENROUTER)
+    corpo = {"model": modelo, "messages": [{"role": "user", "content": prompt}], "modalities": ["image"],
+             "image_config": {"aspect_ratio": img.get("proporcao", "16:9")}, "usage": {"include": True}}
+    with httpx.Client(timeout=180.0, follow_redirects=True) as cliente:
+        r = cliente.post("https://openrouter.ai/api/v1/chat/completions", json=corpo,
+                         headers={"Authorization": f"Bearer {_chave()}"})
+        if r.status_code == 402:
+            raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
+        if r.status_code in (401, 403):
+            raise RuntimeError(f"OpenRouter recusou a chave ({r.status_code}). Confira o .env.")
+        if r.status_code != 200:
+            raise RuntimeError(f"OpenRouter falhou ao gerar a imagem ({r.status_code}): {r.text[:300]}")
+        dados = r.json()
+        if dados.get("error"):
+            raise RuntimeError(f"OpenRouter falhou ao gerar a imagem: {str(dados['error'])[:300]}")
+        mensagem = ((dados.get("choices") or [{}])[0].get("message") or {})
+        figuras = mensagem.get("images") or []
+        if not figuras:
+            raise SemImagem(f"OpenRouter respondeu sem imagem ({str(mensagem.get('content') or '')[:200]})")
+        endereco = (figuras[0].get("image_url") or {}).get("url") or ""
+        if endereco.startswith("data:"):
+            conteudo = base64.b64decode(endereco.split(",", 1)[1])
+        else:
+            baixado = cliente.get(endereco)
+            baixado.raise_for_status()
+            conteudo = baixado.content
+    custo = (dados.get("usage") or {}).get("cost")
+    return conteudo, {"provedor": "openrouter", "modelo": modelo, "prompt": prompt, "custo_usd": custo}
 
 
 def _imagem_kie(prompt, img):

@@ -427,8 +427,12 @@ def cmd_diretor(a):
     p = Projeto(a.nome)
     if not p.existe("cenas.json"):
         raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
-    log("O diretor está lendo o roteiro inteiro e revisando as cenas")
-    resultado = diretor.revisar(p, log=log)
+    resultado = diretor.guardado(p) if a.aplicar else None
+    if resultado:
+        log("Usando a revisão do diretor já feita (diretor.json), sem pagar de novo: as cenas não mudaram desde ela")
+    else:
+        log("O diretor está lendo o roteiro inteiro e revisando as cenas")
+        resultado = diretor.revisar(p, log=log)
     for m in resultado["mudar"]:
         log(f"  cena {m['n']}: {m['decisao']} | {m['motivo']}" + (f" | busca: {m['busca']}" if m.get("busca") else ""))
     if not resultado["mudar"]:
