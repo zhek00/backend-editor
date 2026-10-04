@@ -180,7 +180,7 @@ RODADAS_PARA_COMPLETAR = 3
 # erros que esperar não resolve: a pessoa precisa mexer em chave, crédito ou configuração
 _ERRO_PERMANENTE = re.compile(
     r"inválid|recusou a chave|foi recusada|pediu uma chave|falta a chave|falta a \w+_key|acabou o crédito|"
-    r"adicione saldo|não achei o claude|não está conectado|defina voz|está vazio|só aceita|desconhecid|herda de",
+    r"adicione saldo|saldo de créditos insuficiente|credits insufficient|não achei o claude|não está conectado|defina voz|está vazio|só aceita|desconhecid|herda de",
     re.I)
 _ESPERAS = [5, 10, 20, 30, 45, 60]   # segundos: parado é pior, então nunca espera muito
 

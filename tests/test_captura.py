@@ -92,3 +92,46 @@ def test_cena_de_epoca_vai_ao_arquivo_e_nunca_vira_video():
               **({"epoca": "1898"} if i < 6 else {})} for i in range(30)]
     cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
     assert all(c["tipo"] == "foto_real" for c in lista if c.get("epoca"))
+
+
+# ---------------------------------------------------------------- o modelo que escolhe recusou todos (natureza-nos-ensina)
+
+CROCODILO = {"n": 54, "tipo": "foto_real", "busca": "Crocodylus niloticus", "sujeito": "Nile crocodile",
+             "exato": "Nile crocodile", "animal": "Nile crocodile", "busca_alternativa": "Crocodylus niloticus",
+             "texto": "que espera em silêncio: o crocodilo-do-nilo.",
+             "mostrar": "Crocodilo-do-nilo imóvel na água, apenas olhos e narinas acima da superfície."}
+
+
+def test_recusou_tudo_entram_os_do_assunto(monkeypatch):
+    # o modelo recusou 11 fotos boas de crocodilo porque nenhuma era "só olhos e narinas na água"
+    monkeypatch.setattr(midia, "nomes_do_roteiro", lambda projeto: set())
+    candidatos = [{"descricao": "nile crocodile resting on riverbank sand"},
+                  {"descricao": "zebra crossing a river"},
+                  {"descricao": "crocodile Crocodylus niloticus Nile open mouth"}]
+    assert midia._do_assunto_quando_recusou(None, CROCODILO, candidatos) == [0, 2]
+
+
+def test_captura_aceita_sujeito_certo_com_nota_baixa(monkeypatch):
+    # leoas andando para "caçam em grupo, cercando a presa": nota 12, sujeito 90. É cena genérica e fica
+    leoas = {"n": 19, "tipo": "video_real", "busca": "lionesses hunting group savanna", "sujeito": "lionesses",
+             "exato": "", "animal": "lion", "texto": "caçam em grupo, com estratégia e paciência, cercando a presa"}
+    julgamentos = {0: {"nota": 12, "sujeito": 90}, 1: {"nota": 10, "sujeito": 20}}
+    monkeypatch.setattr(midia, "_nota_do_candidato", lambda p, c, cand, f, v, l: julgamentos[cand["i"]])
+    monkeypatch.setattr(midia, "nomes_do_roteiro", lambda projeto: set())
+    projeto = type("P", (), {"config": {}})()
+    candidatos = [{"i": 0, "fonte": "pexels", "id": 1, "descricao": "lionesses walking savanna"},
+                  {"i": 1, "fonte": "pexels", "id": 2, "descricao": "house cat"}]
+    escolhido, info = midia._escolher_conferindo(projeto, leoas, [0, 1], candidatos, {0: "leoas", 1: "gato"},
+                                                  set(), {}, print)
+    assert escolhido["i"] == 0 and info["suspeita"]
+
+
+def test_captura_recusa_sujeito_errado(monkeypatch):
+    julgamentos = {0: {"nota": 12, "sujeito": 10}}
+    monkeypatch.setattr(midia, "_nota_do_candidato", lambda p, c, cand, f, v, l: julgamentos[cand["i"]])
+    monkeypatch.setattr(midia, "nomes_do_roteiro", lambda projeto: set())
+    projeto = type("P", (), {"config": {}})()
+    escolhido, _ = midia._escolher_conferindo(projeto, CROCODILO, [0], [{"i": 0, "fonte": "x", "id": 1,
+                                                                         "descricao": "iguana by the lake"}],
+                                               {0: "iguana"}, set(), {}, print)
+    assert escolhido is None

@@ -246,7 +246,8 @@ def prompts_em_sequencia(projeto, pendentes, log=print) -> int:
             parte = trecho[max(0, k - 1):k + _TRECHO_MAXIMO]  # a última da parte anterior entra como contexto
             podem = [c["n"] for c in parte if c["n"] in pendentes and not (c.get("prompt_manual") or "").strip()
                      and c["n"] in [x["n"] for x in trecho[k:k + _TRECHO_MAXIMO]]]
-            if not podem:
+            # já reescritos numa rodada anterior (a imagem não saiu, por exemplo sem saldo): não pede de novo
+            if not podem or all("prompt_antes_da_sequencia" in por_n[n] for n in podem):
                 continue
             bloco = blocos.get(parte[0].get("bloco")) or {}
             antes, depois = por_n.get(parte[0]["n"] - 1), por_n.get(parte[-1]["n"] + 1)

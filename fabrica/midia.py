@@ -131,8 +131,9 @@ Em vejo, devolva um item para CADA número que você colocou em escolhas, com in
 INSTRUCOES_ESCOLHA = """Você escolhe fotos e vídeos reais para as cenas de um vídeo do canal {canal}.
 Cada cena traz a narração, o que ela deveria mostrar e uma imagem com os candidatos numerados no canto.
 Olhe a imagem de cada cena e liste em escolhas os números que remetem ao que a narração fala, do melhor para o pior.
-Você é um diretor de arte rigoroso: prefira o candidato que mostra EXATAMENTE o sujeito, a ação e o cenário da cena. Animal, lugar, pessoa ou objeto citado pelo nome tem que ser aquele (outra espécie de cobra não serve para a naja). Só o que existe apenas como tipo genérico (o gráfico de um estudo, um documento, uma pessoa anônima) aceita uma imagem direta do mesmo tipo.
-Deixe a lista vazia quando nenhum candidato mostra o que a cena pede: a fábrica busca de novo em vez de usar outra coisa.
+O SUJEITO É OBRIGATÓRIO: animal, lugar, pessoa ou objeto citado pelo nome tem que ser aquele (outra espécie de cobra não serve para a naja). Só o que existe apenas como tipo genérico (o gráfico de um estudo, um documento, uma pessoa anônima) aceita uma imagem direta do mesmo tipo.
+A AÇÃO E O CENÁRIO SÓ ORDENAM: ponha primeiro o candidato que mostra o sujeito fazendo o que a cena pede, mas um candidato com o sujeito certo em outra pose ou outro lugar (o crocodilo-do-nilo na margem, quando a cena pede ele na água) ENTRA NA LISTA, depois dos melhores. Uma foto boa do sujeito certo é sempre melhor do que nenhuma.
+Deixe a lista vazia SÓ quando nenhum candidato mostra o sujeito: a fábrica busca de novo em vez de usar outra coisa.
 Descarte candidatos com marca d'água, logotipos em destaque ou imagens que contradizem a narração.
 Entre os que servem, dê preferência a imagens com impacto, luz forte e boa composição.
 Um vídeo mais curto que a cena ainda serve, porque ele é desacelerado.
@@ -164,7 +165,7 @@ def _captura_ligada(projeto) -> bool:
 
 
 def _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log):
-    """Nota de 0 a 100 do Jev para o que o candidato mostra, ou None se ele não puder julgar."""
+    """O julgamento do Jev para o que o candidato mostra ({nota, sujeito, epoca...}), ou None se ele não puder julgar."""
     from . import corrigir
 
     # o Jev também lê o que o autor escreveu sobre o arquivo, que vem do endereço da página
@@ -174,7 +175,7 @@ def _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log):
     except (RuntimeError, SystemExit) as erro:
         log(f"  o Jev não julgou um candidato da cena {cena['n']} ({str(erro)[:80]})")
         return None
-    return resultado["nota"] if resultado else None
+    return resultado or None
 
 
 NOTA_MINIMA_FIXA = 40  # abaixo disso a imagem não combina com a fala, em qualquer perfil e roteiro
@@ -204,12 +205,13 @@ def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usado
         frase = (frases or {}).get(i)
         if not frase:
             return candidato, {"conferida": False}
-        nota = _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log)
-        if nota is None:
+        julgamento = _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log)
+        if julgamento is None:
             return candidato, {"conferida": False, "legenda": frase}
+        nota = julgamento["nota"]
         if nota >= corte:
             return candidato, {"conferida": True, "nota": nota, "legenda": frase, "reprovados_antes": len(testados)}
-        testados.append((nota, i, frase))
+        testados.append((nota, i, frase, julgamento))
         if len(testados) >= limite:
             break
     if not testados:
@@ -221,9 +223,14 @@ def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usado
     # e com nota de "na dúvida", não de outra coisa: uma manada de elefantes tem "elephant" nas tags, mas nota 2
     # para "pé de elefante" (a massa derretida no reator) quer dizer que o juiz viu outra coisa
     do_assunto = [t for t in testados if t[0] >= NOTA_OUTRA_COISA and _cita_o_assunto(assunto, candidatos_da_cena[t[1]])]
+    # a mesma regra da conferência (corrigir.errada): sujeito certo com nota baixa é cena genérica e fica. As leoas
+    # andando para "caçam em grupo, cercando a presa" tiravam nota baixa e a cena ia para a IA
+    from .corrigir import errada
+    do_assunto += [t for t in testados if t not in do_assunto and not errada(t[3])
+                   and (t[3].get("sujeito") or 0) >= 60]
     if not do_assunto:
         return None, {}
-    nota, i, frase = max(do_assunto)
+    nota, i, frase, _ = max(do_assunto, key=lambda t: ((t[3].get("sujeito") or 0) >= 60, t[0]))
     return candidatos_da_cena[i], {"conferida": True, "nota": nota, "legenda": frase, "suspeita": True,
                                     "reprovados_antes": len(testados) - 1}
 
@@ -770,6 +777,7 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     descricoes = {}  # n -> {número do candidato: frase do que o modelo viu nele}
     vizinhas = {c["n"]: c.get("texto", "") for c in dados["cenas"]}
     infos = {}
+    recusou_tudo = set()  # cenas em que o modelo recusou todos e entraram os candidatos do assunto pelas tags
     contagem = {"conferidas": 0, "reprovados": 0, "suspeitas": 0}
 
     def aplicar(ordens_parciais):
@@ -777,6 +785,10 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
         escolhidos = {}
         for n, ordem in ordens_parciais.items():
             decididas.add(n)
+            if not ordem and not permissivo:
+                ordem = _do_assunto_quando_recusou(projeto, por_n[n], candidatos[n])
+                if ordem:
+                    recusou_tudo.add(n)
             if permissivo:
                 # a pessoa escolheu os termos: depois dos preferidos do modelo, o resto do que a busca achou vale mais do
                 # que nada (a escolha dele pode ter caído em imagens já usadas em outra cena), e ela decide olhando
@@ -798,6 +810,9 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
                 if _chave(candidato) not in usados:
                     usados.add(_chave(candidato))
                     escolhidos[n] = candidato
+                    if n in recusou_tudo:
+                        # ninguém viu essa imagem ainda: a conferência depois do download julga
+                        infos[n] = {"conferida": False, "suspeita": True, "recusada_pelo_escolhedor": True}
                     break
         if not escolhidos:
             return
@@ -871,6 +886,18 @@ def buscar(projeto, apenas=None, log=print, permissivo=False):
     if sem_resposta:
         log(f"  {sem_resposta} cena(s) ficaram pendentes por falha de escolha, de miniatura ou de download. Rode o mesmo comando de novo para tentar outra vez")
     escrever_creditos(projeto)
+
+
+def _do_assunto_quando_recusou(projeto, cena, candidatos_da_cena) -> list:
+    """O modelo que escolhe recusou todos os candidatos: os que citam o assunto da cena nas tags, na ordem da busca.
+
+    No natureza-nos-ensina ele recusou 11 fotos boas de crocodilo-do-nilo porque nenhuma era "imóvel na água,
+    só olhos e narinas", e 22 cenas foram para a IA sem ninguém julgar. Esses candidatos seguem para a conferência
+    do Jev depois do download, como suspeitos; nenhum entra sem citar o assunto (o animal, o nome exato)."""
+    assunto = exigido_da_cena({}, cena, nomes_do_roteiro(projeto)) or _radicais(sujeito_da_busca(cena))
+    if not assunto:
+        return []
+    return [i for i, c in enumerate(candidatos_da_cena) if _cita_o_assunto(assunto, c)]
 
 
 def _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log, descricoes=None):
@@ -1417,6 +1444,10 @@ def _folha_de_contato(projeto, cena, candidatos, http):
     return destino, validos
 
 
+# suba quando mudar a regra da escolha (INSTRUCOES_ESCOLHA): as escolhas guardadas com a regra antiga são refeitas
+VERSAO_ESCOLHA = 2
+
+
 def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None):
     """Pergunta ao modelo as escolhas de várias cenas de uma vez. As respostas ficam guardadas.
 
@@ -1427,7 +1458,8 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None):
     for cena in lote:
         cache = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}.json")
         assinatura = hashlib.sha1(
-            (json.dumps([_chave(c) for c in candidatos[cena["n"]]]) + ("|descricao" if com_descricao else "")).encode()
+            (json.dumps([_chave(c) for c in candidatos[cena["n"]]]) + ("|descricao" if com_descricao else "")
+             + (f"|v{VERSAO_ESCOLHA}" if VERSAO_ESCOLHA > 1 else "")).encode()
         ).hexdigest()[:12]
         if cache.exists():
             salvo = json.loads(cache.read_text(encoding="utf-8"))
