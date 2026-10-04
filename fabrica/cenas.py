@@ -236,7 +236,11 @@ def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, lo
         cortes, de_quem = [cena["ini"]], quem[:1]
         for t, n_item in zip(inicios[1:], quem[1:]):
             t = max(t, cortes[-1] + minimo)
-            if cena["fim"] - t >= minimo:
+            # item falado no fim da cena, sem o mínimo depois dele: o corte vem um pouco antes, tirando tempo do item
+            # anterior. Antes ele era jogado fora: "outras pela velocidade" é dita a 0,92 s do fim da frase, e o
+            # guepardo que o agente pediu sumiu, ficando o elefante do "tamanho" na cena inteira
+            t = min(t, cena["fim"] - minimo)
+            if t - cortes[-1] >= minimo and cena["fim"] - t >= minimo:
                 cortes.append(round(t, 3))
                 de_quem.append(n_item)
         if len(cortes) < 2:
@@ -496,8 +500,12 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                         mudou = True
                         i += 1
                         continue
+                # cena comum curta nunca funde nem divide tempo com a fatia de um item citado: a frase do mosquito
+                # (2,6 s) foi fundida com a fatia do guepardo de "outras pela velocidade", e o guepardo sumiu.
+                # Ela busca o tempo do outro lado; a fatia curta de enumeração continua podendo se juntar a outra
+                livre = lambda j: bool(fatiadas[i].get("enumeracao")) or not fatiadas[j].get("enumeracao")
                 # Caso A: Fundir 2 cenas vizinhas se soma <= maximo
-                if i > 0 and (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"] + d) <= maximo + 0.001:
+                if i > 0 and livre(i - 1) and (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"] + d) <= maximo + 0.001:
                     t_ant = fatiadas[i - 1].get("texto", "").strip()
                     t_cur = fatiadas[i].get("texto", "").strip()
                     if _fica_o_visual_de(fatiadas[i], fatiadas[i - 1], t_cur, t_ant):
@@ -522,7 +530,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                     fatiadas.pop(i)
                     mudou = True
                     continue
-                elif i + 1 < len(fatiadas) and (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"] + d) <= maximo + 0.001:
+                elif i + 1 < len(fatiadas) and livre(i + 1) and (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"] + d) <= maximo + 0.001:
                     t_cur = fatiadas[i].get("texto", "").strip()
                     t_seg = fatiadas[i + 1].get("texto", "").strip()
                     if _fica_o_visual_de(fatiadas[i], fatiadas[i + 1], t_cur, t_seg):
@@ -548,7 +556,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                     mudou = True
                     continue
                 # Caso B: Duas cenas com soma >= 2 * minimo: redistribui o corte ao meio
-                elif i > 0 and (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"] + d) >= 2 * minimo:
+                elif i > 0 and livre(i - 1) and (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"] + d) >= 2 * minimo:
                     soma = (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"]) + d
                     corte = round(fatiadas[i - 1]["ini"] + soma / 2.0, 3)
                     fatiadas[i - 1]["fim"] = corte
@@ -561,7 +569,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                         fatiadas[i - 1]["texto"] = _extrair_texto_palavras(palavras, fatiadas[i - 1]["ini"], fatiadas[i - 1]["fim"], fallback=fatiadas[i - 1]["texto"])
                         fatiadas[i]["texto"] = _extrair_texto_palavras(palavras, fatiadas[i]["ini"], fatiadas[i]["fim"], fallback=fatiadas[i]["texto"])
                     mudou = True
-                elif i + 1 < len(fatiadas) and (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"] + d) >= 2 * minimo:
+                elif i + 1 < len(fatiadas) and livre(i + 1) and (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"] + d) >= 2 * minimo:
                     soma = d + (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"])
                     corte = round(fatiadas[i]["ini"] + soma / 2.0, 3)
                     fatiadas[i]["fim"] = corte
@@ -575,7 +583,7 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                         fatiadas[i + 1]["texto"] = _extrair_texto_palavras(palavras, fatiadas[i + 1]["ini"], fatiadas[i + 1]["fim"], fallback=fatiadas[i + 1]["texto"])
                     mudou = True
                 # Caso C: 3 cenas adjacentes (i-1, i, i+1) somam tempo para 2 cenas equilibradas
-                elif i > 0 and i + 1 < len(fatiadas):
+                elif i > 0 and i + 1 < len(fatiadas) and livre(i - 1) and livre(i + 1):
                     soma3 = (fatiadas[i - 1]["fim"] - fatiadas[i - 1]["ini"]) + d + (fatiadas[i + 1]["fim"] - fatiadas[i + 1]["ini"])
                     if soma3 <= 2 * maximo:
                         corte = round(fatiadas[i - 1]["ini"] + soma3 / 2.0, 3)

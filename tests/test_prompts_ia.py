@@ -107,3 +107,35 @@ def test_cena_recortada_leva_a_busca_da_propria_frase():
     cenas_mod._pedido_pela_fala(projeto, cenas, alinhamento)
     assert cenas[1]["busca"] == "rifle hunter"
     assert cenas[2]["busca"] == "engineer" and cenas[2]["busca_reserva"] == "camp dusk"
+
+
+# ---------------------------------------------------------------- "outras pela velocidade" (natureza-nos-ensina)
+
+def _palavras(texto, ini, passo):
+    return [{"texto": w, "ini": round(ini + k * passo, 3)} for k, w in enumerate(texto.split())]
+
+
+def test_item_citado_no_fim_da_cena_ganha_a_propria_fatia():
+    # "velocidade" é dita a 0,92 s do fim da frase: o corte vem um pouco antes, e o guepardo não some
+    palavras = _palavras("Algumas impressionam pelo tamanho, outras pela", 8.8, 0.45) + \
+        [{"texto": "velocidade,", "ini": 11.3}]
+    cena = {"n": 3, "ini": 8.8, "fim": 12.22, "tipo": "foto_real", "texto": "Algumas impressionam pelo tamanho, "
+            "outras pela velocidade,", "busca": "African elephant savanna", "mostrar": "Elefante",
+            "citacoes": [{"palavra": "tamanho", "busca": "African elephant savanna", "descricao": "Elefante"},
+                         {"palavra": "velocidade", "busca": "cheetah running savanna", "descricao": "Guepardo"}]}
+    fatias = cenas_mod._dividir_enumeracoes([cena], {"palavras": palavras}, log=lambda *a: None)
+    assert [f["mostrar"] for f in fatias] == ["Elefante", "Guepardo"]
+    assert fatias[1]["ini"] == 11.22 and fatias[1]["busca"] == "cheetah running savanna"
+
+
+def test_cena_curta_nao_engole_a_fatia_de_um_item_citado():
+    # a frase do mosquito (2,6 s) pega tempo da cena seguinte, e não a fatia de 1 s do guepardo
+    cenas = [
+        {"n": 1, "ini": 0.0, "fim": 2.42, "texto": "tamanho", "busca": "elephant", "mostrar": "Elefante", "enumeracao": True},
+        {"n": 2, "ini": 2.42, "fim": 3.42, "texto": "velocidade", "busca": "cheetah", "mostrar": "Guepardo", "enumeracao": True},
+        {"n": 3, "ini": 3.42, "fim": 6.02, "texto": "ponta do dedo", "busca": "mosquito", "mostrar": "Mosquito"},
+        {"n": 4, "ini": 6.02, "fim": 9.64, "texto": "oito animais", "busca": "savanna", "mostrar": "Savana"},
+    ]
+    final = cenas_mod._garantir_limites_estritos(cenas, 9.64, log=lambda *a: None)
+    assert [c["mostrar"] for c in final] == ["Elefante", "Guepardo", "Mosquito", "Savana"]
+    assert final[2]["fim"] - final[2]["ini"] >= 3.0
