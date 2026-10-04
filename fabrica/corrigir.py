@@ -803,7 +803,22 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
             if ia and errada(a, nota_para_trocar):
                 precisam_ia.setdefault(n, {"cena": n, "prompt": a.get("prompt_novo") or "", "motivo": a["motivo"]})
         if ia and precisam_ia:
-            resumo["geradas_com_ia"] = resolver_com_ia(projeto, list(precisam_ia.values()), log)
+            # só a cena ERRADA vai para a IA (corrigir.errada). A devolução da melhor imagem punha na lista toda cena
+            # abaixo da nota mínima, e no natureza-nos-ensina o hipopótamo (94% de sujeito certo), o crocodilo (91%) e
+            # o búfalo (88%) foram para a IA. Sujeito certo com nota baixa é cena genérica: fica e vai para revisão
+            agora = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+            certas = []
+            for n in list(precisam_ia):
+                a = (melhor.get(n) or {}).get("avaliacao") or (agora.get(n) or {}).get("conferencia")
+                if a and a.get("nota") is not None and not errada(a, nota_para_trocar):
+                    item = precisam_ia.pop(n)
+                    resumo["para_revisar"].append({"cena": n, "nota": a.get("nota"), "motivo": item.get("motivo", "")})
+                    certas.append(n)
+            if certas:
+                log(f"  {len(certas)} cena(s) com o sujeito certo e nota baixa ficam com a imagem, para revisar: "
+                    f"{', '.join(map(str, sorted(certas)))}")
+            if precisam_ia:
+                resumo["geradas_com_ia"] = resolver_com_ia(projeto, list(precisam_ia.values()), log)
             precisam_ia = {}
     resumo["precisam_ia"] = [precisam_ia[n] for n in sorted(precisam_ia)]
     return resumo

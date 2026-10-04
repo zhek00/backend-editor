@@ -1102,6 +1102,7 @@ class Buscador:
             preferida = "inaturalist" if animal_da_cena(bloco, cena) else "wikimedia"
         curta = " ".join(sujeito_da_busca(cena).split()[:2])
         assunto = animal or (_radicais(sujeito_da_busca(cena)) - _SO_ESTILO)
+        especie = set(_cabeca_do_animal(cena.get("animal") or "")) if animal_da_cena(bloco, cena) else set()
         acervo = _e_de_acervo(cena)
         # o que a foto obrigatoriamente mostra vem primeiro como BUSCA, não só como filtro: a cena 11 do
         # aparte2-2min-v2 exigia "Instituto Butantan", buscava "antivenom vials corridor" e descartava tudo
@@ -1118,10 +1119,15 @@ class Buscador:
                 continue
             vistas.add(busca.lower())
             novos = self._das_fontes(tipo, busca, preferida, acervo)
-            if tipo == "video" and not [n for n in novos if _cita_o_assunto(assunto, n)]:
+            # em cena de animal vale a própria espécie: "snake" nas tags de vídeos de píton e de cobra-do-milho
+            # passava por mamba-negra, e a foto da mamba nunca era procurada
+            if tipo == "video" and not [n for n in novos if _cita_o_assunto(especie or assunto, n)]:
                 # nenhum vídeo do assunto: coisa com nome próprio (o Novo Confinamento Seguro, o "pé de elefante")
                 # só existe em foto, e quase sempre na Wikimedia, que a busca de vídeo não consulta
-                novos = novos + self._das_fontes("foto", busca, "wikimedia", acervo)
+                # espécie: o iNaturalist, que tem foto de quase todo bicho (a mamba-negra do natureza-nos-ensina não
+                # existe em vídeo no Pexels nem no Pixabay, e a Wikimedia não achava nada pela busca da cena)
+                foto_de = "inaturalist" if animal_da_cena(bloco, cena) else "wikimedia"
+                novos = novos + self._das_fontes("foto", busca, foto_de, acervo)
             # soma em vez de trocar: os achados da busca mais exata ficam na frente e não se perdem
             ja = {_chave(a) for a in achados}
             achados += [n for n in novos if _chave(n) not in ja]
@@ -1130,7 +1136,8 @@ class Buscador:
             if len(uteis) >= 3:
                 break
         # os que citam o assunto vão na frente, para não ficarem de fora do corte da quantidade
-        achados.sort(key=lambda a: not _cita_o_assunto(assunto, a))
+        # e quem cita a própria espécie vem antes de quem cita só o tipo do bicho ("mamba" antes de "snake")
+        achados.sort(key=lambda a: (bool(especie) and not _cita_o_assunto(especie, a), not _cita_o_assunto(assunto, a)))
         return achados[:self.quantidade]
 
     def _das_fontes(self, tipo, busca, preferida=None, acervo=False):
