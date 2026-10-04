@@ -93,6 +93,8 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     # as animações foram desenhadas para a tela deitada; na versão em pé a cena volta à foto com o texto na tela
     com_animacoes = bool(animacoes.config(projeto).get("ativo", True)) and not vertical
     # a camada de animação vai por cima das cenas, no tempo da fala (animacoes.py): as cenas não mudam por causa dela
+    if com_animacoes:
+        animacoes.por_em_dia(projeto, log=log)
     motion = animacoes.validas(projeto) if com_animacoes else []
     debaixo_da_animacao = animacoes.cenas_cobertas(projeto, cenas, motion) if motion else set()
     sorteio = random.Random(projeto.nome)

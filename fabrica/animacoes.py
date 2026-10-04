@@ -13,7 +13,10 @@ Por isso:
   clipe da cena com a foto dela no fundo, e qualquer troca deixava a animação "desatualizada" e voltava a foto;
 - trocar a voz só reposiciona a animação na fala nova e desenha de novo, sem perguntar de novo ao modelo;
 - cenas de animação seguidas, do mesmo bloco, viram UMA animação que segue por cima enquanto as imagens trocam
-  embaixo (até animacoes.duracao_maxima segundos).
+  embaixo (até animacoes.duracao_maxima segundos);
+- a duração vem do que está escrito na animação (duracao_do_conteudo): de 3 a 8 segundos, o bastante para ler tudo.
+  Antes ela durava só a fala das cenas dela, e uma cena de 3 s sumia com a animação no meio da leitura. Ela começa na
+  palavra e pode seguir por cima das cenas seguintes, até a próxima animação.
 
 Nada aqui pode quebrar o vídeo: sem Node, com a etapa desligada ou com a animação reprovada na conferência do
 próprio HyperFrames, as cenas seguem com a foto e o texto na tela de sempre.
@@ -32,15 +35,17 @@ from pathlib import Path
 from .animacoes_modelos import CATALOGO, MODELOS, conferir_dados
 from .animacoes_modelos import VERSAO as VERSAO_DESIGN
 from .animacoes_modelos import partes as partes_do_modelo
-from .util import duracao_audio, rodar
+from .util import rodar
 
 TIPOS_PADRAO = ("diagrama", "texto_tela", "linha_do_tempo", "mapa")
 VERSAO_PADRAO = "0.8.113"  # versão fixa: uma atualização do HyperFrames não muda o vídeo de ninguém sem aviso
-VERSAO_CAMADA = 1  # suba quando mudar o jeito de montar a camada (véu, entrada, saída): tudo é desenhado de novo
+VERSAO_CAMADA = 2  # suba quando mudar o jeito de montar a camada (véu, entrada, saída): tudo é desenhado de novo
 RECURSOS = Path(__file__).parent / "recursos"
 GSAP = "https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"
 ARQUIVO = "animacoes/motion.json"
-DURACAO_MAXIMA = 10.0  # cenas de animação seguidas viram uma animação só até este tamanho
+DURACAO_MAXIMA = 8.0  # cenas de animação seguidas viram uma animação só até este tamanho; e nenhuma dura mais
+DURACAO_MINIMA = 3.0  # nenhuma animação dura menos, mesmo com a fala curta
+SEGUNDOS_POR_PALAVRA = 0.3  # leitura do que está escrito na tela (umas 200 palavras por minuto)
 
 ESTILO_PADRAO = {
     "destaque": "#E8A33D",   # números, palavras-chave, linhas
@@ -122,11 +127,12 @@ def _palavras_entre(projeto, ini, fim) -> list:
     return [p for p in _palavras_do_projeto(projeto) if ini - 0.05 <= p["ini"] < fim]
 
 
-def _ancorar(projeto, item) -> dict | None:
+def _ancorar(projeto, item, pela_fala=False) -> dict | None:
     """Onde a animação está AGORA na fala: {ini, fim, palavras}. None se a fala dela não existe mais.
 
     A âncora é a posição das palavras no roteiro (campo c), que não muda quando a voz muda; o tempo vem da
-    narração atual. Roteiro editado (posições mudaram) procura as mesmas palavras perto de onde estavam."""
+    narração atual. Roteiro editado (posições mudaram) procura as mesmas palavras perto de onde estavam.
+    O fim é o da duração da animação (pelo conteúdo); pela_fala=True dá o fim da fala do trecho."""
     palavras = _palavras_do_projeto(projeto)
     if not palavras:
         return None
@@ -150,6 +156,8 @@ def _ancorar(projeto, item) -> dict | None:
     else:
         fim = sel[-1]["ini"] + item.get("cauda", 1.0)
     fim = max(fim, ini + 0.5)
+    if item.get("duracao") and not pela_fala:
+        fim = ini + float(item["duracao"])
     return {"ini": round(ini, 3), "fim": round(fim, 3), "palavras": sel,
             "c_ini": sel[0].get("c"), "c_fim": sel[-1].get("c")}
 
@@ -211,7 +219,12 @@ def validas(projeto) -> list:
         if ancora is None or item.get("render") != _assinatura_render(projeto, item, ancora):
             continue
         saida.append({**item, "ini": ancora["ini"], "fim": ancora["fim"], "arquivo": arquivo})
-    return sorted(saida, key=lambda i: i["ini"])
+    saida.sort(key=lambda i: i["ini"])
+    # a fala mudou de ritmo depois de feita: uma animação nunca passa por cima do começo da seguinte
+    for atual, seguinte in zip(saida, saida[1:]):
+        if atual["fim"] > seguinte["ini"]:
+            atual["fim"] = max(seguinte["ini"], atual["ini"] + 0.5)
+    return saida
 
 
 def _cobre(item, cena) -> bool:
@@ -254,9 +267,10 @@ def _item_por_tempo(projeto, cena, itens=None):
     return None
 
 
-def situacao(projeto, cena) -> str:
-    """Para o editor: "pronta", "desligada", "desatualizada", "possivel" (dá para animar) ou ""."""
-    if da_cena(projeto, cena) is not None:
+def situacao(projeto, cena, itens=None) -> str:
+    """Para o editor: "pronta", "desligada", "desatualizada", "possivel" (dá para animar) ou "".
+    itens: as animações em dia (validas), quando quem chama já tem a lista."""
+    if da_cena(projeto, cena, itens) is not None:
         return "pronta"
     item = _item_por_tempo(projeto, cena)
     if item is not None:
@@ -442,6 +456,53 @@ def _renderizar(projeto, pasta, destino) -> bool:
     return True
 
 
+# ------------------------------------------------------------------------------------------- a duração
+
+def _textos_na_tela(dados) -> list:
+    """(texto, segundo em que entra) de cada elemento escrito da animação."""
+    saida = []
+
+    def andar(x):
+        if isinstance(x, dict):
+            if "t" in x:
+                texto = " ".join(str(x[k]) for k in ("rotulo", "texto", "nome", "detalhe") if isinstance(x.get(k), str))
+                try:
+                    saida.append((texto.strip(), float(x["t"])))
+                except (TypeError, ValueError):
+                    pass
+            for v in x.values():
+                if isinstance(v, (dict, list)):
+                    andar(v)
+        elif isinstance(x, list):
+            for v in x:
+                andar(v)
+    andar(dados)
+    return saida
+
+
+def duracao_do_conteudo(projeto, dados, limite=None) -> float:
+    """Quanto a animação fica na tela: o bastante para ler tudo o que está escrito, de 3 a 8 segundos.
+
+    O último elemento fica ao menos 1,5 s depois de entrar, e o conjunto o tempo de ler todas as palavras desde o
+    primeiro. limite: segundos até a próxima animação, que ela nunca cobre."""
+    cfg = config(projeto)
+    minima = float(cfg.get("duracao_minima", DURACAO_MINIMA))
+    maxima = float(cfg.get("duracao_maxima", DURACAO_MAXIMA))
+    elementos = _textos_na_tela(dados)
+    if elementos:
+        palavras = sum(len(texto.split()) or 1 for texto, _ in elementos)
+        primeiro = min(t for _, t in elementos)
+        ultimo = max(t for _, t in elementos)
+        precisa = max(ultimo + 1.5, primeiro + 1.2 + SEGUNDOS_POR_PALAVRA * palavras) + 0.35  # 0,35 s da saída
+        # o último elemento sempre ganha tempo de ser visto, mesmo que a fala do trecho passe do máximo
+        dur = min(max(precisa, minima), max(maxima, ultimo + 1.2))
+    else:
+        dur = minima
+    if limite is not None:
+        dur = min(dur, max(limite, 0.5))
+    return round(dur, 2)
+
+
 # --------------------------------------------------------------------------------- de cenas para animações
 
 def _novo_item(cenas_do_trecho, palavras) -> dict | None:
@@ -530,8 +591,10 @@ def _remapear(dados, antigos, novos):
 
 # ---------------------------------------------------------------------------------------------- a etapa
 
-def _animar(projeto, item, vizinhas, forcar, log):
-    """Faz (ou reaproveita) uma animação. Devolve (item atualizado, situação) ou (None, motivo)."""
+def _animar(projeto, item, vizinhas, forcar, log, limite=None):
+    """Faz (ou reaproveita) uma animação. Devolve (item atualizado, situação) ou (None, motivo).
+
+    limite: segundos do começo desta animação até o começo da seguinte."""
     from . import openrouter_local
 
     ancora = _ancorar(projeto, item)
@@ -539,10 +602,19 @@ def _animar(projeto, item, vizinhas, forcar, log):
         return None, "a fala desta animação não existe mais"
     largura, altura = _tamanho(projeto)
     estilo = _estilo(projeto)
-    dur = ancora["fim"] - ancora["ini"]
+    da_fala = _ancorar(projeto, item, pela_fala=True)
+    dur = da_fala["fim"] - da_fala["ini"]  # os tempos dos elementos ficam dentro da fala do trecho
     tempos = _tempos(ancora)
     fala = " ".join([vizinhas[0], item.get("texto", ""), vizinhas[1]])
     item = {**item, "c_ini": ancora["c_ini"], "c_fim": ancora["c_fim"]}
+
+    def desenhar(modelo, dados):
+        """Escreve a página da camada com a duração pelo conteúdo e devolve essa duração."""
+        duracao = duracao_do_conteudo(projeto, dados, limite)
+        (pasta / "index.html").write_text(
+            _montar_html(partes_do_modelo(modelo, dados, duracao), duracao, largura, altura, estilo), encoding="utf-8")
+        return duracao
+
     destino_atual = projeto.pasta / item["arquivo"] if item.get("arquivo") else None
     if (not forcar and item.get("modelo") and destino_atual and destino_atual.exists()
             and item.get("render") == _assinatura_render(projeto, item, ancora)):
@@ -556,10 +628,9 @@ def _animar(projeto, item, vizinhas, forcar, log):
         dados = _remapear(item.get("dados"), item.get("tempos") or [], tempos)
         dados, erros = conferir_dados(item["modelo"], dados, dur, tempos, fala)
         if not erros:
-            (pasta / "index.html").write_text(
-                _montar_html(partes_do_modelo(item["modelo"], dados, dur), dur, largura, altura, estilo), encoding="utf-8")
+            duracao = desenhar(item["modelo"], dados)
             if not _conferir(projeto, pasta):
-                escolha = {"modelo": item["modelo"], "dados": dados}
+                escolha = {"modelo": item["modelo"], "dados": dados, "duracao": duracao}
     if escolha is None:
         erros = []
         for tentativa in range(int(config(projeto).get("tentativas", 3))):
@@ -569,16 +640,16 @@ def _animar(projeto, item, vizinhas, forcar, log):
             modelo = str(resposta.get("modelo") or "").strip()
             dados, erros = conferir_dados(modelo, resposta.get("dados"), dur, tempos, fala)
             if not erros:
-                (pasta / "index.html").write_text(
-                    _montar_html(partes_do_modelo(modelo, dados, dur), dur, largura, altura, estilo), encoding="utf-8")
+                duracao = desenhar(modelo, dados)
                 erros = _erros_para_o_modelo(_conferir(projeto, pasta))
             if not erros:
-                escolha = {"modelo": modelo, "dados": dados}
+                escolha = {"modelo": modelo, "dados": dados, "duracao": duracao}
                 break
             erros = erros[:6]
         if escolha is None:
             return None, "reprovada na conferência: " + "; ".join(erros)[:300]
     item = {**item, **escolha, "tempos": tempos}
+    ancora = _ancorar(projeto, item)  # com a duração nova
     assinatura = _assinatura_render(projeto, item, ancora)
     destino = projeto.pasta / "animacoes" / "motion" / f"{item['id']}_{assinatura}.mov"
     if not _renderizar(projeto, pasta, destino):
@@ -590,8 +661,9 @@ def _animar(projeto, item, vizinhas, forcar, log):
     return item, "feita"
 
 
-def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
+def gerar(projeto, numeros=None, forcar=False, log=print, trava=None, so_existentes=False) -> dict:
     """Faz as animações que faltam e põe em dia as que a fala mudou. numeros: só as das cenas indicadas.
+    so_existentes: só põe em dia as que já existem, sem animar cena nova.
 
     Nunca para o vídeo: o trecho que não deu para animar segue com a foto e o texto na tela. trava fica na assinatura
     para o servidor: as animações não gravam mais no cenas.json, só em animacoes/motion.json."""
@@ -622,7 +694,8 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
     itens = vivos
     cobertas = {}
     for item in itens:
-        ancora = _ancorar(projeto, item)
+        # pela fala: a cena de animação logo depois, que a camada anterior cobre só pela duração, ganha a dela
+        ancora = _ancorar(projeto, item, pela_fala=True)
         for c in cenas:
             if _cobre(ancora, c):
                 cobertas[c["n"]] = item
@@ -630,7 +703,7 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
     alvo = []
     if numeros is None:
         alvo = [i for i in itens if not i.get("desligada")]
-        livres = [c for c in cenas if c["n"] not in cobertas and elegivel(projeto, c)]
+        livres = [] if so_existentes else [c for c in cenas if c["n"] not in cobertas and elegivel(projeto, c)]
     else:
         alvo = list({id(cobertas[n]): cobertas[n] for n in numeros if n in cobertas}.values())
         livres = [c for c in cenas if c["n"] in numeros and c["n"] not in cobertas and elegivel(projeto, c, pedida=True)]
@@ -646,16 +719,21 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
     if not alvo:
         return resumo
     textos = {c["n"]: (c.get("texto") or "").strip() for c in cenas}
+    # cada animação vai até, no máximo, o começo da seguinte (as que já existem e as que vão ser feitas agora)
+    comecos = sorted({a["ini"] for a in (_ancorar(projeto, i, pela_fala=True)
+                                          for i in [*itens, *alvo] if not i.get("desligada")) if a})
     log(f"  animando {len(alvo)} trecho(s) de diagrama, texto na tela, linha do tempo e mapa (HyperFrames)")
 
     def uma(item):
-        ancora = _ancorar(projeto, item) or {"ini": 0, "fim": 0}
+        ancora = _ancorar(projeto, item, pela_fala=True) or {"ini": 0, "fim": 0}
+        seguinte = next((t for t in comecos if t > ancora["ini"] + 0.05), None)
+        limite = seguinte - ancora["ini"] - 0.15 if seguinte is not None else None
         antes_cenas = [c for c in cenas if c["fim"] <= ancora["ini"] + 0.05][-3:]
         depois_cena = next((c for c in cenas if c["ini"] >= ancora["fim"] - 0.05), None)
         vizinhas = (" ".join(textos[c["n"]] for c in antes_cenas).strip()[-300:],
                     textos.get(depois_cena["n"], "") if depois_cena else "")
         try:
-            novo, situacao_ = _animar(projeto, item, vizinhas, forcar, log)
+            novo, situacao_ = _animar(projeto, item, vizinhas, forcar, log, limite)
         except (Exception, SystemExit) as erro:
             novo, situacao_ = None, f"falhou: {str(erro)[:200]}"
         return item, novo, situacao_
@@ -680,6 +758,20 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None) -> dict:
     return resumo
 
 
+def por_em_dia(projeto, log=print) -> None:
+    """Redesenha as animações que já existem e ficaram desatualizadas (outra voz, design ou duração novos), sem
+    animar cena nova e, quando dá, sem perguntar de novo ao modelo. O render chama antes de montar: sem isso, a
+    animação desatualizada sumia do vídeo sem aviso. Nunca para o render."""
+    try:
+        if not ligada(projeto) or not node_pronto():
+            return
+        em_dia = {i["id"] for i in validas(projeto)}
+        if any(not i.get("desligada") and i["id"] not in em_dia and _ancorar(projeto, i) for i in ler(projeto)):
+            gerar(projeto, log=log, so_existentes=True)
+    except (Exception, SystemExit) as erro:
+        log(f"  animações: não deu para pôr em dia ({str(erro)[:160]}); seguem as que estão prontas")
+
+
 def remover(projeto, n, trava=None) -> None:
     """A animação por cima da cena sai e fica assim: a criação não anima de novo sozinha. Os arquivos ficam."""
     cena = next((c for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] == n), None)
@@ -700,45 +792,31 @@ def remover(projeto, n, trava=None) -> None:
     aprendizados.registrar(projeto, cena, "foto")
 
 
-# ---------------------------------------------------------------------------- a prévia do editor, por cena
+# ------------------------------------------------------------------------------------ a prévia do editor
 
-def composicao_da_cena(projeto, cena, criar=False):
-    """Para o editor, que mostra cena por cena: a imagem atual da cena com o pedaço da animação por cima, em MP4.
+def previa_da_camada(projeto, item, criar=False):
+    """Para o editor: a animação inteira em WebM com transparência (VP9 com canal alfa), leve, que o player toca
+    numa faixa própria por cima das cenas, no tempo da fala.
 
-    O nome muda quando a imagem da cena, o corte ou a animação mudam. Sem criar, só devolve se já existir."""
-    item = da_cena(projeto, cena)
-    if item is None:
+    Antes o editor recebia uma montagem por cena (a imagem da cena com o pedaço da animação por cima): na troca de
+    cena a animação reiniciava ou sumia, embora no vídeo final ela seguisse inteira. O nome leva a assinatura do
+    render: animação refeita ganha prévia nova. Sem criar, só devolve se já existir."""
+    mov = Path(item["arquivo"])
+    if not mov.is_absolute():
+        mov = projeto.pasta / mov
+    if not mov.exists():
         return None
-    m = cena.get("midia") or {}
-    fundo = projeto.pasta / m["arquivo"] if m.get("arquivo") else projeto.imagem(cena["n"])
-    if not fundo.exists():
-        return None
-    base = f"{fundo.name}|{fundo.stat().st_mtime_ns}|{item['arquivo'].name}|{cena['ini']}|{cena['fim']}"
-    codigo = hashlib.sha1(base.encode()).hexdigest()[:10]
-    destino = projeto.pasta / "_previas" / "animacao" / f"{cena['n']:04d}_{codigo}.mp4"
+    destino = projeto.pasta / "_previas" / "motion" / f"{item['id']}_{item.get('render') or 'x'}.webm"
     if destino.exists() or not criar:
         return destino if destino.exists() else None
     destino.parent.mkdir(parents=True, exist_ok=True)
-    for velho in destino.parent.glob(f"{cena['n']:04d}_*.mp4"):
-        velho.unlink(missing_ok=True)
-    dur = max(cena["fim"] - cena["ini"], 0.5)
-    largura, altura = 1280, 720
-    escala = f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1"
-    if fundo.suffix.lower() in (".mp4", ".mov", ".webm", ".m4v"):
-        disponivel = duracao_audio(fundo)
-        inicio = min(1.0, (disponivel - dur) / 2) if disponivel >= dur + 1 else 0.0
-        entrada_fundo = ["-ss", f"{inicio:.3f}", "-t", f"{dur:.3f}", "-i", str(fundo)]
-        filtro_fundo = f"[0:v]{escala},fps=30,tpad=stop_mode=clone:stop_duration={dur:.3f}[f]"
-    else:
-        entrada_fundo = ["-loop", "1", "-t", f"{dur:.3f}", "-i", str(fundo)]
-        filtro_fundo = f"[0:v]{escala},fps=30[f]"
-    # o pedaço da animação que passa por cima desta cena, no mesmo segundo
-    desde = cena["ini"] - item["ini"]
-    entrada_anim = (["-ss", f"{desde:.3f}"] if desde > 0 else ["-itsoffset", f"{-desde:.3f}"]) + ["-i", str(item["arquivo"])]
-    temporario = destino.with_suffix(".tmp.mp4")
-    rodar(["ffmpeg", "-y", "-loglevel", "error", *entrada_fundo, *entrada_anim, "-filter_complex",
-           f"{filtro_fundo};[1:v]scale={largura}:{altura},format=yuva420p[a];[f][a]overlay=eof_action=pass:format=auto[v]",
-           "-map", "[v]", "-t", f"{dur:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(temporario)])
+    temporario = destino.with_name(f"{destino.stem}.{threading.get_ident()}.tmp.webm")
+    rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mov), "-an",
+           "-vf", "scale=1280:720,fps=30,format=yuva420p", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+           "-auto-alt-ref", "0", "-b:v", "0", "-crf", "34", "-deadline", "realtime", "-cpu-used", "8",
+           str(temporario)])
+    for velho in destino.parent.glob(f"{item['id']}_*.webm"):
+        if velho != destino and ".tmp." not in velho.name:
+            velho.unlink(missing_ok=True)
     temporario.replace(destino)
     return destino

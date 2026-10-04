@@ -675,7 +675,7 @@ def _url_com_versao(url: str, arquivo: Path) -> str:
     return f"{url}?v={versao}"
 
 
-def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
+def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any], motion: Optional[list] = None) -> Dict[str, Any]:
     """Adiciona URLs e status de existência aos assets da cena."""
     n = cena["n"]
     tipo = cena.get("tipo", "ia")
@@ -705,14 +705,15 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
     # com tipo "ia". Na junção de cenas o tipo de uma vinha para a outra sem o material, e a cena com foto de banco
     # aparecia como "sem arquivo" no editor, embora o render usasse a foto
     url_principal = midia_url if (midia_url and (tipo in ("foto_real", "video_real") or not img_ia_existe)) else img_ia_url
-    # cena de diagrama, texto na tela, linha do tempo ou mapa: a animação em dia aparece no lugar da foto
-    animada = _animacao_valida(projeto, cena)
-    if animada is not None:
-        url_principal = _url_com_versao(f"/arquivos/{projeto.nome}/{animada.relative_to(projeto.pasta).as_posix()}", animada)
+    # a animação é uma faixa própria por cima das cenas (lista "motion" de GET /cenas): a cena mostra a imagem dela.
+    # animada: alguma animação passa por cima dela, e o texto na tela da cena sai (a mesma regra do render)
     try:
-        situacao_animacao = animacoes.situacao(projeto, cena) if animacoes.config(projeto).get("ativo", True) else ""
+        ligada = animacoes.config(projeto).get("ativo", True)
+        motion = (animacoes.validas(projeto) if motion is None else motion) if ligada else []
+        animada = any(animacoes.sobreposta(item, cena) for item in motion)
+        situacao_animacao = animacoes.situacao(projeto, cena, motion) if ligada else ""
     except (OSError, KeyError, TypeError, ValueError):
-        situacao_animacao = ""
+        animada, situacao_animacao = False, ""
 
     # versões leves para o editor: miniatura da timeline e prévia do player, em vez do original pesado
     thumb_url = previa_url = None
@@ -751,8 +752,6 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
         origem_badge = f"Foto Real ({fonte_nome})"
     else:
         origem_badge = tipo_efetivo
-    if animada is not None:
-        origem_badge = "Animação"
 
     # Efeito sonoro (SFX)
     efeito_url = None
@@ -786,7 +785,7 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any]) -> Dict[str, Any]:
         "efeito_url": efeito_url,
         # "pronta", "desatualizada" (a cena mudou depois), "desligada" (a pessoa preferiu a foto), "possivel" ou ""
         "animacao_situacao": situacao_animacao,
-        "animada": animada is not None,
+        "animada": animada,
         # o que a revisão do vídeo pronto apontou nesta cena (vale para o final.mp4 de agora)
         "revisao": revisao_video.problemas_da_cena(projeto, n, _revisao_atual(projeto)),
     }
@@ -1550,12 +1549,32 @@ def listar_cenas(nome: str):
 
     dados = p.ler_json("cenas.json")
     cenas_brutas = dados.get("cenas", [])
-    cenas_enriquecidas = [enriquecer_cena(p, c) for c in cenas_brutas]
+    motion = _motion_do_projeto(p)
+    cenas_enriquecidas = [enriquecer_cena(p, c, motion) for c in cenas_brutas]
     # o editor abriu o projeto: as prévias de vídeo que faltam começam a ser feitas, na ordem das cenas
-    if any(c.get("previa_video_url") for c in cenas_enriquecidas):
+    if motion or any(c.get("previa_video_url") for c in cenas_enriquecidas):
         preparar_previas_video(nome)
 
-    return {"cenas": cenas_enriquecidas, "sem_arquivo": sum(1 for c in cenas_enriquecidas if c["sem_arquivo"])}
+    return {"cenas": cenas_enriquecidas, "sem_arquivo": sum(1 for c in cenas_enriquecidas if c["sem_arquivo"]),
+            "motion": [_motion_para_o_editor(p, item) for item in motion]}
+
+
+def _motion_do_projeto(p: Projeto) -> list:
+    """As animações em dia do projeto (a camada por cima das cenas), ou [] se a etapa está desligada."""
+    try:
+        return animacoes.validas(p) if animacoes.config(p).get("ativo", True) else []
+    except (OSError, KeyError, TypeError, ValueError):
+        return []
+
+
+def _motion_para_o_editor(p: Projeto, item: Dict[str, Any]) -> Dict[str, Any]:
+    """Um bloco da faixa Motion do editor: onde começa e termina, o que mostra e a prévia transparente dela."""
+    return {
+        "id": item["id"], "ini": item["ini"], "fim": item["fim"],
+        "modelo": item.get("modelo"), "visual": item.get("visual"), "texto": item.get("texto", ""),
+        # a assinatura do render no endereço: animação refeita, endereço novo
+        "url": f"/arquivos_previas/{p.nome}/motion/{item['id']}.webm?v={item.get('render') or ''}",
+    }
 
 
 @app.post("/api/projetos/{nome}/imagens/provedor")
@@ -1685,11 +1704,13 @@ def animacao_da_cena(nome: str, n: int, payload: AnimacaoPayload):
             raise HTTPException(status_code=422, detail=f"A animação não passou na conferência e a cena ficou com a "
                                                         f"foto: {resumo['falharam'][n]}")
     cena = next(c for c in p.ler_json("cenas.json")["cenas"] if c["n"] == n)
-    try:
-        # a montagem que o editor mostra (imagem da cena + animação por cima) já sai pronta para esta cena
-        animacoes.composicao_da_cena(p, cena, criar=True)
-    except (OSError, KeyError, TypeError, ValueError, RuntimeError) as erro:
-        print(f"[animação] montagem da cena {n} de {nome}: {str(erro)[:160]}")
+    item = animacoes.da_cena(p, cena)
+    if item is not None:
+        try:
+            # a prévia transparente que o editor toca na faixa Motion já sai pronta
+            animacoes.previa_da_camada(p, item, criar=True)
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as erro:
+            print(f"[animação] prévia da cena {n} de {nome}: {str(erro)[:160]}")
     preparar_previas_video(nome)
     return {"sucesso": True, "cena": enriquecer_cena(p, cena), "resumo": resumo}
 
@@ -1897,7 +1918,8 @@ def refazer_narracao(nome: str, payload: NarracaoPayload):
 
     preenchendo = _completar_depois_da_narracao(p, antes) if p.existe("cenas.json") else None
     alinhamento = p.ler_json("alinhamento.json") if p.existe("alinhamento.json") else {}
-    cenas_atualizadas = [enriquecer_cena(p, c) for c in p.ler_json("cenas.json").get("cenas", [])]
+    motion = _motion_do_projeto(p)
+    cenas_atualizadas = [enriquecer_cena(p, c, motion) for c in p.ler_json("cenas.json").get("cenas", [])]
 
     return {
         "sucesso": True,
@@ -2765,32 +2787,11 @@ def servir_previa(nome: str, tamanho: str, n: int):
 EXTENSOES_VIDEO = (".mp4", ".mov", ".webm", ".m4v")
 
 
-def _animacao_valida(p: Projeto, cena: Dict[str, Any]) -> Optional[Path]:
-    """A cena com a animação por cima (a imagem atual da cena e o pedaço da camada de animação), se já foi montada.
-
-    A animação é uma camada sobre o vídeo (animacoes.py), não um clipe da cena: o editor, que mostra cena por cena,
-    recebe a montagem pronta. Ela é feita em segundo plano (preparar_previas_video) ou quando o player pede."""
-    if not animacoes.config(p).get("ativo", True):
-        return None
-    try:
-        return animacoes.composicao_da_cena(p, cena)
-    except (OSError, KeyError, TypeError, ValueError, RuntimeError):
-        return None
 ALTURA_PREVIA_VIDEO = 480
 _PREPARANDO_PREVIAS = set()  # projetos com as prévias de vídeo sendo feitas em segundo plano
 
 
 def _video_da_cena(p: Projeto, cena: Dict[str, Any], criar: bool = False) -> Optional[Path]:
-    if animacoes.config(p).get("ativo", True):
-        # a cena embaixo de uma animação mostra a montagem (imagem da cena + animação) no player, também em prévia
-        try:
-            item = animacoes.da_cena(p, cena)
-            if item is not None:
-                montada = animacoes.composicao_da_cena(p, cena, criar=criar)
-                if montada is not None or not criar:
-                    return montada or item["arquivo"]  # sem criar: o MOV só marca a versão do endereço
-        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as erro:
-            print(f"[animação] cena {cena.get('n')} de {p.nome}: {str(erro)[:160]}")
     m = cena.get("midia") or {}
     arq = p.pasta / m["arquivo"] if m.get("arquivo") else None
     return arq if arq and arq.exists() and arq.suffix.lower() in EXTENSOES_VIDEO else None
@@ -2845,6 +2846,12 @@ def preparar_previas_video(nome: str) -> None:
     def trabalhar():
         try:
             p = Projeto(nome)
+            # primeiro as prévias das animações: são poucas e leves, e o player toca todas por cima das cenas
+            for item in _motion_do_projeto(p):
+                try:
+                    animacoes.previa_da_camada(p, item, criar=True)
+                except Exception as erro:
+                    print(f"[prévias de animação] {item.get('id')} de {nome}: {str(erro)[:120]}")
             for cena in p.ler_json("cenas.json").get("cenas", []):
                 try:
                     _previa_video_pronta(p, cena)
@@ -2877,6 +2884,24 @@ def servir_previa_video(nome: str, n: int):
                             headers={"Cache-Control": "no-cache"})
     # o endereço muda quando a mídia ou o corte mudam (?v=), então o navegador pode guardar a prévia
     return FileResponse(destino, media_type="video/mp4", headers={"Cache-Control": "private, max-age=604800"})
+
+
+@app.api_route("/arquivos_previas/{nome}/motion/{ident}.webm", methods=["GET", "HEAD"])
+def servir_previa_motion(nome: str, ident: str):
+    """A animação inteira em WebM transparente, para a faixa Motion do player do editor (feita agora se faltar)."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+    p = Projeto(nome)
+    item = next((i for i in _motion_do_projeto(p) if i["id"] == ident), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Essa animação não existe ou está desatualizada.")
+    try:
+        destino = animacoes.previa_da_camada(p, item, criar=True)
+    except Exception as erro:
+        raise HTTPException(status_code=500, detail=f"Não consegui preparar a prévia da animação: {str(erro)[:160]}")
+    if destino is None:
+        raise HTTPException(status_code=404, detail="A animação ainda não foi desenhada.")
+    return FileResponse(destino, media_type="video/webm", headers={"Cache-Control": "private, max-age=604800"})
 
 
 @app.api_route("/arquivos_narracao/{nome}.mp3", methods=["GET", "HEAD"])
