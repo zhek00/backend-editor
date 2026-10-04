@@ -159,7 +159,8 @@ Regras:
    O PLANO É OBRIGATORIAMENTE DIFERENTE DA CENA ANTERIOR: "geral" (o lugar inteiro, a pessoa pequena nele), "medio"
    (a pessoa da cintura para cima, ou o grupo), "detalhe" (as mãos, um objeto citado, pegadas, uma ferramenta, um
    documento, sem o rosto). Pessoa real que não pode mostrar o rosto rende bem em "detalhe".
-   Também não repita a imagem de duas cenas antes (mesmo lugar, mesma pose e mesmo plano).
+   Também não repita a imagem de duas cenas antes. Uma mesma pose (por exemplo, a pessoa de costas olhando a obra)
+   aparece no máximo UMA vez no trecho.
 3. Precisão literal: o que a fala cita aparece. Nada de metáfora nem de imagem sem relação. Fala abstrata ("ele estava
    muito enganado", "ninguém imaginava") mostra a pessoa ou o lugar de que a fala trata, num momento concreto e
    diferente, com a emoção da fala (luz, expressão corporal, clima).
@@ -275,6 +276,10 @@ def prompts_em_sequencia(projeto, pendentes, log=print) -> int:
                 iguais = [(parte[i]["n"], parte[i + 1]["n"]) for i in range(len(parte) - 1)
                           if parecidos(final[i], final[i + 1]) >= 0.5
                           or (plano[i] and plano[i] == plano[i + 1] and (parte[i]["n"] in novos or parte[i + 1]["n"] in novos))]
+                # e com a de duas antes: as cenas 24 e 26 do virou-filme (0,41) saíram com a mesma pose
+                iguais += [(parte[i]["n"], parte[i + 2]["n"]) for i in range(len(parte) - 2)
+                           if parecidos(final[i], final[i + 2]) >= 0.4
+                           and (parte[i]["n"] in novos or parte[i + 2]["n"] in novos)]
                 if not iguais:
                     break
                 queixa = ("\n\nA resposta anterior repetiu o pedido ou o plano entre as cenas "
