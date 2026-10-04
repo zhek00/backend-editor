@@ -135,3 +135,95 @@ def test_captura_recusa_sujeito_errado(monkeypatch):
                                                                          "descricao": "iguana by the lake"}],
                                                {0: "iguana"}, set(), {}, print)
     assert escolhido is None
+
+
+# ---------------------------------------------------------------- "não existe" passa pelo acervo antes da IA
+
+class _ProjetoFalso:
+    def __init__(self, pasta, cenas):
+        self.pasta, self.offline, self.config = pasta, False, {}
+        self.dados = {"cenas.json": {"cenas": cenas}}
+
+    def ler_json(self, nome):
+        return self.dados[nome]
+
+    def salvar_json(self, nome, dados):
+        self.dados[nome] = dados
+
+    def imagem(self, n):
+        return self.pasta / f"imagens/{n:04d}.png"
+
+
+def test_nao_existe_so_fica_com_foto_aprovada(tmp_path):
+    # elefante derrubando árvore: o agente achou que não existe; a busca achou e o Jev aprovou com 72
+    (tmp_path / "midia").mkdir()
+    (tmp_path / "midia" / "0033.jpg").write_bytes(b"x")
+    cenas = [
+        {"n": 32, "tipo": "foto_real", "midia": {"arquivo": "midia/0032.jpg", "fonte": "pexels", "id": "1"},
+         "captura": {"conferida": True, "nota": 72}},
+        {"n": 33, "tipo": "foto_real", "midia": {"arquivo": "midia/0033.jpg", "fonte": "pixabay", "id": "2"},
+         "captura": {"conferida": True, "nota": 55, "suspeita": True}},
+        {"n": 34, "tipo": "foto_real", "sem_midia_real": True},
+    ]
+    projeto = _ProjetoFalso(tmp_path, cenas)
+    assert midia._so_as_aprovadas(projeto, {32, 33, 34}, log=lambda *a: None) == [32]
+    final = {c["n"]: c for c in projeto.dados["cenas.json"]["cenas"]}
+    assert final[32]["tipo"] == "foto_real"
+    assert final[33]["tipo"] == "ia" and "midia" not in final[33] and "pixabay:2" in final[33]["rejeitadas"]
+    assert not (tmp_path / "midia" / "0033.jpg").exists()
+    assert final[34]["tipo"] == "ia" and "sem_midia_real" not in final[34]
+
+
+def test_nao_existe_e_tentado_uma_vez(tmp_path, monkeypatch):
+    cenas = [{"n": 1, "tipo": "ia", "onde_existe": "nao_existe", "busca_reserva": "elephant pushing tree"},
+             {"n": 2, "tipo": "ia", "onde_existe": "nao_existe", "busca_reserva": "x", "banco_tentado": True},
+             {"n": 3, "tipo": "ia", "onde_existe": "nao_existe", "busca_reserva": "y", "prompt_manual": "da pessoa"}]
+    projeto = _ProjetoFalso(tmp_path, cenas)
+    monkeypatch.setattr(midia, "ia_ativa", lambda p: True)
+    buscadas = []
+    monkeypatch.setattr(midia, "_buscar", lambda p, apenas, log, permissivo: buscadas.append(set(apenas)))
+    midia.tentar_banco_nas_nao_existe(projeto, log=lambda *a: None)
+    assert buscadas == [{1}]
+    assert projeto.dados["cenas.json"]["cenas"][0]["banco_tentado"]
+
+
+# ---------------------------------------------------------------- banco que cai: tenta de novo, e cai seguido sai um tempo
+
+def _buscador(tmp_path, funcao):
+    import threading
+    b = object.__new__(midia.Buscador)
+    b.desligadas, b.bloqueada_ate, b.quedas, b.trava = set(), {}, {}, threading.Lock()
+    b.log = lambda *a: None
+    b.projeto = type("P", (), {"caminho": lambda self, *partes: tmp_path.joinpath(*partes)})()
+    (tmp_path / "midia" / "buscas").mkdir(parents=True, exist_ok=True)
+    b._pexels = funcao
+    return b
+
+
+def test_queda_passageira_tenta_de_novo(tmp_path, monkeypatch):
+    import httpx
+    monkeypatch.setattr(midia.time, "sleep", lambda s: None)
+    chamadas = []
+
+    def pexels(tipo, busca):
+        chamadas.append(busca)
+        if len(chamadas) < 3:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return [{"fonte": "pexels", "id": "1"}]
+
+    b = _buscador(tmp_path, pexels)
+    assert b._buscar("pexels", "foto", "black mamba") == [{"fonte": "pexels", "id": "1"}]
+    assert len(chamadas) == 3
+
+
+def test_banco_caido_seguido_fica_de_fora_um_tempo(tmp_path, monkeypatch):
+    import httpx
+    monkeypatch.setattr(midia.time, "sleep", lambda s: None)
+
+    def pexels(tipo, busca):
+        raise httpx.ConnectTimeout("timeout")
+
+    b = _buscador(tmp_path, pexels)
+    for i in range(midia.QUEDAS_PARA_PAUSAR):
+        assert b._buscar("pexels", "foto", f"busca {i}") == []
+    assert b.bloqueada_ate.get("pexels", 0) > midia.time.time() + 60

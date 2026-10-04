@@ -146,6 +146,9 @@ class FonteIndisponivel(Exception):
 
 # parado é pior: um banco no limite por mais que isso fica de fora da busca, e os outros seguem na hora
 ESPERA_CURTA_FONTE = 20
+ESPERAS_QUEDA = (2, 5)  # segundos antes de tentar de novo um banco cuja conexão caiu
+QUEDAS_PARA_PAUSAR = 3  # buscas seguidas com o banco caído, depois das tentativas, para ele ficar de fora um tempo
+PAUSA_DEPOIS_DE_QUEDAS = 180  # segundos fora; depois ele volta sozinho
 
 
 class LimiteAtingido(Exception):
@@ -749,6 +752,74 @@ def pendente(cena) -> bool:
 
 
 def buscar(projeto, apenas=None, log=print, permissivo=False):
+    _buscar(projeto, apenas, log, permissivo)
+    if apenas is None and not permissivo:
+        # o projeto inteiro: as cenas que o agente marcou "não existe" ganham uma busca antes de virar imagem de IA
+        try:
+            tentar_banco_nas_nao_existe(projeto, log)
+        except (Exception, SystemExit) as erro:
+            # é uma economia, nunca para o vídeo: as cenas seguem para a IA como o agente decidiu
+            log(f"  a busca nas cenas marcadas como inexistentes falhou, seguem para a IA: {str(erro)[:120]}")
+
+
+def tentar_banco_nas_nao_existe(projeto, log=print) -> list:
+    """As cenas que o agente marcou "não existe" (ninguém fotografou) passam por uma busca no acervo antes da IA.
+
+    O agente erra para os dois lados: no natureza-nos-ensina marcou 13 de 92 cenas assim, entre elas um elefante
+    derrubando uma árvore, que os bancos têm. Como ele achou que não existe, a regra é estrita: só fica a foto que o
+    Jev aprovou antes de baixar, com a nota mínima e sem suspeita; o resto volta para a IA. Cada cena é tentada uma
+    vez (banco_tentado). Devolve as cenas que ficaram com material real."""
+    if projeto.offline or not ia_ativa(projeto):
+        return []  # sem IA, cenas.py já devolve essas cenas ao acervo
+    dados = projeto.ler_json("cenas.json")
+    alvo = [c for c in dados["cenas"]
+            if c.get("onde_existe") == "nao_existe" and c.get("tipo") == "ia" and not c.get("banco_tentado")
+            and not c.get("personagem") and not c.get("prompt_manual") and not c.get("imagem_da_pessoa")
+            and (c.get("busca_reserva") or "").strip() and not projeto.imagem(c["n"]).exists()]
+    if not alvo:
+        return []
+    for c in alvo:
+        c["banco_tentado"] = True
+        c["tipo"], c["busca"] = "foto_real", c["busca_reserva"].strip()
+        c.pop("sem_midia_real", None)
+    projeto.salvar_json("cenas.json", dados)
+    numeros = {c["n"] for c in alvo}
+    log(f"  {len(alvo)} cena(s) que o agente marcou como inexistentes no acervo: uma busca antes da IA")
+    try:
+        _buscar(projeto, numeros, log, False)
+    finally:
+        aceitas = _so_as_aprovadas(projeto, numeros, log)
+    return aceitas
+
+
+def _so_as_aprovadas(projeto, numeros, log) -> list:
+    """Das cenas "não existe" que passaram pela busca, só fica a foto aprovada pelo Jev; as outras voltam para a IA."""
+    minima = nota_minima_da_conferencia(projeto)
+    dados = projeto.ler_json("cenas.json")
+    aceitas = []
+    for c in dados["cenas"]:
+        if c["n"] not in numeros:
+            continue
+        cap = c.get("captura") or {}
+        if c.get("midia") and cap.get("conferida") and not cap.get("suspeita") and (cap.get("nota") or 0) >= minima:
+            aceitas.append(c["n"])
+            continue
+        m = c.pop("midia", None) or {}
+        for campo in ("arquivo", "capa"):
+            if m.get(campo):
+                (projeto.pasta / m[campo]).unlink(missing_ok=True)
+        if m.get("fonte") and m.get("id"):
+            c.setdefault("rejeitadas", []).append(f"{m['fonte']}:{m['id']}")
+        c["tipo"], c["busca"] = "ia", ""
+        c.pop("sem_midia_real", None)
+        c.pop("captura", None)
+    projeto.salvar_json("cenas.json", dados)
+    log(f"  {len(aceitas)} de {len(numeros)} cena(s) marcadas como inexistentes acharam foto aprovada no acervo"
+        + (f": {', '.join(map(str, sorted(aceitas)))}" if aceitas else "; seguem para a IA"))
+    return aceitas
+
+
+def _buscar(projeto, apenas=None, log=print, permissivo=False):
     dados = projeto.ler_json("cenas.json")
     alvo = [c for c in dados["cenas"] if pendente(c) and (apenas is None or c["n"] in apenas)]
     if not alvo:
@@ -1112,6 +1183,7 @@ class Buscador:
         self.espera_maxima = float(geral.get("espera_maxima", 3600))
         self.desligadas = set()
         self.bloqueada_ate = {}
+        self.quedas = {}  # fonte -> quedas seguidas (conexão caiu, 5xx) depois das tentativas
         # várias chaves por banco: revezam a cada busca, e uma chave no limite ou recusada sai da vez
         self.chave_bloqueada_ate = {}
         self.chaves_recusadas = set()
@@ -1263,11 +1335,37 @@ class Buscador:
             except FonteIndisponivel as motivo:
                 self._desligar(fonte, str(motivo))
                 return []
-            except (httpx.HTTPError, ValueError, KeyError) as erro:
+            except httpx.HTTPError as erro:
+                # queda passageira (conexão caiu, demorou demais, erro 5xx do banco): tenta de novo em segundos.
+                # Antes desistia na hora, e o iNaturalist ficou de fora justo nas buscas da mamba e do búfalo
+                passageira = isinstance(erro, httpx.TransportError) or (
+                    isinstance(erro, httpx.HTTPStatusError) and erro.response.status_code >= 500)
+                if passageira and tentativa < 2:
+                    time.sleep(ESPERAS_QUEDA[tentativa])
+                    continue
+                self.log(f"  busca no {fonte} falhou para '{busca}'. {str(erro)[:120]}")
+                if passageira:
+                    self._caiu(fonte)
+                return []
+            except (ValueError, KeyError) as erro:
                 self.log(f"  busca no {fonte} falhou para '{busca}'. {str(erro)[:120]}")
                 return []
+        with self.trava:
+            self.quedas.pop(fonte, None)
         cache.write_text(json.dumps(achados, ensure_ascii=False), encoding="utf-8")
         return achados
+
+    def _caiu(self, fonte):
+        """O banco caiu de novo depois das tentativas. Três vezes seguidas: fica de fora um tempo e volta sozinho,
+        para as outras buscas não perderem segundos esperando um banco fora do ar."""
+        with self.trava:
+            self.quedas[fonte] = self.quedas.get(fonte, 0) + 1
+            if self.quedas[fonte] < QUEDAS_PARA_PAUSAR:
+                return
+            self.quedas[fonte] = 0
+            self.bloqueada_ate[fonte] = time.time() + PAUSA_DEPOIS_DE_QUEDAS
+        self.log(f"  o {fonte} caiu {QUEDAS_PARA_PAUSAR} vezes seguidas: fica de fora por "
+                 f"{mmss(PAUSA_DEPOIS_DE_QUEDAS)} e volta sozinho")
 
     def _aguardar(self, fonte) -> bool:
         """Espera só limites curtos (o Pixabay libera a cada minuto). Devolve False se não vale esperar."""
