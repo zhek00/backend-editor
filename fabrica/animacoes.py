@@ -772,6 +772,31 @@ def por_em_dia(projeto, log=print) -> None:
         log(f"  animações: não deu para pôr em dia ({str(erro)[:160]}); seguem as que estão prontas")
 
 
+def remover_item(projeto, ident) -> list:
+    """Exclui do vídeo a animação ident (ou todas, com ident "todos"), pela faixa Motion do editor. Ela fica marcada
+    desligada em motion.json, e a criação não anima de novo aquele trecho; as cenas por baixo voltam a mostrar o
+    texto na tela delas. Devolve os ids excluídos. O vídeo pronto só muda no próximo render."""
+    with _TRAVA_ARQUIVO:
+        itens = ler(projeto)
+        alvo = [i for i in itens if not i.get("desligada") and (ident == "todos" or i["id"] == ident)]
+        for item in alvo:
+            item["desligada"] = True
+        if alvo:
+            _salvar(projeto, itens)
+    if len(alvo) == 1 and projeto.existe("cenas.json"):
+        # a pessoa preferiu a foto nesse trecho: vira exemplo para o agente de roteiro do canal (como "Voltar para a
+        # foto"). Excluir todas de uma vez não ensina nada sobre trecho nenhum
+        from . import aprendizados
+        ancora = _ancorar(projeto, alvo[0], pela_fala=True)
+        cena = next((c for c in projeto.ler_json("cenas.json")["cenas"] if ancora and _cobre(ancora, c)), None)
+        if cena is not None:
+            try:
+                aprendizados.registrar(projeto, cena, "foto")
+            except (OSError, ValueError, KeyError):
+                pass
+    return [i["id"] for i in alvo]
+
+
 def remover(projeto, n, trava=None) -> None:
     """A animação por cima da cena sai e fica assim: a criação não anima de novo sozinha. Os arquivos ficam."""
     cena = next((c for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] == n), None)

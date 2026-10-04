@@ -44,3 +44,16 @@ def test_validas_corta_a_sobreposicao(monkeypatch, tmp_path):
     monkeypatch.setattr(animacoes, "_assinatura_render", lambda p, i, a: "r")
     a, b = animacoes.validas(projeto)
     assert a["fim"] == 15.0 and b["fim"] == 20.0
+
+
+def test_excluir_animacao_pela_faixa_motion(monkeypatch, tmp_path):
+    itens = [{"id": "a", "c_ini": 1, "c_fim": 5}, {"id": "b", "c_ini": 9, "c_fim": 12},
+             {"id": "c", "c_ini": 20, "c_fim": 25, "desligada": True}]
+    projeto = SimpleNamespace(config={}, perfil={}, pasta=tmp_path, existe=lambda nome: False)
+    monkeypatch.setattr(animacoes, "ler", lambda p: itens)
+    salvos = []
+    monkeypatch.setattr(animacoes, "_salvar", lambda p, lista: salvos.append([i["id"] for i in lista if i.get("desligada")]))
+    assert animacoes.remover_item(projeto, "a") == ["a"]
+    assert salvos[-1] == ["a", "c"]
+    assert animacoes.remover_item(projeto, "todos") == ["b"]  # a que já estava desligada não conta de novo
+    assert animacoes.remover_item(projeto, "nao-existe") == []

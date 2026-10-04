@@ -1715,6 +1715,19 @@ def animacao_da_cena(nome: str, n: int, payload: AnimacaoPayload):
     return {"sucesso": True, "cena": enriquecer_cena(p, cena), "resumo": resumo}
 
 
+@app.delete("/api/projetos/{nome}/motion/{ident}")
+def excluir_motion(nome: str, ident: str):
+    """Exclui uma animação da faixa Motion (ou todas, com ident "todos"). Gratuito; vale no próximo render."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    excluidas = animacoes.remover_item(p, ident)
+    if not excluidas:
+        raise HTTPException(status_code=404, detail="Essa animação não existe ou já foi excluída.")
+    return {"sucesso": True, "excluidas": excluidas,
+            "motion": [_motion_para_o_editor(p, item) for item in _motion_do_projeto(p)]}
+
+
 @app.post("/api/projetos/{nome}/cenas/{n}/refazer")
 def refazer_cena(nome: str, n: int, payload: RefazerCenaPayload):
     """Executa imagens.refazer() para a cena n com novos termos de busca ou prompt."""
