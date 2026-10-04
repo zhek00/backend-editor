@@ -30,11 +30,20 @@ from .util import mmss
 ARGUMENTOS_FAL = {"aspect_ratio": "16:9", "resolution": "1K", "output_format": "png"}
 MODELO_GOOGLE = "gemini-3.1-flash-image"
 MODELO_KIE = "grok-imagine-image-2-0/text-to-image"  # Grok Imagine Image 2.0 via Kie.ai
-# modelos do OpenRouter que respondem pela interface de imagens (/api/v1/images), e não pelo chat: os GPT Image da OpenAI.
-# Proporção mais larga que eles aceitam é 3:2 (o render corta para 16:9 perdendo pouco); qualidade: low, medium, high
-PREFIXO_IMAGES_API = ("openai/gpt-image",)
-# preço de tabela por imagem em 3:2, quando o OpenRouter não informa o custo (tokens de imagem a US$ 40 por milhão)
+# modelos do OpenRouter que respondem pela interface de imagens (/api/v1/images), com qualidade (low, medium, high):
+# os GPT Image da OpenAI e o GPT-5.4 Image 2 (o mesmo pedido do playground do OpenRouter)
+PREFIXO_IMAGES_API = ("openai/gpt-image", "openai/gpt-5.4-image")
+# proporção pedida: o GPT-5.4 Image 2 aceita 16:9 (1536x864); o gpt-image-1 vai até 3:2 e o render corta para 16:9
+PROPORCAO_IMAGES_API = {"openai/gpt-5.4-image": "16:9"}
+# preço de tabela por imagem quando o OpenRouter não informa o custo. gpt-image-1 em 3:2 (US$ 40 por milhão de tokens
+# de imagem); o GPT-5.4 Image 2 em 16:9 saiu a US$ 0,13 na qualidade alta no exemplo do playground
 PRECO_GPT_IMAGE = {"low": 0.017, "medium": 0.064, "high": 0.25, "auto": 0.25}
+PRECO_GPT_54_IMAGE = {"low": 0.02, "medium": 0.05, "high": 0.13, "auto": 0.13}
+
+
+def preco_images_api(modelo, qualidade) -> float:
+    tabela = PRECO_GPT_54_IMAGE if str(modelo).startswith("openai/gpt-5.4-image") else PRECO_GPT_IMAGE
+    return tabela.get(str(qualidade or "low").lower(), tabela["high"])
 MODELO_OPENROUTER = "x-ai/grok-imagine-image-2.0"  # o mesmo Grok Imagine 2, pelo OpenRouter (a chave que a fábrica já usa)
 TIPOS_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 ESTADOS_FINAIS_LOTE = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
@@ -614,14 +623,16 @@ def _imagem_openrouter(prompt, img):
 
 
 def _imagem_openrouter_images(prompt, img, modelo):
-    """GPT Image (openai/gpt-image-1 e afins) pela interface de imagens do OpenRouter. A qualidade vem de
-    imagens.qualidade no perfil (padrão low: uns US$ 0,017 por imagem em 3:2) e a proporção é 3:2, a mais larga."""
+    """GPT Image (openai/gpt-image-1) e GPT-5.4 Image 2 pela interface de imagens do OpenRouter. A qualidade vem de
+    imagens.qualidade no perfil (padrão low) e a proporção é a mais larga que o modelo aceita (PROPORCAO_IMAGES_API)."""
     import base64
     from .openrouter_local import _chave
 
     qualidade = str(img.get("qualidade") or "low").lower()
     corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
-             "aspect_ratio": img.get("proporcao_gpt_image", "3:2"), "background": "opaque"}
+             "aspect_ratio": img.get("proporcao_gpt_image") or next(
+                 (v for k, v in PROPORCAO_IMAGES_API.items() if str(modelo).startswith(k)), "3:2"),
+             "background": "opaque"}
     with httpx.Client(timeout=300.0, follow_redirects=True) as cliente:
         r = cliente.post("https://openrouter.ai/api/v1/images", json=corpo,
                          headers={"Authorization": f"Bearer {_chave()}"})
@@ -645,7 +656,7 @@ def _imagem_openrouter_images(prompt, img, modelo):
             conteudo = baixado.content
     custo = (dados.get("usage") or {}).get("cost")
     return conteudo, {"provedor": "openrouter", "modelo": modelo, "qualidade": qualidade, "prompt": prompt,
-                      "custo_usd": custo if custo is not None else PRECO_GPT_IMAGE.get(qualidade, 0.25),
+                      "custo_usd": custo if custo is not None else preco_images_api(modelo, qualidade),
                       "custo_medido": custo is not None}
 
 

@@ -100,9 +100,9 @@ def preco_da_imagem(projeto) -> float:
         return precos.get("imagem_kie", 0.02)
     if provedor == "openrouter":
         img = projeto.perfil.get("imagens") or {}
-        if str(img.get("modelo") or "").startswith("openai/gpt-image"):
-            from .imagens import PRECO_GPT_IMAGE
-            return PRECO_GPT_IMAGE.get(str(img.get("qualidade") or "low").lower(), 0.25)
+        from .imagens import PREFIXO_IMAGES_API, preco_images_api
+        if str(img.get("modelo") or "").startswith(PREFIXO_IMAGES_API):
+            return preco_images_api(img.get("modelo"), img.get("qualidade"))
         return precos.get("imagem_openrouter", 0.02)
     return precos.get("imagem", 0.08)
 
