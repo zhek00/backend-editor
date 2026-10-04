@@ -38,13 +38,16 @@ PROPORCAO_IMAGES_API = {"openai/gpt-5.4-image": "16:9"}
 # preço de tabela por imagem quando o OpenRouter não informa o custo. gpt-image-1 em 3:2 (US$ 40 por milhão de tokens
 # de imagem); o GPT-5.4 Image 2 em 16:9 saiu a US$ 0,13 na qualidade alta no exemplo do playground
 PRECO_GPT_IMAGE = {"low": 0.017, "medium": 0.064, "high": 0.25, "auto": 0.25}
-PRECO_GPT_54_IMAGE = {"low": 0.02, "medium": 0.05, "high": 0.13, "auto": 0.13}
+PRECO_GPT_54_IMAGE = {"low": 0.005, "medium": 0.05, "high": 0.13, "auto": 0.13}  # low medido: US$ 0,0044 a 0,0059
 
 
 def preco_images_api(modelo, qualidade) -> float:
     tabela = PRECO_GPT_54_IMAGE if str(modelo).startswith("openai/gpt-5.4-image") else PRECO_GPT_IMAGE
     return tabela.get(str(qualidade or "low").lower(), tabela["high"])
-MODELO_OPENROUTER = "x-ai/grok-imagine-image-2.0"  # o mesmo Grok Imagine 2, pelo OpenRouter (a chave que a fábrica já usa)
+# padrão desde 2026-10-04 (pedido do usuário): GPT-5.4 Image 2 em qualidade baixa, 16:9, uns US$ 0,005 por imagem medidos,
+# pela chave do OpenRouter que a fábrica já usa. O Grok Imagine 2 continua valendo para quem o tem no perfil ou no projeto
+MODELO_OPENROUTER = "openai/gpt-5.4-image-2"
+MODELO_GROK_OPENROUTER = "x-ai/grok-imagine-image-2.0"
 TIPOS_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 ESTADOS_FINAIS_LOTE = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
 LIMITE_LOTE_BYTES = 18 * 1024 * 1024  # o Google aceita até 20 MB de pedidos em linha por lote

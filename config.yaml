@@ -5,7 +5,7 @@ precos:                                # usados só para estimar o gasto, atuali
   imagem: 0.067                        # Nano Banana 2 direto no Google em 1K (2K custa 0.101)
   imagem_lote: 0.034                   # a mesma imagem pelo modo lote do Google, metade do preço
   imagem_kie: 0.02                     # Grok Imagine 2.0 via Kie.ai
-  imagem_openrouter: 0.04              # o mesmo Grok Imagine 2.0 pelo OpenRouter (imagens.provedor: openrouter), medido
+  imagem_openrouter: 0.005             # GPT-5.4 Image 2 em qualidade baixa pelo OpenRouter, medido (o Grok por lá: 0.04)
   efeito_por_minuto: 0.12              # efeitos sonoros da ElevenLabs direta (opcional), por minuto de som gerado
   claude_entrada_por_milhao: 5.00
   claude_saida_por_milhao: 25.00

@@ -88,7 +88,7 @@ MODELOS_NARRACAO = [
 
 MODELO_GOOGLE = getattr(imagens, "MODELO_GOOGLE", "gemini-3.1-flash-lite-image")
 MODELO_KIE = getattr(imagens, "MODELO_KIE", "grok-imagine-image-2-0/text-to-image")
-MODELO_OPENROUTER_IMAGEM = getattr(imagens, "MODELO_OPENROUTER", "x-ai/grok-imagine-image-2.0")
+MODELO_OPENROUTER_IMAGEM = getattr(imagens, "MODELO_OPENROUTER", "openai/gpt-5.4-image-2")
 PROVEDORES_IMAGEM = {"google": MODELO_GOOGLE, "kie": MODELO_KIE, "openrouter": MODELO_OPENROUTER_IMAGEM}
 
 def _frame_do_video(video: Path, saida: Path, tempo: float = 0.5):
@@ -1140,10 +1140,10 @@ def listar_provedores_imagem():
         "provedores": [
             {
                 "id": "openrouter",
-                "nome": "Grok Imagine 2.0 (OpenRouter)",
+                "nome": "GPT-5.4 Image 2 (OpenRouter)",
                 "modelo": MODELO_OPENROUTER_IMAGEM,
-                "custo": f"US$ {precos.get('imagem_openrouter', 0.04):.4f}/imagem, no saldo do OpenRouter que a fábrica já usa",
-                "descricao": "O padrão da fábrica: o mesmo Grok Imagine 2.0, pela chave do OpenRouter, sem conta à parte.",
+                "custo": f"US$ {precos.get('imagem_openrouter', 0.005):.4f}/imagem em qualidade baixa, no saldo do OpenRouter que a fábrica já usa",
+                "descricao": "O padrão da fábrica: o GPT-5.4 Image 2 da OpenAI, em 16:9 e qualidade baixa, pela chave do OpenRouter.",
                 "recomendado": True,
             },
             {

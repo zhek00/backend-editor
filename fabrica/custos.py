@@ -100,9 +100,10 @@ def preco_da_imagem(projeto) -> float:
         return precos.get("imagem_kie", 0.02)
     if provedor == "openrouter":
         img = projeto.perfil.get("imagens") or {}
-        from .imagens import PREFIXO_IMAGES_API, preco_images_api
-        if str(img.get("modelo") or "").startswith(PREFIXO_IMAGES_API):
-            return preco_images_api(img.get("modelo"), img.get("qualidade"))
+        from .imagens import MODELO_OPENROUTER, PREFIXO_IMAGES_API, preco_images_api
+        modelo = str(img.get("modelo") or "") if "/" in str(img.get("modelo") or "") else MODELO_OPENROUTER
+        if modelo.startswith(PREFIXO_IMAGES_API):
+            return preco_images_api(modelo, img.get("qualidade"))
         return precos.get("imagem_openrouter", 0.02)
     return precos.get("imagem", 0.08)
 

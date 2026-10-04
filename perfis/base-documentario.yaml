@@ -60,9 +60,10 @@ midia_real:
     Nunca continue mostrando o sujeito da parte anterior depois que a narração passou para outro.
 
 imagens:
-  provedor: openrouter               # openrouter (Grok Imagine 2 pela chave do OpenRouter, US$ 0,04), kie (o mesmo
-                                     # modelo pela Kie.ai, US$ 0,02, com saldo à parte) ou google (Nano Banana 2)
-  modelo: x-ai/grok-imagine-image-2.0
+  provedor: openrouter               # openrouter (pela chave do OpenRouter), kie (Grok Imagine 2 pela Kie.ai, US$ 0,02,
+                                     # com saldo à parte) ou google (Nano Banana 2)
+  modelo: openai/gpt-5.4-image-2     # GPT-5.4 Image 2, em 16:9; x-ai/grok-imagine-image-2.0 é o Grok (US$ 0,04)
+  qualidade: low                     # low (uns US$ 0,005 por imagem, medido), medium ou high (uns US$ 0,13)
   proporcao: "16:9"
   estilo: >-
     Cinematic still, photorealistic, dramatic lighting, strong contrast, one clear focal subject,
