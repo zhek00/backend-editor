@@ -17,7 +17,7 @@ import httpx
 URL = "https://openrouter.ai/api/v1/chat/completions"
 MODELO_PADRAO = "typesafe/jev-router"
 # o modelo de texto e visão de toda a fábrica: openrouter.modelo_principal no config.yaml
-MODELO_PRINCIPAL_PADRAO = "stealth/space-bunny-alpha"
+MODELO_PRINCIPAL_PADRAO = "qwen/qwen3.8-27b:free"
 MIMO = MODELO_PRINCIPAL_PADRAO  # nome antigo, mantido para quem ainda importa
 
 

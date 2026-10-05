@@ -239,7 +239,7 @@ def ativo(projeto) -> bool:
             and not (perfil.get("efeitos") or {}).get("ativo"))
 
 
-MIMO = "stealth/space-bunny-alpha"  # nome antigo; quem manda é openrouter.modelo_principal
+MIMO = "qwen/qwen3.8-27b:free"  # nome antigo; quem manda é openrouter.modelo_principal
 
 
 def _modelo_agente(projeto):

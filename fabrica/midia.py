@@ -1686,7 +1686,7 @@ def _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes, esquem
     """
     from . import gemini_local, groq_local, openrouter_local
 
-    # quem olha as miniaturas e escolhe: o modelo principal (hoje o Space Bunny, que enxerga imagens).
+    # quem olha as miniaturas e escolhe: o modelo principal (hoje o Qwen gratuito, que enxerga imagens).
     # MiMo, Groq e Gemini não são mais usados
     modulo, modelo = openrouter_local, openrouter_local.principal(projeto)
     def _completar_vejo(dados, n, pedido, folha, tentativas=2):
