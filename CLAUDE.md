@@ -169,7 +169,9 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   `frase` (ideia, palavra-chave em serifa sublinhada) e `foto_dado` (só com foto). O pedido diz os modelos das cenas de
   motion vizinhas, para variar. `motion_modelos.conferir` recusa número que a fala DESTA cena não diz (o "50" da vizinha
   fazia o "1 metro" do chifre ser recusado), palavra que nenhuma das falas diz, prefixo que não é quantificador ("passar
-  dos" repetia o topo) e `foto_dado` sem foto. O que reprovar volta ao modelo (`motion_ia.tentativas_modelo`, 3); se
+  dos" repetia o topo) e `foto_dado` sem foto. O dado achado na fala indica o desenho (`motion_modelos.indicado`: km/h
+  pede o velocímetro, tonelada a balança, metro a régua, pessoas o contador, por cento o anel): com ele, `foto_dado` e
+  `frase` são recusados (na cena 11 do natureza-teste-1min o modelo escolheu a foto no lugar do velocímetro). O que reprovar volta ao modelo (`motion_ia.tentativas_modelo`, 3); se
   nenhum modelo servir, vai o **HTML livre de reserva**: o modelo escreve css, html e js dentro do esqueleto
   (`montar_html`). O `partes.json` guarda `modelo` e `dados`. Mudou o desenho, suba `motion_modelos.VERSAO`.
 - **Estilo editorial Vox / SaaS** (PRD de 2026-10-05, no lugar do "Apple Event" escuro): o esqueleto dá o fundo creme

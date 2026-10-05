@@ -79,3 +79,14 @@ def test_prefixo_so_quantificador():
     d, _ = motion_modelos.conferir("balanca", {"valor": 1, "unidade": "tonelada", "prefixo": "mais de"},
                                    "mais de uma tonelada")
     assert d["prefixo"] == "mais de"
+
+
+def test_o_dado_indica_o_desenho():
+    # cena 11 do natureza-teste-1min: o modelo escolheu a foto com o número no lugar do velocímetro
+    assert motion_modelos.indicado("50 quilômetros por hora") == "velocimetro"
+    assert motion_modelos.indicado("mais de uma tonelada") == "balanca"
+    assert motion_modelos.indicado("mais de um metro") == "regua"
+    assert motion_modelos.indicado("cerca de 35 pessoas") == "contador"
+    _, erros = motion_modelos.conferir("foto_dado", {"valor": 50, "unidade": "km/h"}, FALA_50, tem_foto=True,
+                                       sugerido="velocimetro")
+    assert erros and "velocimetro" in erros[0]

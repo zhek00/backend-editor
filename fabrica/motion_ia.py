@@ -661,6 +661,8 @@ def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados):
     dado = dado_na_fala(cena.get("texto"))
     if dado:
         linhas.append(f"Dado que o código achou na fala: {dado}")
+        if motion_modelos.indicado(dado):
+            linhas.append(f"Modelo indicado para esse dado: {motion_modelos.indicado(dado)}")
     if (cena.get("mostrar") or "").strip():
         linhas.append(f"O que o diretor de arte pediu para a cena: {cena['mostrar'].strip()}")
     linhas.append("A cena TEM FOTO (o modelo foto_dado pode ser usado)." if foto else
@@ -683,7 +685,8 @@ def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, 
                               temperatura=0.4 if tentativa else 0.2)
         modelo = str(resposta.get("modelo") or "").strip()
         dados, erros = motion_modelos.conferir(modelo, resposta, fala, tem_foto=bool(nome_foto),
-                                               fala_da_cena=cena.get("texto") or "")
+                                               fala_da_cena=cena.get("texto") or "",
+                                               sugerido=motion_modelos.indicado(dado_na_fala(cena.get("texto"))))
         if erros:
             continue
         partes = motion_modelos.partes(modelo, dados, dur)

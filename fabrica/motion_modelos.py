@@ -676,11 +676,26 @@ def _numeros_da_fala(fala) -> set:
     return {float(n.replace(".", "").replace(",", ".")) for n in re.findall(r"\d+(?:[.,]\d+)*", fala or "")}
 
 
+# o dado achado na fala aponta o desenho: na cena 11 do natureza-teste-1min o modelo escolheu a foto com o número para
+# "50 quilômetros por hora", com o velocímetro pronto para isso
+_INDICADO = [(r"por hora|km/h|por segundo", "velocimetro"), (r"tonelada|quilo|kg|grama", "balanca"),
+             (r"metro|cent[íi]metro|mil[íi]metro", "regua"), (r"por cento|%", "porcentagem"),
+             (r"pessoas|v[íi]timas|mortes|habitantes|trabalhadores|indiv[íi]duos|animais|filhotes", "contador")]
+
+
+def indicado(dado) -> str:
+    """O modelo que o dado da fala pede ("50 quilômetros por hora" pede o velocímetro), ou "" se nenhum."""
+    for padrao, modelo in _INDICADO:
+        if re.search(padrao, dado or "", re.I):
+            return modelo
+    return ""
+
+
 _QUANTIFICADOR = re.compile(r"^(mais de|menos de|cerca de|quase|até|ate|aproximadamente|perto de|acima de|abaixo de|"
                             r"uns|umas|em torno de|por volta de)$")
 
 
-def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None):
+def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None, sugerido=""):
     """Os dados limpos para o modelo, e a lista do que está errado (vazia quando está tudo certo).
 
     fala: o texto de onde as palavras podem sair (a cena e as vizinhas). fala_da_cena: só a desta cena, de onde sai o
@@ -689,6 +704,8 @@ def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None):
     erros = []
     if modelo not in MODELOS:
         return None, [f"modelo desconhecido: {modelo}. Use um destes: {', '.join(MODELOS)}"]
+    if sugerido and modelo in ("foto_dado", "frase"):
+        return None, [f"a fala traz um dado que o modelo {sugerido} demonstra: use o modelo {sugerido}"]
     d = {k: v for k, v in (dados or {}).items() if v not in (None, "", [])}
     for campo in ("topo", "destaque", "prefixo", "unidade", "abreviacao", "nome", "frase", "inicio", "fim"):
         if campo in d:
