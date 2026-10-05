@@ -89,14 +89,12 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
                 raise SystemExit(f"Faltam os vídeos do avatar ({lista}). Gere no HeyGen com os áudios da pasta avatar, "
                                  f"ou rode o render com --sem-avatar.")
 
-    com_textos = textos.ativo(projeto.perfil)
-    # as animações foram desenhadas para a tela deitada; na versão em pé a cena volta à foto com o texto na tela
+    # as animações foram desenhadas para a tela deitada; na versão em pé a cena volta à foto
     com_animacoes = bool(animacoes.config(projeto).get("ativo", True)) and not vertical
     # a camada de animação vai por cima das cenas, no tempo da fala (animacoes.py): as cenas não mudam por causa dela
     if com_animacoes:
         animacoes.por_em_dia(projeto, log=log)
     motion = animacoes.validas(projeto) if com_animacoes else []
-    debaixo_da_animacao = animacoes.cenas_cobertas(projeto, cenas, motion) if motion else set()
     sorteio = random.Random(projeto.nome)
     pasta_clipes = projeto.caminho(base, "clipes", "_").parent
     pasta_fotos = projeto.caminho(base, "fotos", "_").parent
@@ -131,21 +129,19 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
             tarefas.append({**pedaco, "frames": frames, "transicao": transicao,
                             "destino": pasta_clipes / f"{pedaco['ordem']:04d}-avatar-{codigo}.mp4"})
             continue
-        c = pedaco["cena"]
         movimento = sorteio.choice([m for m in MOVIMENTOS if m != anterior])
         anterior = movimento
-        # embaixo de uma animação o texto na tela sai: a animação já traz o texto, no tempo da fala
-        texto_tela = c.get("texto_tela") if com_textos and c["n"] not in debaixo_da_animacao else None
         simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
-        # o nome do clipe muda quando a origem, a duração, o movimento, o texto, o símbolo ou o título mudam
+        # o nome do clipe muda quando a origem, a duração, o movimento, o símbolo ou o título mudam. O "||" é o lugar
+        # do texto na tela, que saiu da fábrica (2026-10-05): fica vazio para os clipes já prontos não mudarem de nome
         enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
         assinatura = (
             f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}{enquadramento}|"
-            f"{textos.assinatura(texto_tela, projeto.perfil)}|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
+            f"|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
             f"{textos.assinatura_titulos(titulos, projeto.perfil)}"
         )
         codigo = hashlib.sha1(assinatura.encode()).hexdigest()[:10]
-        tarefas.append({**pedaco, "frames": frames, "movimento": movimento, "texto_tela": texto_tela,
+        tarefas.append({**pedaco, "frames": frames, "movimento": movimento,
                         "destino": pasta_clipes / f"{pedaco['ordem']:04d}-{codigo}.mp4"})
 
     # o fechamento é o mesmo clipe em todo vídeo do canal e entra depois da última cena
@@ -356,15 +352,13 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
         entradas, filtro = ["-i", _preparar_foto(arquivo, pasta_fotos, cfg)], _filtro_foto(tarefa["movimento"], frames, cfg)
 
     duracao = frames / fps
-    texto_tela, simbolos, titulos = tarefa["texto_tela"], tarefa["simbolos"], tarefa["titulos"]
+    simbolos, titulos = tarefa["simbolos"], tarefa["titulos"]
     grafo = [f"[0:v]{filtro}[b0]"]
     pasta = pasta_textos / destino.stem
     if cfg.get("vertical"):
-        camadas = textos.para_vertical(textos.camadas(texto_tela, perfil, pasta, duracao), largura, altura, pasta, "vt")
-        camadas += textos.para_vertical(textos.camadas_titulo(titulos, perfil, pasta, duracao), largura, altura, pasta, "vtt")
+        camadas = textos.para_vertical(textos.camadas_titulo(titulos, perfil, pasta, duracao), largura, altura, pasta, "vtt")
     else:
-        camadas = textos.camadas(texto_tela, perfil, pasta, duracao, largura, altura)
-        camadas += textos.camadas_titulo(titulos, perfil, pasta, duracao, largura, altura)
+        camadas = textos.camadas_titulo(titulos, perfil, pasta, duracao, largura, altura)
     camadas += textos.camadas_simbolo(simbolos, perfil, pasta, duracao, largura, altura)
     for i, camada in enumerate(camadas, 1):
         entradas += ["-loop", "1", "-framerate", fps, "-t", f"{duracao:.3f}", "-i", camada["arquivo"]]

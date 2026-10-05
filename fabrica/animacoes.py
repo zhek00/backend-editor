@@ -224,6 +224,35 @@ def validas(projeto) -> list:
     for atual, seguinte in zip(saida, saida[1:]):
         if atual["fim"] > seguinte["ini"]:
             atual["fim"] = max(seguinte["ini"], atual["ini"] + 0.5)
+    return _fora_do_motion_ia(projeto, saida)
+
+
+def _cenas_motion_ia(projeto) -> list:
+    """(ini, fim) das cenas que são um clipe do Motion IA (motion_ia.py)."""
+    arquivo = projeto.pasta / "cenas.json"
+    if not arquivo.exists():
+        return []
+    return [(c["ini"], c["fim"]) for c in json.loads(arquivo.read_text(encoding="utf-8"))["cenas"]
+            if (c.get("midia") or {}).get("fonte") == "motion_ia"]
+
+
+def _fora_do_motion_ia(projeto, itens) -> list:
+    """A camada nunca passa por cima de um clipe do Motion IA: ele já é uma animação, com fundo próprio, e o véu
+    escuro da camada embolava os dois (cena 6 do natureza-teste-1min, coberta pela frase da cena 5 até 20,4 s).
+    A camada para no começo do clipe; a que começa dentro de um clipe sai."""
+    clipes = _cenas_motion_ia(projeto)
+    if not clipes:
+        return itens
+    saida = []
+    for item in itens:
+        if any(ini - 0.05 <= item["ini"] < fim - 0.05 for ini, fim in clipes):
+            continue
+        corte = min((ini for ini, _ in clipes if item["ini"] < ini < item["fim"]), default=None)
+        if corte is not None:
+            if corte - item["ini"] < 0.5:
+                continue
+            item = {**item, "fim": corte}
+        saida.append(item)
     return saida
 
 
@@ -424,21 +453,31 @@ def _hyperframes(projeto, args, pasta, limite):
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limite)
 
 
-def _conferir(projeto, pasta) -> list:
-    """Os erros que a conferência do HyperFrames achou (texto sobreposto, saindo da tela, regras quebradas)."""
+# texto fora da tela ou fora do card: o HyperFrames marca só como informação, mas num clipe de tela inteira é defeito
+# (cena 8 do natureza-teste-1min: o número dentro do card com left: 1192px, contado da borda do card, saiu da tela)
+_ESTOURO_NO_CLIPE = ("canvas_overflow", "text_box_overflow")
+
+
+def _conferir(projeto, pasta, clipe=False) -> list:
+    """Os erros que a conferência do HyperFrames achou (texto sobreposto, saindo da tela, regras quebradas).
+    clipe=True para a página de tela inteira e fundo opaco do motion_ia.py: vale o contraste, e texto fora da tela ou
+    fora do card reprova mesmo marcado só como informação."""
     r = _hyperframes(projeto, ["check", "--json"], pasta, 300)
     try:
         dados = json.loads(r.stdout[r.stdout.find("{"):])
     except ValueError:
         return [f"a conferência não rodou: {(r.stderr or r.stdout)[-300:]}"]
-    if dados.get("ok"):
-        return []
-    erros = []
+    erros, vistos = [], set()
     # contraste fica de fora: com o fundo transparente, a conferência mede o texto contra o nada; o véu escuro
     # da camada garante a leitura sobre qualquer imagem
-    for parte in ("lint", "runtime", "layout", "motion"):
+    for parte in ("lint", "runtime", "layout", "motion") + (("contrast",) if clipe else ()):
         for f in (dados.get(parte) or {}).get("findings", []):
-            if f.get("severity") == "error":
+            estouro = clipe and f.get("code") in _ESTOURO_NO_CLIPE
+            if f.get("severity") == "error" or estouro:
+                if estouro:
+                    if (f.get("code"), f.get("selector")) in vistos:
+                        continue  # o mesmo texto aparece em cada momento conferido: basta uma vez
+                    vistos.add((f.get("code"), f.get("selector")))
                 quando = f" em {f['time']:.2f}s" if isinstance(f.get("time"), (int, float)) else ""
                 texto = f" (\"{f['text'][:40]}\")" if f.get("text") else ""
                 erros.append(f"{f.get('code')}{quando} no {f.get('selector', '?')}{texto}: {f.get('message', '')} "
@@ -723,7 +762,8 @@ def gerar(projeto, numeros=None, forcar=False, log=print, trava=None, so_existen
     textos = {c["n"]: (c.get("texto") or "").strip() for c in cenas}
     # cada animação vai até, no máximo, o começo da seguinte (as que já existem e as que vão ser feitas agora)
     comecos = sorted({a["ini"] for a in (_ancorar(projeto, i, pela_fala=True)
-                                          for i in [*itens, *alvo] if not i.get("desligada")) if a})
+                                          for i in [*itens, *alvo] if not i.get("desligada")) if a}
+                     | {ini for ini, _ in _cenas_motion_ia(projeto)})  # nem o começo de um clipe do Motion IA
     log(f"  animando {len(alvo)} trecho(s) de diagrama, texto na tela, linha do tempo e mapa (HyperFrames)")
 
     def uma(item):

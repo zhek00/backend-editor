@@ -12,7 +12,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
-from . import claude_local, efeitos, gemini_local, groq_local, openrouter_local, roteirista, textos
+from . import claude_local, efeitos, gemini_local, groq_local, openrouter_local, roteirista
 from . import texto as tx
 
 # Estilo de vídeo único da fábrica, igual para qualquer nicho de canal: cenas de 3 a 5 segundos e
@@ -145,15 +145,6 @@ Escreva o prompt em todas as cenas, inclusive nas reais, porque ele é usado cas
 
 SEM_MIDIA = "Tipo das cenas\nTodas as cenas são do tipo ia, com busca vazia."
 
-
-SECAO_TEXTOS = """Textos na tela
-Algumas cenas ganham um texto animado por cima da imagem. Em texto_tela escolha o tipo.
-- destaque é uma frase curta de impacto em letras grandes. Em texto escreva de 3 a 9 palavras e em destaque copie 1 ou 2 palavras seguidas desse texto, que ganham uma caixa colorida.
-- lista é um cartão com título e itens que surgem um a um. Em titulo escreva um título curto e em itens cada item com poucas palavras e o número da frase em que ele é narrado. Todos os itens precisam estar dentro das frases da cena.
-- capitulo é uma referência grande no canto, como CAP 104. Escreva a referência em texto e, se fizer sentido, o nome do livro em titulo.
-- rotulo é uma etiqueta pequena com o nome de um livro, documento ou fonte citada, escrito em titulo.
-- nenhum vale para a maioria das cenas.
-Em frase coloque o número da frase em que o texto deve surgir. Escreva em português e em maiúsculas, sem afirmar nada que a narração não diga. Nos campos que não se aplicam use texto vazio, lista vazia e o número da primeira frase da cena."""
 
 SEM_TEXTOS = (
     "Textos na tela\nEste canal não usa textos na tela. Em texto_tela use tipo nenhum, "
@@ -696,7 +687,6 @@ def planejar(projeto, log=print) -> list[dict]:
 
     # Regra fixa da fábrica: 90% material real de acervo e 10% IA em qualquer nicho
     mistura = True
-    com_textos = textos.ativo(projeto.perfil)
     com_efeitos = efeitos.ativo(projeto.perfil)
     cenas = []
     primeira_ia_do_grupo = {}
@@ -746,7 +736,7 @@ def planejar(projeto, log=print) -> list[dict]:
             "visual": g.get("visual") or "",
             "fonte_sugerida": g.get("fonte") or "",  # stock ou wikimedia: onde o agente acha que o assunto está
             "bloco": g.get("bloco"),
-            "texto_tela": _texto_tela(g.get("texto_tela"), frases, ini, _palavras_da_cena(alinhamento, frases)) if com_textos else None,
+            "texto_tela": None,  # o texto na tela do FFmpeg saiu da fábrica (2026-10-05)
             "efeito": _efeito(g.get("efeito"), ini, _palavras_da_cena(alinhamento, frases)) if com_efeitos else None,
         })
     for i, c in enumerate(cenas):
@@ -759,9 +749,6 @@ def planejar(projeto, log=print) -> list[dict]:
 
     cenas = _balancear_proporcao_90_10(cenas, log, sem_ia=not ia_ativa(projeto))
     cenas = _balancear_foto_e_video(cenas, log)
-    # os cortes por tempo apagam o texto das cenas que fundem ou se dividem, então guardo o momento
-    # absoluto de cada um para devolvê-lo à cena final em que ele é falado
-    textos_no_video = [(c["ini"] + c["texto_tela"]["inicio"], c["texto_tela"]) for c in cenas if c.get("texto_tela")]
     # Aplica garantia estrita de cortes de 3 a 5 segundos
     cenas = _garantir_limites_estritos(cenas, alinhamento["duracao"], minimo=minimo, maximo=maximo, alvo=alvo, log=log, alinhamento=alinhamento)
     # juntar as curtas e dividir as longas copia o pedido de uma cena para a outra: cada cena volta a ter o pedido do
@@ -773,21 +760,12 @@ def planejar(projeto, log=print) -> list[dict]:
     if corrigidas:
         log(f"  {corrigidas} cena(s) voltaram a ter o pedido do agente para a frase que falam")
     
-    for momento, texto_tela in textos_no_video:
-        destino = next((c for c in cenas if c["ini"] <= momento < c["fim"]), None)
-        if destino and not destino.get("texto_tela"):
-            # se a palavra cai nos últimos instantes da cena, o texto entra um pouco antes dela para ter tempo de aparecer
-            inicio = min(momento - destino["ini"], max(0.0, destino["fim"] - destino["ini"] - 1.2))
-            destino["texto_tela"] = {**texto_tela, "inicio": round(max(0.0, inicio), 2)}
+
 
     if not projeto.offline and (projeto.config.get("cenas") or {}).get("provedor", "claude") in ("groq", "gemini"):
         # com o agente de roteiro, quem decide o que aparece é ele: aqui só as fatias de IA de uma enumeração
         # ganham o prompt da coisa que cada uma cita, e a busca que ele escolheu não é reescrita sem o roteiro
         _refinar_buscas_groq(projeto, cenas, unidades, log, so_ia=roteirista.ativo(projeto))
-        # os textos na tela são decididos numa passada só para eles, vendo várias cenas seguidas: o texto sugerido
-        # pelo agente entra como dica. Depois o código confere tudo (falado na cena, com fundamento, sem cenas seguidas)
-        _textos_na_tela_groq(projeto, cenas, unidades, alinhamento, log)
-        _conferir_textos_do_agente(cenas, alinhamento, log)
 
     _distribuir_simbolos(cenas, alinhamento.get("marcadores") or [], projeto.perfil)
     if not projeto.offline:
@@ -994,47 +972,6 @@ _PALAVRAS_VAZIAS = {"para", "pela", "pelo", "pelos", "pelas", "mais", "menos", "
                     "sera", "seria", "foram", "eram", "sido", "estao", "esta", "tambem", "assim", "entao", "nunca"}
 
 
-def _texto_tela(bruto, frases, ini_cena, palavras_cena=()):
-    """Converte o momento do texto em segundos desde o começo da cena e descarta texto incompleto."""
-    bruto = bruto or {}
-    tipo = bruto.get("tipo", "nenhum")
-    if tipo not in textos.TIPOS:
-        return None
-    momento = {f["id"]: round(max(0.0, f["ini"] - ini_cena), 2) for f in frases}
-    reserva = momento.get(bruto.get("frase"), 0.0)
-    itens = [
-        {"texto": i["texto"].strip(), "frase": i.get("frase"),
-         "inicio": _momento_falado(i["texto"], palavras_cena, ini_cena, momento.get(i.get("frase"), 0.0))}
-        for i in bruto.get("itens") or []
-        if (i.get("texto") or "").strip()
-    ][:6]
-    texto = (bruto.get("texto") or "").strip()
-    titulo = (bruto.get("titulo") or "").strip()
-    inicio = reserva
-    if tipo == "destaque":
-        inicio = _momento_falado(texto, palavras_cena, ini_cena, reserva)
-    elif tipo == "rotulo":
-        inicio = _momento_falado(titulo or texto, palavras_cena, ini_cena, reserva)
-    elif tipo == "lista" and itens:
-        inicio = min(reserva, itens[0]["inicio"])
-    resultado = {
-        "tipo": tipo,
-        "frase": bruto.get("frase"),
-        "texto": texto,
-        "destaque": (bruto.get("destaque") or "").strip(),
-        "titulo": titulo,
-        "inicio": inicio,
-        "itens": itens,
-    }
-    essencial = {
-        "destaque": resultado["texto"],
-        "lista": itens,
-        "capitulo": resultado["texto"],
-        "rotulo": resultado["titulo"] or resultado["texto"],
-    }[tipo]
-    return resultado if essencial else None
-
-
 def _efeito(bruto, ini_cena, palavras_cena=()):
     """Efeito sonoro da cena, com o segundo em que ele bate contado a partir do começo dela."""
     bruto = bruto or {}
@@ -1055,11 +992,6 @@ def atualizar_tempos(projeto):
     alinhamento = projeto.ler_json("alinhamento.json")
     unidades, duracao = alinhamento["unidades"], alinhamento["duracao"]
     dados = projeto.ler_json("cenas.json")
-    # projetos antigos não guardavam o número das frases dos textos, mas a resposta do Claude guardou
-    originais = {}
-    for arquivo in sorted((projeto.pasta / "cenas_lotes").glob("lote_*.json")):
-        for g in json.loads(arquivo.read_text(encoding="utf-8")):
-            originais[(g["primeira_frase"], g["ultima_frase"])] = g.get("texto_tela")
     cenas = dados["cenas"]
     duracao_antes = {c["n"]: c["fim"] - c["ini"] for c in cenas}
     # cada cena começa onde as primeiras palavras DELA são faladas. Antes valia o começo da frase: cena cortada no meio
@@ -1084,17 +1016,6 @@ def atualizar_tempos(projeto):
         c["_ini_calculo"] = c["ini"]
         if c.get("efeito"):
             c["efeito"] = _efeito(c["efeito"], c["ini"], _palavras_da_cena(alinhamento, frases)) or c["efeito"]
-        texto_tela = c.get("texto_tela")
-        if not texto_tela:
-            continue
-        base = dict(originais.get(tuple(c["frases"])) or {})
-        base.update({k: texto_tela[k] for k in ("tipo", "texto", "destaque", "titulo") if k in texto_tela})
-        if texto_tela.get("frase") is not None:
-            base["frase"] = texto_tela["frase"]
-        if texto_tela.get("itens") and all(item.get("frase") is not None for item in texto_tela["itens"]):
-            base["itens"] = texto_tela["itens"]
-        if base.get("frase") is not None:
-            c["texto_tela"] = _texto_tela(base, frases, c["ini"], _palavras_da_cena(alinhamento, frases)) or texto_tela
     for i, c in enumerate(cenas):
         c["fim"] = cenas[i + 1]["ini"] if i + 1 < len(cenas) else duracao
     # a fala de cada cena no tempo novo, antes do corte: a imagem numerada dela segue essa fala (ver abaixo)
@@ -1706,190 +1627,6 @@ def _refinar_buscas_groq(projeto, cenas, unidades, log, so_ia=False):
                 cenas[i]["prompt"] = (item.get("prompt") or cenas[i]["prompt"]).strip()
 
 
-ESQUEMA_TEXTOS = {
-    "type": "object",
-    "properties": {
-        "cenas": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"n": {"type": "integer"}, "texto_tela": TEXTO_TELA},
-                "required": ["n", "texto_tela"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["cenas"],
-    "additionalProperties": False,
-}
-
-SISTEMA_TEXTOS = """Você decide os textos animados que aparecem sobre as imagens de um vídeo do canal. Cada cena traz o texto narrado nela. Para cada cena devolva um item com o mesmo n.
-
-{secao_textos}
-
-Regras
-1. Use um texto sempre que a cena contiver o que a orientação do canal manda destacar, como um nome citado, um número ou uma enumeração. Use nenhum só quando a cena não tem nada disso.
-2. O texto tem que sair de palavras que a narração DESTA cena diz. Nunca escreva o que a cena não fala nem o que só aparece em cenas vizinhas.
-3. Em frase use o número da frase informado na cena.
-4. Não coloque texto em duas cenas seguidas. Se as duas cenas citam algo, fique com a mais forte.
-5. Quando a cena traz um texto sugerido, ele foi escrito por quem leu o roteiro inteiro: use-o só se ele seguir as regras de qualidade abaixo; se não seguir, reescreva ou deixe a cena sem texto.
-6. Você vê várias cenas seguidas: guarde o texto para os fatos mais fortes do trecho, no máximo uma cena a cada quatro ou cinco.
-
-""" + textos.REGRAS_QUALIDADE.replace("{", "{{").replace("}", "}}")
-
-
-def _bate_com_a_fala(texto_tela, palavras):
-    """O texto na tela só vale se as palavras dele foram faladas na própria cena.
-
-    Compara as cinco primeiras letras de cada palavra de quatro letras ou mais, para aceitar o
-    plural e a pontuação. Itens de lista que não batem são descartados.
-    """
-    faladas = {_simplificar(p["texto"])[:5] for p in palavras}
-
-    def cita(texto):
-        importantes = [w for w in (_simplificar(x) for x in (texto or "").split()) if len(w) >= 4]
-        return not importantes or any(w[:5] in faladas for w in importantes)
-
-    tipo = texto_tela["tipo"]
-    if tipo == "lista":
-        texto_tela["itens"] = [i for i in texto_tela["itens"] if cita(i["texto"])]
-        return bool(texto_tela["itens"])
-    if tipo == "rotulo":
-        return cita(texto_tela["titulo"] or texto_tela["texto"])
-    if tipo == "capitulo":
-        return True
-    return cita(texto_tela["texto"])
-
-
-def _faladas_em_volta(cenas, i):
-    """Palavras faladas na cena, nas vizinhas e no mesmo bloco de assunto: um texto na tela só pode usar palavras da
-    narração. O bloco entra porque a cena às vezes diz "ela" e o texto nomeia a coisa (ARCA COBERTA DE BETUME)."""
-    bloco = cenas[i].get("bloco")
-    perto = cenas[max(0, i - 1):i + 2] + ([c for c in cenas if c.get("bloco") == bloco] if bloco is not None else [])
-    return {p for c in perto for p in textos.palavras_normais(c.get("texto") or "")}
-
-
-def _conferir_textos_do_agente(cenas, alinhamento, log=print):
-    """As conferências dos textos na tela, sem chamar modelo: o texto tem que ser falado na cena, ter fundamento
-    (nada de "PARTE 2", palavra solta ou palavra inventada) e duas cenas seguidas não têm texto."""
-    anterior_com_texto = False
-    recusados = []
-    for i, c in enumerate(cenas):
-        texto_tela = c.get("texto_tela")
-        if texto_tela:
-            palavras = [p for p in alinhamento.get("palavras") or []
-                        if p.get("ini") is not None and c["ini"] - 0.15 <= p["ini"] < c["fim"] - 0.05]
-            motivo = textos.motivo_para_recusar(texto_tela, _faladas_em_volta(cenas, i))
-            if motivo:
-                recusados.append(f"{c['n']} '{texto_tela.get('texto') or texto_tela.get('titulo')}' ({motivo})")
-            if motivo or anterior_com_texto or not _bate_com_a_fala(texto_tela, palavras):
-                c["texto_tela"] = None
-        anterior_com_texto = bool(c.get("texto_tela"))
-    if recusados:
-        log(f"  {len(recusados)} texto(s) na tela sem fundamento tirados: " + "; ".join(recusados[:8]))
-
-
-def refazer_textos(projeto, log=print) -> int:
-    """Decide de novo só os textos na tela de um projeto pronto, com as regras de qualidade. Imagens não mudam.
-
-    Custa quase nada (Groq gratuito, com o MiMo de reserva). Devolve quantas cenas ficaram com texto."""
-    if not textos.ativo(projeto.perfil):
-        log("  este perfil não usa textos na tela")
-        return 0
-    dados = projeto.ler_json("cenas.json")
-    cenas = dados["cenas"]
-    alinhamento = projeto.ler_json("alinhamento.json")
-    for c in cenas:
-        c["texto_tela"] = None  # o texto antigo não fica: só volta o que passar pelas regras novas
-    _textos_na_tela_groq(projeto, cenas, alinhamento["unidades"], alinhamento, log)
-    _conferir_textos_do_agente(cenas, alinhamento, log)
-    projeto.salvar_json("cenas.json", dados)
-    com_texto = [c for c in cenas if c.get("texto_tela")]
-    log(f"  {len(com_texto)} cena(s) com texto na tela, de {len(cenas)}")
-    return len(com_texto)
-
-
-def _linha_texto(c, blocos=None):
-    # o texto que o agente de roteiro sugeriu entra como dica; a regra de sair da fala da cena continua valendo.
-    # O assunto do bloco deixa o texto nomear a coisa ("DRAGÃO-AZUL · ...") quando a cena diz só "ela" ou "vive"
-    sugerido = f"\n  texto sugerido: {c['overlay']}" if c.get("overlay") else ""
-    bloco = (blocos or {}).get(c.get("bloco"))
-    assunto = f" | assunto: {bloco.get('nome', '')}" if bloco else ""
-    return f"CENA {c['n']} | {c['fim'] - c['ini']:.1f}s | frase {c['frases'][0]}{assunto}\n  {c['texto']}{sugerido}"
-
-
-def _textos_na_tela_groq(projeto, cenas, unidades, alinhamento, log):
-    """Decide os textos animados de todas as cenas finais numa passada só para isso.
-
-    O Groq errava a regularidade quando decidia o texto junto com a imagem, ora devolvendo texto
-    em várias cenas, ora em nenhuma. Aqui ele vê o texto final de cada cena, com temperatura zero,
-    e o código confere se o que ele escreveu foi mesmo falado na cena e evita texto em cenas seguidas.
-    """
-    if not textos.ativo(projeto.perfil):
-        return
-    cfg = projeto.config.get("groq") or {}
-    sistema = SISTEMA_TEXTOS.format(secao_textos=_secoes(projeto.perfil)["secao_textos"])
-    por_lote = cfg.get("cenas_por_lote", 20)
-    blocos = {}
-    if projeto.existe("roteiro_mapa.json"):
-        blocos = {b["id"]: b for b in projeto.ler_json("roteiro_mapa.json").get("blocos", [])}
-    # o texto na tela é redação: com o agente ligado, quem escreve é o mesmo modelo dele (MiMo, centavos),
-    # que escreve bem melhor que o Groq gratuito; Groq e Gemini ficam de reserva
-    modelo = roteirista._modelo_agente(projeto) if roteirista.ativo(projeto) else _modelo(projeto)
-    decididos = {}
-    for inicio in range(0, len(cenas), por_lote):
-        lote = cenas[inicio:inicio + por_lote]
-        corpo = "\n\n".join(_linha_texto(c, blocos) for c in lote)
-        pedido = f"Devolva exatamente {len(lote)} itens, um por cena, com o n dela.\n\n{corpo}"
-        assinatura = hashlib.sha1((sistema + pedido).encode("utf-8")).hexdigest()[:10]
-        arquivo = projeto.caminho("cenas_lotes", f"textos_{inicio // por_lote:03d}_{assinatura}.json")
-        if arquivo.exists():
-            decididos.update({int(n): t for n, t in json.loads(arquivo.read_text(encoding="utf-8")).items()})
-            continue
-        reforco = [""]  # o aviso da segunda tentativa, acrescentado ao pedido
-
-        def pedir(sublote, _lote=lote):
-            corpo_parte = "\n\n".join(_linha_texto(c, blocos) for c in sublote)
-            return modelo.perguntar(
-                projeto, "textos na tela", sistema,
-                f"Devolva exatamente {len(sublote)} itens, um por cena, com o n dela.\n\n{corpo_parte}{reforco[0]}",
-                ESQUEMA_TEXTOS, log=log, temperatura=0).get("cenas", [])
-
-        itens = None
-        for tentativa in range(2):
-            try:
-                respondidas = _pedindo_em_partes(pedir, lote, log)
-            except RuntimeError as e:
-                log(f"  não consegui decidir os textos na tela deste lote ({e}), mantendo os anteriores")
-                itens = None
-                break
-            itens = {i.get("n"): i.get("texto_tela") for i in respondidas}
-            algum = any((t or {}).get("tipo", "nenhum") != "nenhum" for t in itens.values())
-            if algum or len(lote) < 6:
-                break
-            reforco[0] = "\n\nAtenção: na resposta anterior todas as cenas ficaram em nenhum. Releia a orientação do canal e use texto onde ela pede."
-        if itens:
-            decididos.update(itens)
-            arquivo.write_text(json.dumps(itens, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    anterior_com_texto = False
-    for c in cenas:
-        if c["n"] not in decididos:
-            anterior_com_texto = bool(c.get("texto_tela"))
-            continue
-        palavras = [p for p in alinhamento.get("palavras") or []
-                    if p.get("ini") is not None and c["ini"] - 0.15 <= p["ini"] < c["fim"] - 0.05]
-        frases = unidades[c["frases"][0]:c["frases"][1] + 1]
-        novo = _texto_tela(decididos[c["n"]], frases, c["ini"], palavras)
-        if novo and (anterior_com_texto or not _bate_com_a_fala(novo, palavras)):
-            novo = None
-        if novo:
-            # o momento em que a palavra é falada pode cair no fim da cena, então o texto entra um pouco antes
-            novo["inicio"] = round(min(novo["inicio"], max(0.0, c["fim"] - c["ini"] - 1.2)), 2)
-        c["texto_tela"] = novo
-        anterior_com_texto = bool(novo)
-
-
 def _secoes(perfil):
     """Seções do prompt que dependem do perfil, as mesmas para o Claude e para o Groq."""
     from . import bancos
@@ -1917,13 +1654,8 @@ def _secoes(perfil):
     else:
         secao_midia = SEM_MIDIA
 
-    if textos.ativo(perfil):
-        secao_textos = SECAO_TEXTOS
-        orientacao = (perfil.get("textos_na_tela") or {}).get("orientacao")
-        if orientacao:
-            secao_textos += "\n" + orientacao.strip()
-    else:
-        secao_textos = SEM_TEXTOS
+    # o texto na tela do FFmpeg saiu da fábrica (pedido do usuário em 2026-10-05): o modelo sempre devolve "nenhum"
+    secao_textos = SEM_TEXTOS
 
     if efeitos.ativo(perfil):
         secao_efeitos = SECAO_EFEITOS
@@ -2071,7 +1803,6 @@ def _dividir_longas(grupos, unidades, duracao, maximo):
 def _agrupar_por_tempo(unidades, alvo, perfil):
     """Modo offline. Agrupa por tempo e, se o perfil pedir, alterna cenas reais e textos de exemplo."""
     buscas = (perfil.get("midia_real") or {}).get("buscas_de_teste") or []
-    com_textos = textos.ativo(perfil)
     sons = ["distant rolling thunder", "deep ceremonial horn blast", "crackling bonfire"]
     grupos, inicio = [], 0
     for i, u in enumerate(unidades):
@@ -2085,7 +1816,7 @@ def _agrupar_por_tempo(unidades, alvo, perfil):
                 "busca": buscas[(len(grupos) // 2) % len(buscas)] if real else "",
                 "personagem": not real and len(grupos) % 5 == 0,
                 "prompt": " ".join(x["texto"] for x in frases),
-                "texto_tela": _texto_de_teste(len(grupos), frases) if com_textos else None,
+                "texto_tela": None,
                 "efeito": ({"descricao": sons[(len(grupos) // 3) % len(sons)], "duracao": 3,
                             "palavra": frases[0]["texto"].split()[0]} if len(grupos) % 3 == 2 else None),
             })
@@ -2093,14 +1824,3 @@ def _agrupar_por_tempo(unidades, alvo, perfil):
     return grupos
 
 
-def _texto_de_teste(indice, frases):
-    primeira, ultima = frases[0]["id"], frases[-1]["id"]
-    palavras = " ".join(f["texto"] for f in frases).upper().replace(",", "").replace(".", "").split()
-    exemplos = [
-        {"tipo": "rotulo", "titulo": " ".join(palavras[:3]), "frase": primeira},
-        {"tipo": "capitulo", "texto": "PARTE 1", "titulo": " ".join(palavras[:2]), "frase": ultima},
-        {"tipo": "destaque", "texto": " ".join(palavras[:7]), "destaque": " ".join(palavras[5:7]), "frase": primeira},
-        {"tipo": "lista", "titulo": "TEXTO DE TESTE", "frase": primeira,
-         "itens": [{"texto": " ".join(f["texto"].split()[:4]).upper(), "frase": f["id"]} for f in frases[:4]]},
-    ]
-    return exemplos[indice] if indice < len(exemplos) else None

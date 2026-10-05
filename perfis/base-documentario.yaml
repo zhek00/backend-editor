@@ -75,13 +75,9 @@ diretrizes: >-
   Alinhamento entre cena e roteiro é obrigatório e vem antes de qualquer outra prioridade: nenhuma cena
   pode mostrar algo diferente do que a narração está citando naquele exato trecho.
 
+# tema e cores dos cartões de título ([TITULO]); o texto na tela saiu da fábrica em 2026-10-05
 textos_na_tela:
-  ativo: true
   tema: documentario                 # documentario (branco e vermelho) ou selado (preto, dourado e serifa)
-  orientacao: >-
-    Use destaque para dados de impacto, com número ou fato forte. Use rotulo ao citar pela primeira vez
-    o nome do assunto daquele trecho. Use lista quando a narração enumerar itens. A maioria das cenas
-    fica sem texto, e nunca use texto em duas cenas seguidas.
 
 abertura:
   ativo: false                       # prévia sem fala, com cenas do próprio vídeo passando rápido

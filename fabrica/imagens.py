@@ -1007,13 +1007,6 @@ def gerar_revisao(projeto):
         detalhes += f"<p><b>prompt</b> {html.escape(c.get('prompt_manual') or c['prompt'])}</p>"
         if m:
             detalhes += f'<p><b>fonte</b> <a href="{html.escape(m["pagina"])}">{html.escape(m.get("licenca") or "ver página")}</a></p>'
-        texto_tela = c.get("texto_tela")
-        if texto_tela:
-            resumo = texto_tela.get("texto") or texto_tela.get("titulo") or ""
-            if texto_tela["tipo"] == "lista":
-                resumo = " · ".join([texto_tela.get("titulo", "")] + [i["texto"] for i in texto_tela["itens"]])
-            detalhes += f"<p><b>texto na tela</b> {texto_tela['tipo']}, {html.escape(resumo)}</p>"
-            selo += f" · texto {texto_tela['tipo']}"
         efeito = c.get("efeito")
         if efeito:
             detalhes += (f"<p><b>efeito</b> {html.escape(efeito['descricao'])}, {efeito['duracao']:.0f}s, "

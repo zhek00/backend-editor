@@ -60,12 +60,8 @@ diretrizes: >-
   Os Vigilantes têm forma humana imponente, sem chifres. Os gigantes aparecem sem violência explícita.
   Deus nunca aparece com rosto. A presença divina é luz intensa, fogo e nuvens.
 
+# tema e cores dos cartões de título ([TITULO]); o texto na tela saiu da fábrica em 2026-10-05
 textos_na_tela:
-  ativo: true
-  orientacao: >-
-    Use capitulo sempre que a narração citar capítulo ou versículo. Use rotulo quando citar outro livro,
-    documento ou fonte, como CARTAS DE JOÃO ou LIVRO DOS JUBILEUS. Use lista quando a narração enumerar
-    marcadores, sinais, habilidades ou itens. Use destaque em frases de impacto, no máximo uma a cada 40 segundos.
   tema: selado                         # selado (preto, dourado e serifa) ou documentario (branco e vermelho)
   cor_ouro: "#C9A45C"
   cor_texto: "#F2E8D5"

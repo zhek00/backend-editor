@@ -42,7 +42,7 @@ def quantidade(perfil) -> int:
 def escolher(projeto, cenas, disponivel, log=print):
     """Números das cenas da abertura, guardados em abertura.json para o render não perguntar de novo."""
     total = quantidade(projeto.perfil)
-    candidatas = [c for c in cenas if disponivel(c) and not c.get("texto_tela") and c["fim"] - c["ini"] >= 1]
+    candidatas = [c for c in cenas if disponivel(c) and c["fim"] - c["ini"] >= 1]
     arquivo = projeto.pasta / "abertura.json"
     validos = {c["n"] for c in candidatas}
     if arquivo.exists():

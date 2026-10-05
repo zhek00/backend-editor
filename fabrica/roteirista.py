@@ -732,10 +732,6 @@ def roteiro_de_cenas(projeto, log=print, forcar=False) -> dict:
     grupos = planejar_grupos(projeto, unidades, cortes, log)
     for g in grupos:
         g["texto"] = " ".join(u["texto"] for u in unidades[g["primeira_frase"]:g["ultima_frase"] + 1])
-        if g.get("overlay") and not g.get("texto_tela"):
-            # o texto sugerido pelo agente vira o texto na tela, no momento da primeira frase da cena
-            g["texto_tela"] = {"tipo": "destaque", "texto": g["overlay"], "destaque": "", "titulo": "",
-                               "frase": g["primeira_frase"], "itens": []}
     resultado = {"assinatura": assinatura, "frases": len(unidades), "cenas": grupos}
     projeto.salvar_json("roteiro_cenas.json", resultado)
     log(f"  JSON de cenas pronto: {len(grupos)} cenas em roteiro_cenas.json")

@@ -46,13 +46,9 @@ diretrizes: >-
   capas nem autores. A pessoa que aparece nas imagens é anônima, nunca a mesma em duas cenas seguidas.
   O avatar já ocupa o canto inferior direito da tela, então evite detalhes importantes nesse canto.
 
+# tema e cores dos cartões de título ([TITULO]); o texto na tela saiu da fábrica em 2026-10-05
 textos_na_tela:
-  ativo: true
-  orientacao: >-
-    Use lista quando a narração enumerar passos, sinais ou perguntas. Use destaque em frases centrais,
-    no máximo uma a cada 60 segundos. Não use capitulo nem rotulo.
   tema: selado
-  lista_lado: esquerda               # o cartão de lista fica à esquerda, longe do avatar
   cor_ouro: "#C9A45C"
   cor_texto: "#F2E8D5"
   cor_painel: "#0C0906"

@@ -116,12 +116,9 @@ def revisar(projeto, log=print, numeros=None) -> dict:
         lote = lista[inicio:inicio + POR_CHAMADA]
         linhas = []
         for c in lote:
-            tt = c.get("texto_tela") or {}
-            texto_tela = (tt.get("texto") or tt.get("titulo") or "") if isinstance(tt, dict) else ""
             origem = "foto com animação por cima" if c["n"] in debaixo else (
                 "vídeo real" if (c.get("midia") or {}).get("tipo") == "video" else "foto real" if c.get("midia") else "imagem de IA")
-            linhas.append(f"Cena {c['n']} ({origem}) | fala: \"{c.get('texto', '')}\""
-                          + (f" | texto previsto na tela: {texto_tela}" if texto_tela else ""))
+            linhas.append(f"Cena {c['n']} ({origem}) | fala: \"{c.get('texto', '')}\"")
         pedido = (f"Revise estas {len(lote)} cenas, na ordem das imagens. Devolva um item por cena, com o mesmo n.\n\n"
                   + "\n".join(linhas))
         try:

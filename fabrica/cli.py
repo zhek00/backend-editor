@@ -453,6 +453,43 @@ def cmd_diretor(a):
     qualidade.registrar(p, "diretor", log)
 
 
+def cmd_motion(a):
+    """O Jev lê o roteiro e diz, cena a cena, se um clipe de motion explica a fala melhor que a imagem."""
+    from . import motion_ia
+
+    p = Projeto(a.nome)
+    if not p.existe("cenas.json"):
+        raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
+    if not motion_ia.ligado(p):
+        raise SystemExit("O motion IA está desligado (motion_ia.ativo no config.yaml, ou o projeto é offline).")
+    cands = motion_ia.candidatas_do_projeto(p, set(a.cenas) if a.cenas else None)
+    if not cands:
+        log("Nenhuma cena candidata: nenhuma está abaixo da nota mínima nem esperando imagem de IA.")
+        return
+    julgar = [c for c in motion_ia.a_julgar(cands) if not c.get("personagem")]
+    log(f"{len(cands)} cena(s) candidatas: {', '.join(str(c['n']) for c in cands)}")
+    if julgar:
+        gasto = len(julgar) * motion_ia.preco_do_jev(p)
+        duracao = p.ler_json("alinhamento.json")["duracao"] if p.existe("alinhamento.json") else 0
+        por_minuto = f" ({custos.dinheiro(gasto / (duracao / 60))} por minuto)" if duracao else ""
+        if not confirmar(f"O Jev vai julgar {len(julgar)} cena(s): cerca de {custos.dinheiro(gasto)}{por_minuto}. "
+                         "Continuar?", a.sim):
+            raise SystemExit("Cancelado.")
+    decisao = motion_ia.classificar(p, cands, log)
+    escolhidas = [c for c in cands if decisao.get(c["n"])]
+    if not escolhidas:
+        log("O Jev não viu ganho com motion em nenhuma delas.")
+        return
+    log(f"Viram motion: {', '.join(str(c['n']) for c in escolhidas)}")
+    if not a.aplicar:
+        log("Para fazer os clipes (de graça), rode com --aplicar. Depois, uv run fabrica render " + p.nome)
+        return
+    feitas = motion_ia.fazer(p, escolhidas, log)
+    log(f"Pronto: {len(feitas)} clipe(s) de motion" + (f" ({', '.join(map(str, feitas))})" if feitas else "")
+        + f". Monte o vídeo com uv run fabrica render {p.nome}")
+    qualidade.registrar(p, "motion", log)
+
+
 def cmd_avatar_partes(a):
     p = Projeto(a.nome)
     if not p.existe("alinhamento.json"):
@@ -833,8 +870,6 @@ def main():
         "conferir": ("confere se as cenas de acervo combinam com a narração e troca o que não combina",
                      lambda a: etapa_corrigir(Projeto(a.nome), a)),
         "imagens": ("gera as imagens de IA que faltam e a página de revisão", lambda a: etapa_imagens(Projeto(a.nome), a)),
-        "textos": ("decide de novo só os textos na tela, com as regras de qualidade, sem mexer nas imagens",
-                   lambda a: cenas.refazer_textos(Projeto(a.nome), log=log)),
         "efeitos": ("gera os efeitos sonoros que ainda não estão na biblioteca", lambda a: etapa_efeitos(Projeto(a.nome), a)),
         "render": ("monta o vídeo final", lambda a: etapa_render(Projeto(a.nome), a)),
         "custo": ("mostra a estimativa de gasto e o consumo do Claude", cmd_custo),
@@ -890,6 +925,14 @@ def main():
     s.add_argument("--cenas", type=int, nargs="*", help="só aplica nessas cenas")
     s.add_argument("--sim", action="store_true", help="aprova o gasto sem perguntar")
     s.set_defaults(funcao=cmd_diretor)
+
+    s = sub.add_parser("motion", help="o Jev lê o roteiro e diz onde um clipe de motion (infográfico) explica a fala "
+                                      "melhor que a imagem; com --aplicar, faz os clipes (de graça)")
+    s.add_argument("nome")
+    s.add_argument("--cenas", type=int, nargs="*", help="só estas cenas (qualquer nota); sem isto, as de nota baixa")
+    s.add_argument("--aplicar", action="store_true", help="faz os clipes (sem isto, só mostra as notas do Jev)")
+    s.add_argument("--sim", action="store_true", help="aprova o gasto do Jev sem perguntar")
+    s.set_defaults(funcao=cmd_motion)
 
     s = sub.add_parser("avatar-partes", help="corta a narração nos áudios que vão para o HeyGen")
     s.add_argument("nome")

@@ -56,12 +56,8 @@ diretrizes: >-
   citado pelo nome precisa aparecer de forma literal e reconhecível na cena correspondente a ele, nunca numa
   cena vizinha.
 
+# tema e cores dos cartões de título ([TITULO]); o texto na tela saiu da fábrica em 2026-10-05
 textos_na_tela:
-  ativo: true
-  orientacao: >-
-    Use destaque para dados de impacto (como "15 MORTES POR ANO", "3 METROS"). Use rotulo ao citar o nome
-    do animal ou o lugar (como "PEIXE-LEÃO", "FERNANDO DE NORONHA"). Use lista quando a narração enumerar
-    itens da contagem regressiva.
   tema: documentario
 
 abertura:

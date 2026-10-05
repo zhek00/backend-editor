@@ -818,10 +818,11 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
             if certas:
                 log(f"  {len(certas)} cena(s) com o sujeito certo e nota baixa ficam com a imagem, para revisar: "
                     f"{', '.join(map(str, sorted(certas)))}")
-            # motion IA (PRD-MOTION): cena ABSTRATA com nota abaixo do limiar vira clipe de motion, de graça. Se o
-            # motion não sair, ela volta para a foto que tinha (motion_so), sem pagar imagem de IA
-            for n in _abstratas_com_nota_baixa(projeto, certas, melhor, agora, log):
-                precisam_ia[n] = {"cena": n, "prompt": "", "motivo": "nota baixa do Jev em cena abstrata: motion IA",
+            # motion IA (PRD-MOTION): cena com nota abaixo do limiar em que o Jev diz, pelo roteiro, que o motion vale
+            # a pena vira clipe de motion (com a foto dela num card, se cita um animal). Se o motion não sair, ela
+            # volta para a foto que tinha (motion_so), sem pagar imagem de IA
+            for n in _motion_com_nota_baixa(projeto, certas, melhor, agora, log):
+                precisam_ia[n] = {"cena": n, "prompt": "", "motivo": "nota baixa e o Jev disse que o motion vale: motion IA",
                                   "motion_so": True}
             if precisam_ia:
                 resumo["geradas_com_ia"] = resolver_com_ia(projeto, list(precisam_ia.values()), log)
@@ -858,8 +859,9 @@ def _conferir_sem_nota(projeto, alvo, nota_minima, log) -> dict:
 
 # ---------------------------------------------------------------------------------------- IA obrigatória
 
-def _abstratas_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
-    """Das cenas com nota baixa que ficariam com a foto, as abstratas abaixo do limiar do motion IA."""
+def _motion_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
+    """Das cenas com nota baixa que ficariam com a foto, as abaixo do limiar do motion IA em que o Jev diz que o
+    motion vale a pena."""
     from . import motion_ia
     if not numeros or not motion_ia.ligado(projeto):
         return []
@@ -875,7 +877,7 @@ def _abstratas_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
     try:
         tipos = motion_ia.classificar(projeto, baixas, log)
     except (Exception, SystemExit) as erro:
-        log(f"  motion IA: não deu para separar as cenas abstratas ({str(erro)[:100]})")
+        log(f"  motion IA: o Jev não disse onde o motion vale a pena ({str(erro)[:100]})")
         return []
     return [c["n"] for c in baixas if tipos.get(c["n"])]
 

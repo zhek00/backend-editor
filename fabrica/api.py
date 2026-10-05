@@ -772,6 +772,7 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any], motion: Optional[lis
 
     return {
         **cena,
+        "texto_tela": None,  # o texto na tela do FFmpeg saiu da fábrica (2026-10-05): o editor não desenha mais
         "url_midia": url_principal,
         "thumb_url": thumb_url,      # miniatura de 320px, para a timeline e a lista de cenas
         "previa_url": previa_url,    # prévia de 1280px, para o player mostrar fotos sem baixar o original
