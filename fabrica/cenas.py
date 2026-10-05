@@ -1393,7 +1393,7 @@ class _ComReserva:
 
 
 def _modelo(projeto):
-    """Quem responde pelas cenas e buscas: o modelo principal (openrouter.modelo_principal, hoje o Qwen gratuito).
+    """Quem responde pelas cenas e buscas: o modelo principal (openrouter.modelo_principal, hoje o Gemma gratuito).
     MiMo, Groq e Gemini não são mais usados."""
     return _ComReserva([("modelo principal", openrouter_local, openrouter_local.principal(projeto))])
 

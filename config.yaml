@@ -13,7 +13,7 @@ precos:                                # usados só para estimar o gasto, atuali
   correcao_por_cena: 0.0005            # conferir uma cena: o modelo de visão descreve e o Jev julga
   gemini_entrada_por_milhao: 0.75      # gemini-3.8-flash: tokens lidos
   gemini_saida_por_milhao: 3.75        # tokens escritos, o pensamento conta aqui
-  mimo_entrada_por_milhao: 0            # agente pelo modelo principal (Qwen gratuito)
+  mimo_entrada_por_milhao: 0            # agente pelo modelo principal (Gemma gratuito)
   mimo_saida_por_milhao: 0
   agente_entrada_por_milhao: 0.15       # agente pelo roteirista.modelo (DeepSeek V4 Flash). A tabela diz 0,03 e 0,06, mas
   agente_saida_por_milhao: 1.5          # o OpenRouter cobrou uns US$ 0,01 por lote (medido no Tsavo: US$ 0,22 por 8,5 min)
@@ -78,13 +78,14 @@ openrouter:
   max_tokens_teto: 24000
   # modelo de texto e de visão de TODA a fábrica (agente, cenas, textos na tela, escolha das fotos, descrição das
   # imagens). MiMo, Groq e Gemini não são mais usados. O Jev continua sendo o juiz.
-  modelo_principal: qwen/qwen3.8-27b:free
+  modelo_principal: google/gemma-4-31b-it:free
   # os principais, em ordem: quando um não atende (sem saldo, limite do dia dos gratuitos, retirado do ar), a
   # chamada passa na hora para o seguinte, e ele fica de lado um tempo. "aimlapi:" na frente vai pela AIMLAPI
-  # (chave aimlapi_api no .env). O Space Bunny saiu do OpenRouter em 5/10/2026 (404) e saiu da lista; o Qwen
-  # gratuito tem 1.000 chamadas por dia na conta (um vídeo usa de 1.200 a 2.300)
+  # (chave aimlapi_api no .env). Em 5/10/2026 o Space Bunny saiu do OpenRouter (404) e o Qwen 27B deixou de ser
+  # gratuito: a cadeia passou a ser o Gemma 4 31B gratuito (enxerga imagem) e o Qwen Flash pago. Os gratuitos têm
+  # 1.000 chamadas por dia na conta (um vídeo usa de 1.200 a 2.300)
   principais:
-    - qwen/qwen3.8-27b:free
+    - google/gemma-4-31b-it:free
     - qwen/qwen3.8-flash        # última reserva, PAGA (US$ 0,15 e 0,47 por milhão de tokens; uns US$ 0,80 por vídeo
                                 # se fizer tudo): só entra quando os gratuitos acabam (o limite de 1.000 chamadas por dia
                                 # vale para a conta inteira) ou saem do ar. É o mais barato que enxerga imagem
@@ -131,7 +132,7 @@ claude:
   processos: 2               # chamadas ao Claude ao mesmo tempo
 
 midia:
-  escolha: mimo            # quem escolhe as fotos: o modelo principal (Qwen gratuito, enxerga imagens)
+  escolha: mimo            # quem escolhe as fotos: o modelo principal (Gemma gratuito, enxerga imagens)
   reserva: gemini          # entra sozinho quando a cota de 24 horas do Groq acaba no meio da escolha
   conferir_na_captura: true  # o Jev confere cada candidato antes de baixar, pela frase que o modelo escreveu do que vê nele.
                            # Sem custo de visão a mais: a frase sai da mesma chamada da escolha. false volta ao jeito antigo
@@ -191,8 +192,11 @@ motion_ia:
   paralelo: 2                 # clipes gravados ao mesmo tempo (cada um abre um Chrome escondido)
   max_por_minuto: 15          # pedidos por minuto aos modelos gratuitos
   fps: 30                     # MOTION_RENDER_FPS no .env vale por cima
-  modelos: []                 # vazio: só os gratuitos da cadeia openrouter.principais (nunca o pago);
-                              # OPENROUTER_FREE_MODELS no .env vale por cima, também só os gratuitos
+  # só gratuitos: o pago da lista é ignorado; vazia, valem os gratuitos de openrouter.principais; OPENROUTER_FREE_MODELS
+  # no .env vale por cima. O Nemotron Super só lê texto, e aqui basta: fez a cena 11 do natureza-teste-1min de primeira
+  modelos:
+    - nvidia/nemotron-3-super-120b-a12b:free
+    - google/gemma-4-31b-it:free
 
 # Revisão do vídeo pronto: depois do render, o modelo principal (gratuito) olha um quadro de cada cena do final.mp4
 # e aponta tela preta, imagem que não combina, texto cortado ou por cima da legenda. Só aponta, não troca nada.

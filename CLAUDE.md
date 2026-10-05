@@ -347,11 +347,20 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 ## Quem responde cada etapa
 
 **Uma cadeia de modelos principais para tudo que não é o juiz:** `openrouter.principais` no `config.yaml`, em ordem:
-o `qwen/qwen3.8-27b:free` e, por último, o `qwen/qwen3.8-flash`, **pago** (US$ 0,15 e 0,47 por milhão de tokens, uns US$ 0,80 por vídeo se fizer tudo; aprovado pelo usuário em 2026-10-03), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. A cadeia também aceita rota pela
+o `google/gemma-4-31b-it:free` (enxerga imagem) e, por último, o `qwen/qwen3.8-flash`, **pago** (US$ 0,15 e 0,47 por milhão de tokens, uns US$ 0,80 por vídeo se fizer tudo; aprovado pelo usuário em 2026-10-03), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. A cadeia também aceita rota pela
 AIMLAPI (`aimlapi:` na frente do modelo, chave `aimlapi_api` no `.env`), tirada em 2026-10-03 a pedido do usuário. Quando um não atende (sem saldo, limite do dia dos
 gratuitos, retirado do ar, servidor cheio), `openrouter_local.perguntar` passa na hora para o seguinte e deixa o que
 caiu de lado um tempo (`_FORA_DO_AR`): nunca esperar. O Space Bunny (`stealth/space-bunny-alpha`), que abria a cadeia,
-saiu do OpenRouter em 2026-10-05 (404) e saiu da lista e dos padrões do código. Comparação de 2026-10-03 nos testes da fábrica (descrever foto,
+saiu do OpenRouter em 2026-10-05 (404) e saiu da lista e dos padrões do código. No mesmo dia o `qwen/qwen3.8-27b`
+deixou de ser gratuito (só pago, e mais caro que o Flash), e o Gemma 4 31B gratuito entrou no lugar, a pedido do
+usuário. **Teste de 2026-10-05, nas tarefas do modelo principal** (escolher fotos pela folha de candidatos, descrever
+imagens para o Jev, compor a trilha, escrever buscas em JSON): o Gemma 4 31B e o 26B gratuitos deram 429 em todas as
+chamadas ("temporarily rate-limited upstream": o Google limita o gratuito para todos, não é a conta). Na cadeia isso
+custa meio segundo por minuto: o 429 deixa o Gemma de lado por 1 minuto e a chamada passa na hora para o Qwen Flash,
+que hoje faz quase tudo (uns US$ 0,80 por vídeo). O `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` (enxerga
+imagem) descreveu as fotos no formato certo, compôs a trilha e escreveu as buscas, mas levou 575 s para escolher as
+fotos de UMA cena e escolheu um só candidato: não serve para a escolha. O `nvidia/nemotron-3-super-120b-a12b:free`
+(só texto) responde rápido e faz o Motion IA (`motion_ia.modelos`). Comparação de 2026-10-03 nos testes da fábrica (descrever foto,
 escolher entre imagens, compor a trilha, dividir o roteiro): o Qwen gratuito passou em tudo, com português mais limpo
 que o Space Bunny; Gemma gratuita vivia lotada (429), Inkling só serve em ferramenta de agente, Dots falha com imagem.
 O limite dos gratuitos na conta é de 1.000 chamadas por dia, e um vídeo usa de 1.200 a 2.300: por isso a cadeia. O

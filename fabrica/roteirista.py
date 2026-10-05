@@ -239,7 +239,7 @@ def ativo(projeto) -> bool:
             and not (perfil.get("efeitos") or {}).get("ativo"))
 
 
-MIMO = "qwen/qwen3.8-27b:free"  # nome antigo; quem manda é openrouter.modelo_principal
+MIMO = "google/gemma-4-31b-it:free"  # nome antigo; quem manda é openrouter.modelo_principal
 
 
 def _modelo_agente(projeto):
