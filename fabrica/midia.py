@@ -2016,7 +2016,7 @@ def escrever_creditos(projeto):
     linhas = []
     for c in projeto.ler_json("cenas.json")["cenas"]:
         m = c.get("midia")
-        if not m:
+        if not m or m.get("fonte") == "motion_ia":
             continue
         autor = f" por {m['autor']}" if m.get("autor") else ""
         tipo = "Vídeo" if m["tipo"] == "video" else "Foto"

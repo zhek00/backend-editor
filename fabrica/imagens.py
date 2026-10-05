@@ -91,6 +91,8 @@ def gerar(projeto, apenas=None, log=print, direto=False, conferir=True):
 def _gerar(projeto, apenas=None, log=print, direto=False):
     cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]
     pendentes = pendentes_ia(projeto, cenas)
+    if pendentes and not projeto.offline:
+        pendentes = _motion_antes_da_ia(projeto, apenas, pendentes, log)
     from .midia import ia_ativa
 
     if pendentes and not ia_ativa(projeto):
@@ -314,6 +316,29 @@ def prompts_em_sequencia(projeto, pendentes, log=print) -> int:
         projeto.salvar_json("cenas.json", dados)
         log(f"  {mudaram} prompt(s) de cenas de IA seguidas reescritos, cada um no momento da própria fala")
     return mudaram
+
+
+def _motion_antes_da_ia(projeto, apenas, pendentes, log):
+    """Cena abstrata (número, ideia, conclusão, chamada) vira clipe de motion, de graça, no lugar da imagem de IA
+    (motion_ia.py). A que só tinha nota baixa (motion_so) e não virou motion volta para a foto que tinha: ela não
+    estava errada, e não vale pagar imagem por ela. Nunca para as imagens."""
+    from . import motion_ia
+    try:
+        feitas = motion_ia.resolver(projeto, pendentes, log)
+    except (Exception, SystemExit) as erro:
+        log(f"  motion IA falhou, as cenas seguem para a imagem de IA: {str(erro)[:160]}")
+        feitas = []
+    sobram = [c for c in pendentes if c["n"] not in feitas]
+    so_motion = [c["n"] for c in sobram if c.get("motion_so")]
+    if so_motion:
+        from . import corrigir
+        for n in so_motion:
+            corrigir._voltar_reserva(projeto, n, log)
+        log(f"  {len(so_motion)} cena(s) com nota baixa não viraram motion e voltaram para a foto que tinham")
+    if feitas or so_motion:
+        cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]
+        return pendentes_ia(projeto, cenas)
+    return pendentes
 
 
 def prompt_final(cena, perfil, com_referencia):

@@ -117,7 +117,7 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
   - O render põe em dia as animações desatualizadas antes de montar (`por_em_dia`, sem animar cena nova e sem perguntar ao modelo quando dá): antes uma animação desatualizada sumia do vídeo sem aviso.
   - **Trocar a imagem ou mexer nas cenas não mexe na animação.** Trocar a voz reposiciona a animação na fala nova (`_ancorar`) e leva cada elemento para a mesma palavra (`_remapear`), desenhando de novo **sem perguntar ao modelo**. Roteiro editado antes do trecho: acha as mesmas palavras pela sequência. A fala do trecho mudou: a animação sai e a criação faz outra pelas cenas.
   - Em dia (`animacoes.validas`): o MOV existe e a assinatura (modelo, dados, tempos das palavras, tamanho, estilo, `animacoes_modelos.VERSAO`, `VERSAO_CAMADA`) bate. As cenas por baixo não entram na assinatura.
-- **Quem faz:** o modelo principal (gratuito) escolhe um dos 8 modelos prontos (`frase`, `numero`, `contraste`, `radial`, `lista`, `fluxo`, `linha_do_tempo`, `mapa`) e preenche os textos curtos e o segundo de cada um. O design é da fábrica (`animacoes_modelos.py`). **Não deixar o modelo escrever o HTML livre:** isso foi testado e saiu ruim (elemento aparecendo antes de ser falado, elemento esquecido, layout embolado). O código (`conferir_dados`) encosta cada tempo na palavra falada mais próxima e corta texto comprido.
+- **Quem faz:** o modelo principal (gratuito) escolhe um dos 8 modelos prontos (`frase`, `numero`, `contraste`, `radial`, `lista`, `fluxo`, `linha_do_tempo`, `mapa`) e preenche os textos curtos e o segundo de cada um. O design é da fábrica (`animacoes_modelos.py`). **Não deixar o modelo escrever o HTML livre:** isso foi testado e saiu ruim (elemento aparecendo antes de ser falado, elemento esquecido, layout embolado). (A exceção é o Motion IA, abaixo, por decisão do usuário, com esqueleto fixo e conferência.) O código (`conferir_dados`) encosta cada tempo na palavra falada mais próxima e corta texto comprido.
 - **Conferência:** o `hyperframes check --json` reprova texto sobreposto, saindo da tela e regras de animação quebradas (o contraste fica de fora: com fundo transparente ele mede contra o nada); os erros voltam para o modelo, até `animacoes.tentativas`. Reprovada, as cenas ficam com a foto e o texto na tela.
 - **Render:** as cenas são montadas como sempre e a camada entra por cima no `_mixar`, no segundo da fala (mais a abertura), antes do avatar e da legenda. Cena embaixo de uma animação perde o texto na tela (`cenas_cobertas`), porque a animação traz o dela, e não ganha o toque de efeito da trilha. Versão em pé: sem a camada, com o texto na tela.
 - **Editor:** a animação tem **faixa própria (Motion), acima das Cenas**, e toca inteira por cima delas: `GET /cenas` devolve a lista `motion` (começo, fim, modelo, texto e a prévia) e o player toca a prévia `_previas/motion/ID_ASSINATURA.webm` (VP9 com transparência, `animacoes.previa_da_camada`, rota `/arquivos_previas/NOME/motion/ID.webm`) num vídeo próprio por cima das cenas. A cena mostra a imagem dela; `animada` diz que alguma animação passa por cima (o texto na tela sai). **Não voltar à montagem por cena** (`composicao_da_cena`, removida): na troca de cena a animação reiniciava ou sumia, embora no vídeo final seguisse inteira. O WebM transparente toca no Chrome, Edge, Brave e Firefox; o Safari não mostra a transparência.
@@ -127,6 +127,41 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - **O Corrigir julga e troca a imagem embaixo da animação normalmente** (o Jev julga como "imagem de fundo do assunto"), porque a troca não estraga mais a animação.
 - **Nunca para o vídeo:** sem Node, com a etapa desligada, offline ou com erro, a cena segue com a foto de sempre.
 - **Fontes:** Inter e Playfair Display (licença OFL) em `fabrica/recursos/fontes`. Não usar fontes do Windows, que não podem ir para os amigos.
+
+## Motion IA (cena abstrata reprovada vira clipe de motion)
+
+`fabrica/motion_ia.py`, do `PRD-MOTION.txt`, ligado por `motion_ia.ativo` no `config.yaml` (no `.env`,
+`JEV_MOTION_FALLBACK_ENABLED` e `JEV_MIN_SCORE_THRESHOLD`, de 0 a 10, valem por cima). Decisões do usuário em
+2026-10-04: **só em cena abstrata**, **HTML livre escrito pelo modelo** e o clipe **substitui a imagem da cena**.
+
+- **Quando entra:** a cena ia para a imagem de IA (errada no Jev ou `nao_existe`) ou tirou nota abaixo de
+  `motion_ia.nota_minima` (40) mesmo com o sujeito certo, **e a fala é abstrata**: número, ideia, conclusão, transição
+  ("o primeiro lugar vai te surpreender"), pedido de like. Quem decide é um modelo gratuito (`classificar`, guardado
+  em `abstrata` e `abstrata_fala`); cena com `animal` ou `exato` é concreta sem perguntar. **Cena concreta continua
+  indo para a imagem de IA**: o rinoceronte continua sendo um rinoceronte. O gancho é `imagens._motion_antes_da_ia`,
+  no começo de `_gerar`, então vale para a criação, a conferência, o diretor e o refazer; a nota baixa entra pelo fim do
+  `corrigir` (`_abstratas_com_nota_baixa`, marca `motion_so`).
+- **Quem faz:** só os modelos gratuitos (`motion_ia.modelos`, ou os `:free` e `stealth/` da cadeia de principais;
+  nunca o pago), em cascata, com no máximo 15 pedidos por minuto. Sem Groq (saiu da fábrica). O modelo escreve
+  css, html e js livres **dentro do esqueleto da fábrica** (`montar_html`): fundo escuro em gradiente radial, fontes
+  Inter e Playfair, a linha do tempo `tl` do GSAP pausada, o micro-movimento contínuo (zoom de 1 a 1,05) e
+  `window.seekToFrame`. As regras de design do PRD vão no pedido (`INSTRUCOES_HTML`): 70% vazio, tipografia cinética
+  palavra por palavra, pesos extremos, `expo.out` (a curva `cubic-bezier(0.16, 1, 0.3, 1)`), só geometria abstrata,
+  vidro com blur, os 240 px de baixo livres para a legenda.
+- **Conferência:** o código recusa animação ou transição em CSS, relógio, sorteio, endereço externo, emoji, curva
+  linear e palavra que a fala não diz (`problemas_do_codigo`, `_palavras_inventadas`); o `hyperframes check` recusa
+  texto saindo da tela ou sobreposto. O que reprovar volta para o modelo, até `motion_ia.tentativas`.
+- **Gravação:** o HyperFrames grava o MP4 quadro a quadro num Chrome escondido (é o pipeline do PRD, sem Playwright),
+  1920x1080, 30 quadros, com a duração exata da cena (cena 6 do natureza-teste-1min: 3,231 s, clipe de 3,233 s).
+  Fica em `midia/NNNN_motion.mp4`, com capa, e entra como a mídia da cena (`midia.fonte: motion_ia`, tipo
+  `video_real`); o que a cena tinha fica em `motion_reserva` (`motion_ia.desfazer` volta). O pedido do modelo fica em
+  `motion_ia/NNNN/partes.json`.
+- **Nunca para o vídeo:** falhou (sem Node, modelo fora do ar, reprovado), a cena ganha `motion_ia_falhou` (não tenta
+  de novo na mesma fala) e segue o caminho de antes: a imagem de IA se estava errada, a foto que tinha se era só nota
+  baixa (`motion_so`, sem pagar imagem).
+- **Onde ele não entra:** a conferência do Jev não julga o clipe (`corrigir.conferiveis`), a animação em camada não
+  vai por cima dele (`animacoes.elegivel`), e ele não vai para os créditos. No editor a cena mostra o selo
+  **"Motion IA"** na lista e no cartão Origem Visual, e pode ser trocada como qualquer outra.
 
 ## Texto na tela no tempo da palavra
 

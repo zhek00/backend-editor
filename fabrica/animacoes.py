@@ -285,6 +285,8 @@ def elegivel(projeto, cena, pedida=False) -> bool:
     animada se ela pedir. A imagem da cena não importa: a animação vai por cima de qualquer uma."""
     if (cena.get("animacao") or {}).get("desligada") and not pedida:
         return False
+    if (cena.get("midia") or {}).get("fonte") == "motion_ia":
+        return False  # a cena já é um clipe de motion (motion_ia.py): uma camada por cima embolaria os dois
     return cena.get("visual") in tipos(projeto) and bool((cena.get("texto") or "").strip())
 
 

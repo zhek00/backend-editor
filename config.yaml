@@ -179,6 +179,19 @@ animacoes:
   #   texto: "#F3EBDD"
   #   escurecer: 0.62          # quanto o material real escurece por trás da animação
 
+# Motion IA (PRD-MOTION.txt): cena ABSTRATA (número, ideia, conclusão, chamada para o canal) que iria para a imagem
+# de IA, ou que tirou nota abaixo de nota_minima no Jev, vira um clipe de motion graphics no lugar da foto, de graça.
+# Cena que cita animal, pessoa, lugar ou objeto continua indo para a imagem de IA. No .env, JEV_MOTION_FALLBACK_ENABLED
+# (true/false) e JEV_MIN_SCORE_THRESHOLD (de 0 a 10) valem por cima destes
+motion_ia:
+  ativo: true
+  nota_minima: 40             # de 0 a 100, como o Jev da fábrica (o mesmo NOTA_MINIMA_FIXA)
+  tentativas: 3               # pedidos ao modelo quando o código ou o HyperFrames reprovam o HTML
+  paralelo: 2                 # clipes gravados ao mesmo tempo (cada um abre um Chrome escondido)
+  max_por_minuto: 15          # pedidos por minuto aos modelos gratuitos
+  fps: 30
+  modelos: []                 # vazio: só os gratuitos da cadeia openrouter.principais (nunca o pago)
+
 # Revisão do vídeo pronto: depois do render, o modelo principal (gratuito) olha um quadro de cada cena do final.mp4
 # e aponta tela preta, imagem que não combina, texto cortado ou por cima da legenda. Só aponta, não troca nada.
 revisao_video:

@@ -752,6 +752,8 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any], motion: Optional[lis
         origem_badge = f"Foto Real ({fonte_nome})"
     else:
         origem_badge = tipo_efetivo
+    if midia_info and midia_info.get("fonte") == "motion_ia":
+        origem_badge = "Motion IA"  # clipe de motion feito pela fábrica no lugar da foto reprovada (motion_ia.py)
 
     # Efeito sonoro (SFX)
     efeito_url = None

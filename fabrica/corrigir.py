@@ -167,6 +167,7 @@ def conferiveis(projeto, numeros=None) -> list[dict]:
     return [c for c in projeto.ler_json("cenas.json")["cenas"]
             if (numeros is None or c["n"] in numeros)
             and c.get("tipo") in midia.TIPOS_REAIS and c.get("midia")
+            and (c.get("midia") or {}).get("fonte") != "motion_ia"  # o clipe de motion é abstrato de propósito
             and (c.get("texto") or "").strip()]
 
 
@@ -817,6 +818,11 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
             if certas:
                 log(f"  {len(certas)} cena(s) com o sujeito certo e nota baixa ficam com a imagem, para revisar: "
                     f"{', '.join(map(str, sorted(certas)))}")
+            # motion IA (PRD-MOTION): cena ABSTRATA com nota abaixo do limiar vira clipe de motion, de graça. Se o
+            # motion não sair, ela volta para a foto que tinha (motion_so), sem pagar imagem de IA
+            for n in _abstratas_com_nota_baixa(projeto, certas, melhor, agora, log):
+                precisam_ia[n] = {"cena": n, "prompt": "", "motivo": "nota baixa do Jev em cena abstrata: motion IA",
+                                  "motion_so": True}
             if precisam_ia:
                 resumo["geradas_com_ia"] = resolver_com_ia(projeto, list(precisam_ia.values()), log)
             precisam_ia = {}
@@ -852,6 +858,28 @@ def _conferir_sem_nota(projeto, alvo, nota_minima, log) -> dict:
 
 # ---------------------------------------------------------------------------------------- IA obrigatória
 
+def _abstratas_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
+    """Das cenas com nota baixa que ficariam com a foto, as abstratas abaixo do limiar do motion IA."""
+    from . import motion_ia
+    if not numeros or not motion_ia.ligado(projeto):
+        return []
+    limiar = motion_ia.nota_minima(projeto)
+    baixas = []
+    for n in numeros:
+        a = (melhor.get(n) or {}).get("avaliacao") or (agora.get(n) or {}).get("conferencia") or {}
+        if a.get("nota") is not None and a["nota"] < limiar and agora.get(n):
+            baixas.append(agora[n])
+    baixas = motion_ia.candidatas(projeto, baixas)
+    if not baixas:
+        return []
+    try:
+        tipos = motion_ia.classificar(projeto, baixas, log)
+    except (Exception, SystemExit) as erro:
+        log(f"  motion IA: não deu para separar as cenas abstratas ({str(erro)[:100]})")
+        return []
+    return [c["n"] for c in baixas if tipos.get(c["n"])]
+
+
 def mandar_para_ia(projeto, itens, log=print) -> list[int]:
     """A cena errada passa a usar imagem de IA. A foto que ela tinha fica guardada (ia_reserva) e volta se a imagem
     de IA sair pior ou não puder ser feita: nunca piorar."""
@@ -879,6 +907,10 @@ def mandar_para_ia(projeto, itens, log=print) -> list[int]:
         if (item.get("prompt") or "").strip() and not (c.get("prompt") or "").strip():
             c["prompt"] = item["prompt"].strip()
         c["ia_motivo"] = item.get("motivo") or "a imagem do banco mostrava outra coisa"
+        if item.get("motion_so"):
+            c["motion_so"] = True  # só o motion: se ele não sair, a foto volta (imagens._motion_antes_da_ia)
+        else:
+            c.pop("motion_so", None)
         mandadas.append(c["n"])
     projeto.salvar_json("cenas.json", dados)
     if mandadas:
