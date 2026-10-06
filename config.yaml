@@ -78,20 +78,38 @@ openrouter:
   max_tokens_teto: 24000
   # modelo de texto e de visão de TODA a fábrica (agente, cenas, textos na tela, escolha das fotos, descrição das
   # imagens). MiMo, Groq e Gemini não são mais usados. O Jev continua sendo o juiz.
-  modelo_principal: google/gemma-4-31b-it:free
+  modelo_principal: groq:qwen/qwen3.8-27b
   # os principais, em ordem: quando um não atende (sem saldo, limite do dia dos gratuitos, retirado do ar), a
   # chamada passa na hora para o seguinte, e ele fica de lado um tempo. "aimlapi:" na frente vai pela AIMLAPI
   # (chave aimlapi_api no .env). Em 5/10/2026 o Space Bunny saiu do OpenRouter (404) e o Qwen 27B deixou de ser
   # gratuito: a cadeia passou a ser o Gemma 4 31B gratuito (enxerga imagem) e o Qwen Flash pago. Os gratuitos têm
-  # 1.000 chamadas por dia na conta (um vídeo usa de 1.200 a 2.300)
+  # 1.000 chamadas por dia na conta (um vídeo usa de 1.200 a 2.300). Pedido do usuário em 2026-10-05: o máximo de
+  # API gratuita. "groq:" na frente vai pelo Groq, revezando as GROQ_API_KEY do .env (11 hoje, cada uma com 1.000
+  # pedidos por dia e 8.000 tokens por minuto); o Qwen 27B de lá enxerga imagem. Os gratuitos do OpenRouter vêm
+  # depois, e o pago só no fim. Pedido com imagem pula quem está em so_texto
   principais:
+    - groq:qwen/qwen3.8-27b
+    - groq:openai/gpt-oss-120b
     - google/gemma-4-31b-it:free
+    - dots-studio/dots-3-note-preview:free
+    - nvidia/nemotron-3-super-120b-a12b:free
+    - openrouter/free           # o roteador do OpenRouter escolhe um gratuito que esteja de pé
     - qwen/qwen3.8-flash        # última reserva, PAGA (US$ 0,15 e 0,47 por milhão de tokens; uns US$ 0,80 por vídeo
                                 # se fizer tudo): só entra quando os gratuitos acabam (o limite de 1.000 chamadas por dia
                                 # vale para a conta inteira) ou saem do ar. É o mais barato que enxerga imagem
+  espera_pelo_gratis: 60         # antes de pagar, espera até isso (s) por um gratuito que está fora só pelo limite do
+                                # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min
+  so_texto:                      # quem não enxerga imagem: pedido com imagem pula estes
+    - groq:openai/gpt-oss
+    - nvidia/nemotron-3-super
+    - nvidia/nemotron-3-ultra
+    - nvidia/nemotron-3.5-lightning
   raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high
+    dots-studio/: nenhum        # o Dots pensava 7 mil tokens e levava 99 s numa escolha de fotos; sem pensar, 25 s
     xiaomi/mimo: nenhum         # com o raciocínio ligado, alguns lotes de cenas gastavam tudo pensando e voltavam vazios
     stealth/: low               # modelos stealth pensam antes de responder (o Space Bunny gastava tudo pensando)
+    qwen/: low                  # o Qwen Flash estourava os 10 mil tokens pensando na busca das cenas cortadas e refazia
+                                # com 24 mil, minutos cada (nunca-deve-ter-dentro-de-casa-parte-2, 2026-10-05)
     deepseek/: low              # o DeepSeek V4 Flash pensava uns 8 mil tokens por lote de cenas, levava 30 min para um vídeo de
                                 # 8 min e às vezes estourava o limite só pensando
 
@@ -99,6 +117,8 @@ groq:
   modelo: openai/gpt-oss-120b  # aceita esquema JSON estrito. Alternativa: llama-3.3-70b-versatile
   raciocinio: medium         # low, medium ou high, só nos modelos gpt-oss
   tokens_por_minuto: 8000    # limite do plano gratuito, por conta. O Groq conta a reserva da resposta aqui dentro
+  max_tokens: 3000           # reserva da resposta. Com 8000, cada escolha de fotos ocupava o minuto inteiro da chave,
+                             # as 11 chaves saturavam na criação e a escolha caía no Qwen pago (2026-10-05)
   saida_minima: 700          # se sobrar menos que isso para a resposta, o pedido é dividido em dois
   modelo_visao: qwen/qwen3.8-27b  # olha as miniaturas ao escolher material real
   cenas_por_lote: 20         # cenas decididas por chamada. Menos cenas gasta menos do limite por minuto
@@ -116,7 +136,13 @@ roteirista:
   ativo: true
   provedor: openrouter       # openrouter: o modelo de roteirista.modelo, com a cadeia de principais de reserva.
                              # mimo: só a cadeia de principais. claude: o Claude da assinatura (não usar na fábrica)
-  modelo: deepseek/deepseek-v4-flash  # agente de roteiro (mapa e cenas) e diretor do Corrigir. Medido no roteiro de
+  # agente de roteiro (mapa e cenas) e diretor do Corrigir, em cadeia, e depois a cadeia de principais. Pedido do
+  # usuário em 2026-10-05, o máximo de gratuito: o Nemotron Ultra gratuito na frente, o DeepSeek pago de reserva.
+  # Comparados com o mesmo pedido em 3 lotes reais, ele foi igual ou melhor e não estourou o limite pensando
+  modelos:
+    - nvidia/nemotron-3-ultra-550b-a55b:free
+    - deepseek/deepseek-v4-flash
+  modelo: deepseek/deepseek-v4-flash  # (antigo, vale sem a lista acima) Medido no roteiro de
                              # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas
   esforco_claude: medium     # low, medium ou high: quanto o Claude pensa em cada lote de cenas
   cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
@@ -132,7 +158,23 @@ claude:
   processos: 2               # chamadas ao Claude ao mesmo tempo
 
 midia:
-  escolha: mimo            # quem escolhe as fotos: o modelo principal (Gemma gratuito, enxerga imagens)
+  escolha: mimo            # quem escolhe as fotos: a cadeia de visão (modelos_visao, abaixo)
+  # quem olha as imagens (escolha das fotos, descrição para o Jev, revisão do vídeo pronto): os gratuitos que enxergam
+  # imagem primeiro, o pago só de reserva e sem raciocínio. Pedido do usuário em 2026-10-05: a escolha das fotos do
+  # nunca-deve-ter-dentro-de-casa-parte-2 (30 min) caiu toda no Qwen pago e custou US$ 2,44. Medido na cena 7 do
+  # natureza-teste-1min: o Dots sem raciocínio escolhe em 25 s, de graça; o Qwen sem raciocínio, uns US$ 0,001
+  modelos_visao:
+    - groq:qwen/qwen3.8-27b     # 11 chaves do Groq, 1,1 s por folha de candidatos
+    - dots-studio/dots-3-note-preview:free
+    - google/gemma-4-31b-it:free
+    - google/gemma-4-26b-a4b-it:free
+    - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free   # descreve bem; na escolha às vezes não escolhe nada
+    - openrouter/free
+    - qwen/qwen3.8-flash
+  raciocinio_visao:
+    dots-studio/: nenhum
+    qwen/: nenhum
+    nvidia/: nenhum
   reserva: gemini          # entra sozinho quando a cota de 24 horas do Groq acaba no meio da escolha
   conferir_na_captura: true  # o Jev confere cada candidato antes de baixar, pela frase que o modelo escreveu do que vê nele.
                            # Sem custo de visão a mais: a frase sai da mesma chamada da escolha. false volta ao jeito antigo
@@ -196,6 +238,8 @@ motion_ia:
   # no .env vale por cima. O Nemotron Super só lê texto, e aqui basta: fez a cena 11 do natureza-teste-1min de primeira
   modelos:
     - nvidia/nemotron-3-super-120b-a12b:free
+    - groq:openai/gpt-oss-120b
+    - groq:qwen/qwen3.8-27b
     - google/gemma-4-31b-it:free
 
 # Revisão do vídeo pronto: depois do render, o modelo principal (gratuito) olha um quadro de cada cena do final.mp4

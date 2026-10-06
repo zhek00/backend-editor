@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as EsperaEsgotada
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -359,7 +359,18 @@ def _esteira(nome: str, task_id: str) -> None:
         marcar("narracao")
     if cenas_prontas is not None:
         _atualizar(task_id, mensagem="Narração pronta! Esperando o agente terminar o JSON das cenas...")
-        cenas_prontas.result()  # o agente já tentou de novo sozinho; um erro que sobrou aparece aqui
+        # enquanto espera, a barra anda com os lotes que o agente já decidiu (de 15% a 35%): antes ela ficava parada
+        # nos 15% e a criação parecia travada
+        while True:
+            try:
+                cenas_prontas.result(timeout=5)  # o agente já tentou de novo sozinho; um erro que sobrou aparece aqui
+                break
+            except EsperaEsgotada:
+                andamento = roteirista.PROGRESSO.get(p.nome) or {}
+                if andamento.get("total"):
+                    feitos, total = andamento["feitos"], andamento["total"]
+                    _atualizar(task_id, progresso_pct=15 + int(20 * feitos / total),
+                               mensagem=f"Narração pronta! O agente já decidiu {feitos} de {total} lotes de cenas...")
 
     # PASSO 2: Direção de Arte e Divisão de Cenas
     if "cenas" not in feitas:
@@ -436,6 +447,10 @@ def _esteira(nome: str, task_id: str) -> None:
         _etapa(task_id, "Completar cenas", lambda: midia.buscar(p, apenas=set(faltam), log=log_w, permissivo=True))
     # regra fixa: jamais repetir imagem, conferido na imagem em si, antes de dizer que está pronto
     _etapa(task_id, "Sem imagens repetidas", lambda: midia.tirar_repetidas(p, log=log_w))
+    if cenas_sem_arquivo(p) and midia.ia_ativa(p):
+        # a repetida que não achou foto nova nos bancos vai para a imagem de IA (ia.ativa). Antes a criação parava
+        # pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com a IA ligada)
+        _etapa(task_id, "Imagens de IA", lambda: imagens.gerar(p, log=log_w))
     if cenas_sem_arquivo(p):
         # nada do assunto nos bancos nem em outra cena do mesmo assunto: pôr outra coisa seria gafe, então pede ajuda
         por_n = {c["n"]: c for c in p.ler_json("cenas.json")["cenas"]}
@@ -1491,21 +1506,6 @@ def _recusar_se_criando(nome: str, acao: str) -> None:
             f"Espere terminar para {acao}; o editor avisa quando ficar pronto."))
 
 
-@app.delete("/api/projetos/{nome}")
-def apagar_projeto(nome: str):
-    """Apaga a pasta inteira do projeto em projetos/<nome>."""
-    pasta = PROJETOS / nome
-    if not pasta.exists() or not (pasta / "projeto.json").exists():
-        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
-
-    pasta_resolvida = pasta.resolve()
-    raiz_resolvida = PROJETOS.resolve()
-    if raiz_resolvida not in pasta_resolvida.parents:
-        raise HTTPException(status_code=403, detail="Acesso negado.")
-
-    ultimo_erro = None
-    for tentativa in range(5):
-        try:
 # tarefas que trocam a imagem das cenas: o render não pode rodar junto (nem elas junto do render)
 _MEXEM_NA_MIDIA = ("corrigir_", "continuar_", "limpeza_")
 
@@ -1525,6 +1525,21 @@ def _recusar_se_ocupado(nome: str, prefixos: tuple, acao: str) -> None:
             f"Espere terminar para {acao}."))
 
 
+@app.delete("/api/projetos/{nome}")
+def apagar_projeto(nome: str):
+    """Apaga a pasta inteira do projeto em projetos/<nome>."""
+    pasta = PROJETOS / nome
+    if not pasta.exists() or not (pasta / "projeto.json").exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+
+    pasta_resolvida = pasta.resolve()
+    raiz_resolvida = PROJETOS.resolve()
+    if raiz_resolvida not in pasta_resolvida.parents:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    ultimo_erro = None
+    for tentativa in range(5):
+        try:
             shutil.rmtree(pasta_resolvida)
             return {"ok": True, "nome": nome}
         except PermissionError as e:
@@ -2031,6 +2046,7 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
     _recusar_se_criando(nome, "renderizar")
+    _recusar_se_ocupado(nome, _MEXEM_NA_MIDIA, "renderizar")
 
     p = Projeto(nome)
     task_id = f"render_{nome}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2046,7 +2062,6 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
             "projeto": nome,
             "status": "renderizando",
             "progresso_pct": 5,
-    _recusar_se_ocupado(nome, _MEXEM_NA_MIDIA, "renderizar")
             "etapa_atual": "Iniciando a versão em pé (9:16)..." if payload.vertical else "Iniciando montagem com FFmpeg...",
             "concluido": False,
             "logs": ["Iniciando renderização da versão em pé..." if payload.vertical else "Iniciando renderização..."],
@@ -2209,6 +2224,7 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
     payload = payload or CorrigirMidiaPayload()
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "corrigir a mídia")
     p = Projeto(nome)
     task_id = f"corrigir_{nome}_{datetime.now():%Y%m%d_%H%M%S}"
     with TAREFAS_LOCK:
@@ -2224,7 +2240,6 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
         def log_w(msg):
             _atualizar_progresso(task_id, msg)
 
-    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "corrigir a mídia")
         try:
             cfg = p.config.get("corrigir") or {}
             usos = {"groq": groq_local, "gemini": gemini_local, "jev": openrouter_local}
@@ -2338,6 +2353,7 @@ def continuar_carregamento(nome: str, bg_tasks: BackgroundTasks, payload: Option
               "preco_por_imagem_usd": preco, "nada_a_fazer": not sem_acervo and not sem_ia}
     if not (payload and payload.confirmar) or resumo["nada_a_fazer"]:
         return resumo
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "continuar o carregamento")
 
     task_id = f"continuar_{nome}_{datetime.now():%Y%m%d_%H%M%S}"
     with TAREFAS_LOCK:
@@ -2353,7 +2369,6 @@ def continuar_carregamento(nome: str, bg_tasks: BackgroundTasks, payload: Option
                 if task_id in TAREFAS:
                     TAREFAS[task_id]["logs"].append(str(msg))
 
-    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "continuar o carregamento")
         try:
             if sem_acervo:
                 with TAREFAS_LOCK:
@@ -2382,6 +2397,7 @@ def limpar_midia(nome: str, bg_tasks: BackgroundTasks):
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
 
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "limpar a mídia")
     p = Projeto(nome)
     task_id = f"limpeza_{nome}_{datetime.now():%Y%m%d_%H%M%S}"
     with TAREFAS_LOCK:
@@ -2397,7 +2413,6 @@ def limpar_midia(nome: str, bg_tasks: BackgroundTasks):
             "inicio": datetime.now().isoformat(),
         }
 
-    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "limpar a mídia")
     def limpeza_worker():
         def log_w(msg):
             with TAREFAS_LOCK:

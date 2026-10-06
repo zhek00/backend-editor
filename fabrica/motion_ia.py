@@ -75,7 +75,8 @@ def e_motion(cena) -> bool:
 
 
 def _gratuito(modelo) -> bool:
-    return modelo.endswith(":free") or modelo.startswith("stealth/")
+    from .openrouter_local import gratuita
+    return gratuita(modelo)
 
 
 def modelos(projeto) -> list:
@@ -118,8 +119,8 @@ def _perguntar(projeto, etapa, instrucoes, pedido, esquema, log, temperatura=0.4
     for k, modelo in enumerate(lista):
         _esperar_vez(projeto)
         try:
-            return openrouter_local._perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, (),
-                                                    temperatura, cadeia=k < len(lista) - 1)
+            return openrouter_local.uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, (),
+                                             temperatura, cadeia=k < len(lista) - 1)
         except (openrouter_local.RotaIndisponivel, RuntimeError, SystemExit) as e:
             erro = e
             log(f"  motion IA: {modelo} não atendeu ({str(e)[:100]})")

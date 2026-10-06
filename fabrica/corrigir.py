@@ -176,8 +176,8 @@ def provedor(projeto) -> str:
 
 
 def modelo_de_visao(projeto):
-    """Quem descreve as imagens para o Jev julgar: o modelo principal (enxerga imagens, texto e vídeo)."""
-    return openrouter_local, openrouter_local.principal(projeto)
+    """Quem descreve as imagens para o Jev julgar: a cadeia de visão (openrouter_local.visao), gratuitos primeiro."""
+    return openrouter_local.VISAO, None
 
 
 def _bloco_da_cena(cena, quadros, vizinhas):
@@ -348,7 +348,7 @@ _reserva_ligada = set()  # projetos que já caíram para o modelo de reserva nes
 
 
 def _com_reserva(projeto, etapa, instrucoes, pedido, esquema, log=print, **extras):
-    """Chama o modelo que descreve as imagens (o modelo principal). O nome ficou de quando havia reserva."""
+    """Chama o modelo que descreve as imagens (a cadeia de visão). O nome ficou de quando havia reserva."""
     modulo, modelo = modelo_de_visao(projeto)
     return modulo.perguntar(projeto, etapa, instrucoes, pedido, esquema, log=log, modelo=modelo, **extras)
 
@@ -390,7 +390,13 @@ def _descrever_lote(projeto, lote, log):
     except RuntimeError as e:
         log(f"  não consegui descrever as imagens das cenas {lote[0][0]['n']} a {lote[-1][0]['n']} ({e})")
         return {}
-    return {i["n"]: midia.compor_o_que_se_ve(i) for i in resposta.get("cenas", []) if midia.compor_o_que_se_ve(i)}
+    itens = [i for i in resposta.get("cenas", []) if isinstance(i, dict)]
+    if len(lote) == 1 and len(itens) == 1:
+        # uma cena por chamada (cenas_por_descricao: 1): a resposta é dela, seja qual for o número que o modelo escreveu.
+        # O Qwen do Groq devolveu outro número e as imagens de IA do nunca-deve-ter-dentro-de-casa-parte-2 ficaram sem
+        # descrição, sem a conferência do Jev
+        itens[0]["n"] = lote[0][0]["n"]
+    return {i["n"]: midia.compor_o_que_se_ve(i) for i in itens if midia.compor_o_que_se_ve(i)}
 
 
 def _texto_da_fonte(cena):

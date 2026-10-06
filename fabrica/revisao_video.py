@@ -122,8 +122,7 @@ def revisar(projeto, log=print, numeros=None) -> dict:
         pedido = (f"Revise estas {len(lote)} cenas, na ordem das imagens. Devolva um item por cena, com o mesmo n.\n\n"
                   + "\n".join(linhas))
         try:
-            resposta = openrouter_local.perguntar(projeto, "revisão do vídeo", INSTRUCOES, pedido, ESQUEMA, log=log,
-                                                  modelo=openrouter_local.principal(projeto),
+            resposta = openrouter_local.VISAO.perguntar(projeto, "revisão do vídeo", INSTRUCOES, pedido, ESQUEMA, log=log,
                                                   imagens=[quadros[c["n"]] for c in lote], temperatura=0)
         except (RuntimeError, SystemExit) as e:
             log(f"  não consegui revisar as cenas {lote[0]['n']} a {lote[-1]['n']} ({str(e)[:80]})")

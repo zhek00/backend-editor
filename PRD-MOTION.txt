@@ -1,0 +1,141 @@
+# Documento de Requisitos do Produto (PRD)
+## Motor de Motion Graphics Autônomo — Estilo Editorial Vox / SaaS
+
+---
+
+### 1. Visão Geral e Objetivo
+Implementar no **TipLabs** um módulo de **fallback de Motion Graphics** para substituir cenas cujas mídias de acervo foram rejeitadas pelo avaliador JEV.
+
+O motor deve gerar animações 2D no estilo **Editorial / Vox / SaaS Explainer** (fundo creme/off-white com textura de pontos, tipografia serifada/sans-serif híbrida, diagramas vetoriais SVG, cards em squircle e gráficos animados), utilizando **APIs 100% gratuitas (Groq e OpenRouter)** sem custo por cena.
+
+---
+
+### 2. Regra Zero de Arquitetura (CRÍTICO)
+* **Preservação do Sistema Existente:** É estritamente proibido alterar, refatorar ou apagar rotas de API, gerenciamento de estado da timeline, banco de dados ou renderização original do TipLabs.
+* **Isolamento de Código:** Todo o serviço deve ser criado dentro da pasta `/src/services/motionEngine/`.
+* **Substituição Transparente:** O arquivo `.mp4` gerado pelo renderizador local substituirá o caminho da mídia original no JSON da cena, exatamente como faz o acervo.
+* **Fallback de Segurança:** Caso ocorra falha de renderização ou timeout, o sistema manterá a mídia original do acervo sem interromper o fluxo do projeto.
+
+---
+
+### 3. Diretrize de Design System (Estilo Vox / SaaS Editorial)
+
+O código HTML5/Canvas/SVG gerado pela LLM DEVE obrigatoriamente seguir estas regras visuais rígidas:
+
+┌────────────────────────────────────────────────────────┐
+│ TOP: Tipografia Misturada (Serif + Sans) + Highlights │
+├────────────────────────────────────────────────────────┤
+│ CENTER: Diagrama 2D / Conexões SVG / Squircle Cards    │
+├────────────────────────────────────────────────────────┤
+│ BACKGROUND: Off-White (#F7F6F2) + Dot Grid Texture     │
+└────────────────────────────────────────────────────────┘
+
+
+#### A. Paleta de Cores e Fundo
+* **Fundo Base:** Off-White aquecido (`#F7F6F2` ou `#F4F3EF`).
+* **Textura:** Grid de pontos sutis usando CSS:
+  `background-image: radial-gradient(#d1d0c9 1px, transparent 1px); background-size: 24px 24px;`
+* **Cores de Acento:** Verde Floresta (`#166534`), Azul Royal (`#2563EB`), Laranja Quente (`#EA580C`) e Preto Grafite (`#1A1A1A`).
+
+#### B. Componentes Visuais (Primitivas do Motion)
+1. **Cards (Squircles):** Quadrados com cantos super arredondados (`border-radius: 20px`), fundo branco `#FFFFFF` e sombra suave `box-shadow: 0 12px 32px rgba(0,0,0,0.06)`.
+2. **Conectores SVG:** Linhas curvas suaves (`path` SVG com `cubic-bezier`) conectando os cards. As linhas devem ser animadas usando `stroke-dashoffset`.
+3. **Gráficos Dinâmicos:** Barras verticais que sobem de baixo para cima com `scaleY(0 -> 1)` e setas de tendência vetoriais apontando para cima.
+4. **Tipografia Híbrida:** 
+   * Texto normal em Sans-Serif clean (Inter / SF Pro).
+   * Palavra de destaque/ênfase em **Serif elegante com cor destacada** (ex: Georgia / Playfair Display).
+
+#### C. Física e Animação (Spring Engine)
+* **Proibido:** Animações com `linear` ou entradas estáticas.
+* **Obrigatório:** Entrada de cards e textos com física de mola (`cubic-bezier(0.34, 1.56, 0.64, 1)` ou GSAP `back.out(1.7)`).
+* **Micro-Movimento:** Flutuação suave contínua (`y: -5px` a `5px`) nos cards para manter a tela viva.
+
+---
+
+### 4. Master Prompt do Sistema (System Prompt Injetado na LLM)
+
+```text
+Você é um Diretor de Motion Graphics especialista no estilo Editorial Vox e SaaS Product Animations (HTML5, SVG, GSAP, Canvas2D).
+
+Sua missão é criar um código HTML5 único e autônomo para uma cena de vídeo de alta qualidade.
+
+REGRAS DE DESIGN (ESTILO VOX / EDITORIAL):
+1. CANVAS & FUNDO:
+   - Resolução: 1920x1080 (ou 1080x1920 para vertical).
+   - Fundo: Off-white (#F7F6F2) com um padrão de pontos em CSS (dot-grid).
+2. ELEMENTOS GRÁFICOS:
+   - Use cards brancos arredondados (squircles) com sombras ultra-suaves.
+   - Conecte elementos usando caminhos vetoriais SVG (curvas de Bézier) animados.
+   - Se a narração citar dados/crescimento, inclua um gráfico de barras animado subindo com seta de tendência.
+   - Se a narração citar fluxo/processo, monte um diagrama horizontal com ícones encadeados.
+3. TIPOGRAFIA:
+   - Misture fonte Sans-Serif limpa para a frase base e Serif elegante para as palavras-chave de destaque.
+4. FÍSICA E ANIMAÇÃO:
+   - Use GSAP 3 (via CDN) com curvas de mola (back.out / custom bezier) para entrada dos elementos.
+5. DETERMINISMO HEADLESS:
+   - Exponha no escopo global a função:
+     window.seekToFrame = function(frameIndex, totalFrames, fps) { ... }
+   - Essa função deve controlar e atualizar manualmente o estado da animação (GSAP seek) frame a frame.
+
+Retorne APENAS o código HTML dentro do bloco ```html. Sem textos ou explicações.
+5. Arquitetura de Chamadas (Groq / OpenRouter Failover)
+[Cena Rejeitada pelo JEV < 6.0]
+               │
+               ▼
+┌────────────────────────────────┐
+│ Groq API (Primary)             │ ──► Modelo: llama-3.3-70b-versatile
+└──────────────┬─────────────────┘
+               │ (Erro/Limit 429)
+               ▼
+┌────────────────────────────────┐
+│ Groq API (Secondary)           │ ──► Modelo: llama3-8b-8192
+└──────────────┬─────────────────┘
+               │ (Erro/Limit 429)
+               ▼
+┌────────────────────────────────┐
+│ OpenRouter Free (Fallback)     │ ──► Modelo: qwen/qwen-2.5-coder-32b:free
+└────────────────────────────────┘
+6. Pipeline de Renderização Local (Headless Render)
+O backend salva o código HTML gerado em um arquivo temporário em ./temp/motion_scene.html.
+
+O Playwright abre a página em segundo plano na resolução exata da cena.
+
+Um loop Node.js executa o render frame a frame:
+
+Invocando window.seekToFrame(frame, totalFrames, 30).
+
+Capturando o buffer da imagem diretamente da VRAM.
+
+Enviando o buffer via pipe direto para o FFMPEG.
+
+O FFMPEG gera o arquivo .mp4 compilado em H.264 e salva na pasta final do projeto.
+
+Os arquivos temporários são deletados.
+
+7. Variáveis de Ambiente (.env)
+Snippet de código
+# Ativação do Módulo
+JEV_MOTION_FALLBACK_ENABLED=true
+JEV_MIN_SCORE_THRESHOLD=6.0
+
+# Provedor Groq (Gratuito)
+GROQ_API_KEY=gsk_sua_chave_groq
+GROQ_MODEL_PRIMARY=llama-3.3-70b-versatile
+GROQ_MODEL_SECONDARY=llama3-8b-8192
+GROQ_MAX_RPM=12
+
+# Provedor OpenRouter (Gratuito)
+OPENROUTER_API_KEY=sk-or-v1-sua_chave_openrouter
+OPENROUTER_FREE_MODELS=qwen/qwen-2.5-coder-32b:free,deepseek/deepseek-r1:free
+
+# Renderizador Headless
+MOTION_RENDER_FPS=30
+MOTION_OUTPUT_DIR=./public/renders/motion
+8. Critérios de Aceitação
+[ ] O código gerado recria a estética de fundo creme com dot-grid, cards arredondados e diagrama SVG animado.
+
+[ ] O sistema não faz nenhuma chamada para APIs pagas (Claude/OpenAI), mantendo o custo de geração em R$ 0,00.
+
+[ ] Nenhuma funcionalidade anterior do TipLabs foi alterada ou quebrada.
+
+[ ] O arquivo MP4 exportado está perfeitamente sincronizado com a duração da cena.

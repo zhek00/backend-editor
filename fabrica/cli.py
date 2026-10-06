@@ -126,6 +126,8 @@ def completar_depois_da_narracao(p, a, antes):
     if faltam:
         midia.buscar(p, apenas=set(faltam), log=log, permissivo=True)
     midia.tirar_repetidas(p, log=log)
+    if corrigir.depois_da_narracao(p, {})["vazias"] and midia.ia_ativa(p):
+        etapa_imagens(p, a)  # a repetida sem foto nova nos bancos vai para a imagem de IA, com o custo perguntado
     faltam = sorted(corrigir.depois_da_narracao(p, {})["vazias"])
     if faltam:
         log(f"  ainda sem imagem: cenas {', '.join(map(str, faltam))}. Suba uma foto delas no editor ou ligue a IA")

@@ -123,22 +123,83 @@ def parte_de_imagem(caminho):
             "url": "data:image/jpeg;base64," + base64.standard_b64encode(arquivo.read()).decode()}}
 
 
-def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
+def visao(projeto) -> list:
+    """Quem olha as imagens (escolha das fotos, descrição para o Jev, revisão do vídeo pronto): midia.modelos_visao,
+    os gratuitos que enxergam imagem primeiro e o pago por último; sem a lista, a cadeia de principais.
+
+    Pedido do usuário em 2026-10-05: no nunca-deve-ter-dentro-de-casa-parte-2 (30 min, 457 cenas) a escolha das
+    fotos caiu toda no Qwen Flash pago, porque o Gemma gratuito estava em 429, e custou US$ 2,44: 1.351 chamadas,
+    2.500 tokens de raciocínio em cada. A análise da mídia tem que ser gratuita; o pago é só a reserva, sem pensar."""
+    lista = [m for m in ((projeto.config.get("midia") or {}).get("modelos_visao") or []) if m]
+    return lista or principais(projeto)
+
+
+class _Visao:
+    """Mesma cara de openrouter_local (perguntar), pela cadeia de visao() e com midia.raciocinio_visao por cima do
+    raciocinio_por_modelo: o Dots e o Qwen sem raciocínio escolhem as fotos em 25 a 30 s, em vez de 99 s e 2.500
+    tokens pagos."""
+
+    @staticmethod
+    def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
+        lista = visao(projeto)
+        cfg = projeto.config.get("openrouter") or {}
+        raciocinio = {**(cfg.get("raciocinio_por_modelo") or {}),
+                      **((projeto.config.get("midia") or {}).get("raciocinio_visao") or {})}
+        return perguntar(projeto, etapa, instrucoes, pedido, esquema, log=log, modelo=lista[0], imagens=imagens,
+                         temperatura=temperatura, cadeia_de=lista, raciocinio=raciocinio)
+
+
+VISAO = _Visao()
+
+
+def gratuita(rota) -> bool:
+    """A rota não cobra: os :free e o roteador gratuito do OpenRouter, os stealth e o Groq."""
+    return rota.endswith(":free") or rota == "openrouter/free" or rota.startswith(("groq:", "stealth/"))
+
+
+def _espera_pelo_gratis(projeto, rotas):
+    """Segundos até a primeira rota gratuita da cadeia voltar, se ela está fora só por pouco (o limite do minuto);
+    None se não há gratuita para esperar, ou se ela demora mais que openrouter.espera_pelo_gratis (60 s)."""
+    limite = float((projeto.config.get("openrouter") or {}).get("espera_pelo_gratis", 60))
+    agora = time.time()
+    voltas = [_FORA_DO_AR[r] - agora for r in rotas if gratuita(r) and _FORA_DO_AR.get(r, 0) > agora]
+    if not voltas or min(voltas) > limite:
+        return None
+    return max(min(voltas), 0) + 0.5
+
+
+def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
+              cadeia_de=None, raciocinio=None, _esperas=0):
     """imagens é uma lista de caminhos de JPG enviados junto do pedido.
 
-    Com um modelo da cadeia de principais, quem não atender passa a vez para o seguinte na hora (nunca esperar)."""
+    Com um modelo da cadeia de principais (ou de cadeia_de), quem não atender passa a vez para o seguinte na hora
+    (nunca esperar). raciocinio: a tabela de esforço por modelo no lugar de openrouter.raciocinio_por_modelo."""
     cfg = projeto.config.get("openrouter") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
-    cadeia = principais(projeto)
+    cadeia = cadeia_de or principais(projeto)
     rotas = cadeia[cadeia.index(modelo):] if modelo in cadeia else [modelo]
+    if imagens:
+        # pedido com imagem não vai para quem só lê texto (o GPT-OSS do Groq, o Nemotron Super)
+        rotas = [r for r in rotas if ve_imagem(projeto, r)] or rotas
     agora = time.time()
     vivas = [r for r in rotas if _FORA_DO_AR.get(r, 0) <= agora] or rotas[-1:]
     erro = None
     for k, rota in enumerate(vivas):
         ultima = k == len(vivas) - 1
+        if not gratuita(rota) and _esperas < 3:
+            # antes de pagar: se os gratuitos estão fora só pelo limite do minuto, espera uns segundos por eles.
+            # No nunca-deve-ter-dentro-de-casa-parte-2 um pico da conferência (Groq e gratuitos do OpenRouter no
+            # limite do minuto ao mesmo tempo) mandou 27 descrições para o Qwen pago em 1 minuto
+            espera = _espera_pelo_gratis(projeto, rotas)
+            if espera is not None:
+                log(f"  os gratuitos estão no limite do minuto: esperando {espera:.0f} s em vez de pagar o {rota}")
+                time.sleep(espera)
+                return perguntar(projeto, etapa, instrucoes, pedido, esquema, log=log, modelo=modelo, imagens=imagens,
+                                 temperatura=temperatura, cadeia_de=cadeia_de, raciocinio=raciocinio,
+                                 _esperas=_esperas + 1)
         try:
-            return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
-                                   cadeia=not ultima)
+            return uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
+                            cadeia=not ultima, raciocinio=raciocinio)
         except RotaIndisponivel as e:
             erro = e
             if not ultima:
@@ -148,7 +209,43 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             if ultima:
                 raise
             log(f"  {rota} falhou ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
-    raise RuntimeError(f"Nenhum modelo principal atendeu na etapa {etapa}: {erro}")
+    raise RuntimeError(f"Nenhum modelo da cadeia atendeu na etapa {etapa}: {erro}")
+
+
+def ve_imagem(projeto, rota) -> bool:
+    """A rota aceita imagem? Não, se começa por um dos prefixos de openrouter.so_texto."""
+    so_texto = (projeto.config.get("openrouter") or {}).get("so_texto") or []
+    return not any(rota.startswith(p) for p in so_texto)
+
+
+def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura, cadeia=False,
+             raciocinio=None):
+    """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
+    if not rota.startswith("groq:"):
+        return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
+                               cadeia=cadeia, raciocinio=raciocinio)
+    from . import groq_local
+    tabela = raciocinio if raciocinio is not None else ((projeto.config.get("openrouter") or {}).get("raciocinio_por_modelo") or {})
+    sistema = instrucoes + REGRA_DO_ALFABETO
+    obrigatorias = (esquema or {}).get("required", [])
+    resposta = None
+    for tentativa in range(2):
+        resposta = groq_local.perguntar(projeto, etapa, sistema, pedido, esquema, log=log, modelo=rota[5:],
+                                        imagens=imagens, temperatura=temperatura, na_cadeia=True, raciocinio=tabela)
+        faltam = [k for k in obrigatorias if not isinstance(resposta, dict) or k not in resposta]
+        quebrados = [] if faltam else _trechos_de_outro_alfabeto(resposta)
+        if not faltam and not quebrados:
+            return resposta
+        # as mesmas conferências da rota do OpenRouter: chaves que faltaram e pedaços de outro alfabeto
+        sistema = instrucoes + REGRA_DO_ALFABETO + (
+            f"\n\nATENÇÃO: a resposta anterior não trouxe as chaves {', '.join(faltam)}. Use exatamente os nomes de "
+            "chave do esquema." if faltam else
+            "\n\nATENÇÃO: a resposta anterior misturou caracteres de outros alfabetos no meio do texto. Escreva tudo "
+            "só com o alfabeto latino, em português ou em inglês.")
+    faltam = [k for k in obrigatorias if not isinstance(resposta, dict) or k not in resposta]
+    if faltam:
+        raise RuntimeError(f"o Groq ({rota[5:]}) não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")
+    return _sem_outro_alfabeto(resposta)
 
 
 def _fora_do_ar(rota, minutos, motivo):
@@ -157,7 +254,7 @@ def _fora_do_ar(rota, minutos, motivo):
 
 
 def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, imagens, temperatura, cadeia=False,
-                    traduzir=True):
+                    traduzir=True, raciocinio=None):
     """Uma rota da cadeia. Com cadeia=True (há outra depois), o que não volta logo vira RotaIndisponivel.
     traduzir=False é a própria chamada de tradução dos trechos de outro alfabeto, que não traduz de novo."""
     cfg = projeto.config.get("openrouter") or {}
@@ -190,7 +287,8 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
         "response_format": {"type": "json_schema", "json_schema": {"name": "resposta", "strict": True, "schema": esquema}},
     }
     # o esforço de raciocínio é por modelo: nem todos aceitam desligar o pensamento (o deepseek recusa com 400)
-    esforco = next((v for prefixo, v in (cfg.get("raciocinio_por_modelo") or {}).items() if modelo.startswith(prefixo)), None)
+    tabela = raciocinio if raciocinio is not None else (cfg.get("raciocinio_por_modelo") or {})
+    esforco = next((v for prefixo, v in tabela.items() if modelo.startswith(prefixo)), None)
     if esforco:
         corpo["reasoning"] = {"enabled": False} if esforco == "nenhum" else {"effort": esforco}
     if provedor == "aimlapi":
@@ -217,7 +315,10 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
         texto_erro = r.text.lower() if r.status_code != 200 else ""
         if cadeia and (r.status_code in (402, 404) or (r.status_code == 403 and ("fund" in texto_erro or "balance" in texto_erro))):
             # sem saldo nesta conta, ou o modelo saiu do ar: as próximas chamadas já vão direto para o seguinte
-            _fora_do_ar(rota, 24 * 60 if r.status_code == 404 else 30, f"{r.status_code} {r.text[:120]}")
+            # 404 por causa da imagem (o openrouter/free mandou para um modelo que só lê texto) não é modelo retirado
+            # do ar: fica de lado 5 minutos, não um dia inteiro
+            por_imagem = r.status_code == 404 and "image" in texto_erro
+            _fora_do_ar(rota, 5 if por_imagem else 24 * 60 if r.status_code == 404 else 30, f"{r.status_code} {r.text[:120]}")
         if cadeia and r.status_code == 429:
             # limite do dia dos modelos gratuitos não volta em minutos; limite por minuto volta logo
             por_dia = "per-day" in texto_erro or "per day" in texto_erro or "daily" in texto_erro
@@ -258,11 +359,13 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
         _registrar(projeto, etapa, dados.get("usage"), ("aimlapi:" if provedor == "aimlapi" else "") + str(dados.get("model") or modelo))
         escolha = (dados.get("choices") or [{}])[0]
         if escolha.get("finish_reason") == "length" or not (escolha.get("message") or {}).get("content"):
-            # o modelo gastou tudo pensando e não chegou a responder: tenta de novo com o dobro de folga
+            # o modelo gastou tudo pensando e não chegou a responder: tenta de novo UMA vez, já com o teto. Antes
+            # subia em dois degraus (10 mil, 20 mil, 24 mil): no nunca-deve-ter-dentro-de-casa-parte-2 o DeepSeek
+            # estourava nos três, cada volta levava minutos, e a criação ficou quase uma hora parada nos 15%
             if corpo["max_tokens"] >= cfg.get("max_tokens_teto", 16000):
-                ultimo_erro, erros = "o modelo gastou o limite de tokens só raciocinando", erros + 1
+                ultimo_erro, erros = "o modelo gastou o limite de tokens só raciocinando", cfg.get("tentativas", 5)
             else:
-                corpo["max_tokens"] = min(corpo["max_tokens"] * 2, cfg.get("max_tokens_teto", 16000))
+                corpo["max_tokens"] = cfg.get("max_tokens_teto", 16000)
                 log(f"  o modelo estourou o limite pensando, tentando de novo com {corpo['max_tokens']} tokens")
             continue
         try:

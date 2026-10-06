@@ -8,11 +8,15 @@ from collections import Counter
 from datetime import datetime
 
 
-def _origem(cena) -> str:
+def _origem(cena, projeto=None) -> str:
     """De onde veio a imagem da cena."""
     if cena.get("imagem_da_pessoa"):
         return "da pessoa"
-    if cena.get("tipo") == "ia" and not cena.get("midia"):
+    if (cena.get("midia") or {}).get("fonte") == "motion_ia":
+        return "Motion IA"
+    if not cena.get("midia") and (cena.get("tipo") == "ia" or (projeto is not None and projeto.imagem(cena["n"]).exists())):
+        # a cena que perdeu a foto (repetida, reprovada) e ganhou imagem de IA continua com o tipo de foto: no
+        # nunca-deve-ter-dentro-de-casa-parte-2 eram 63 "sem imagem" com 0 vazias
         return "IA"
     captura = cena.get("captura") or {}
     if captura.get("preenchida"):
@@ -22,24 +26,38 @@ def _origem(cena) -> str:
     return "sem imagem"
 
 
+def _avaliacao(cena):
+    """A nota que vale para a cena: a da conferência depois do download, ou a do Jev na captura, antes de baixar
+    (a cena aprovada na captura não passa de novo pela conferência, e contava como "sem conferência")."""
+    conf = cena.get("conferencia") or {}
+    if conf.get("nota") is not None:
+        return conf
+    cap = cena.get("captura") or {}
+    if cap.get("conferida") and cap.get("nota") is not None and not cap.get("motion_ia"):
+        return {"nota": cap["nota"], "sujeito": cap.get("sujeito"), "epoca": cap.get("epoca")}
+    return None
+
+
 def calcular(projeto) -> dict:
     from . import corrigir
 
     cenas = projeto.ler_json("cenas.json")["cenas"] if projeto.existe("cenas.json") else []
     total = len(cenas)
-    conferidas = [c for c in cenas if (c.get("conferencia") or {}).get("nota") is not None]
-    boas = [c for c in conferidas if c["conferencia"]["nota"] >= corrigir.NOTA_MINIMA and not corrigir.errada(c["conferencia"])]
-    erradas = [c["n"] for c in conferidas if corrigir.errada(c["conferencia"])]
+    avaliacao = {c["n"]: _avaliacao(c) for c in cenas}
+    conferidas = [c for c in cenas if avaliacao[c["n"]] is not None]
+    boas = [c for c in conferidas if avaliacao[c["n"]]["nota"] >= corrigir.NOTA_MINIMA and not corrigir.errada(avaliacao[c["n"]])]
+    erradas = [c["n"] for c in conferidas if corrigir.errada(avaliacao[c["n"]])]
     vazias = [c["n"] for c in cenas if not c.get("midia") and not projeto.imagem(c["n"]).exists()]
     ids = Counter(f"{c['midia'].get('fonte')}:{c['midia'].get('id')}" for c in cenas
                   if c.get("midia") and c["midia"].get("fonte"))
     repetidas = sorted(c["n"] for c in cenas if c.get("midia") and ids[f"{c['midia'].get('fonte')}:{c['midia'].get('id')}"] > 1)
-    sem_conferencia = [c["n"] for c in cenas if c["n"] not in {x["n"] for x in conferidas} and _origem(c) != "da pessoa"]
+    sem_conferencia = [c["n"] for c in cenas if c["n"] not in {x["n"] for x in conferidas}
+                       and _origem(c, projeto) not in ("da pessoa", "Motion IA")]
     por_bloco = {}
     for c in cenas:
         b = por_bloco.setdefault(str(c.get("bloco") or "-"), {"cenas": 0, "boas": 0, "erradas": 0})
         b["cenas"] += 1
-        conf = c.get("conferencia") or {}
+        conf = avaliacao[c["n"]] or {}
         if conf.get("nota") is not None:
             b["boas"] += int(conf["nota"] >= corrigir.NOTA_MINIMA and not corrigir.errada(conf))
             b["erradas"] += int(corrigir.errada(conf))
@@ -52,7 +70,7 @@ def calcular(projeto) -> dict:
         "sem_conferencia": sem_conferencia,
         "vazias": vazias,
         "repetidas": repetidas,
-        "origem": dict(Counter(_origem(c) for c in cenas)),
+        "origem": dict(Counter(_origem(c, projeto) for c in cenas)),
         "por_bloco": por_bloco,
     }
 

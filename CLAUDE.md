@@ -81,11 +81,12 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
   - **O assunto do vídeo nunca é nome de pessoa** (`assunto_do_video` tira as `pessoas_reais` do mapa) **e é conferido pela palavra inteira** (`_cita_o_nome`): "Patterson" pelas 4 primeiras letras trouxe a cidade de Patterson, uma ginasta e uma estação de trem para 20 cenas. O último recurso não usa mais o primeiro resultado às cegas.
   - Sujeito em português sem acento ("tranca quebrada") cede lugar à busca quando não divide nenhuma palavra com os campos em inglês (`sujeito_da_busca`); "quebrada" trouxe o cânion Quebrada de las Conchas.
   - Preferível uma cena vazia para revisão a uma imagem de outra coisa: o render avisa quais faltam.
+  - **Com a IA ligada, a repetida que não acha foto nova vai para a imagem de IA** (no fim da criação, `api` depois de `tirar_repetidas`, e em `cli.completar_depois_da_narracao`): antes a criação parava pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com `ia.ativa: true`).
 - **Cena de motion é julgada como fundo** (`corrigir._julgar_com_jev`): a imagem vai escurecida embaixo da camada de animação, então o Jev julga "imagem de fundo do assunto", não "um diagrama mostra...".
 - **Quem descreve não tira nome do pedido** (`midia.INSTRUCOES_DO_QUE_SE_VE`): uma cidade no litoral virou "Lago Vitória" com nota 81. O Jev só aceita nome que aparece no texto visível ou no título do arquivo, e recebe `pessoa_citada` (campo `quem_e` do mapa: anos de vida e o que fez) para separar homônimos (o John Henry Patterson de Dayton, Ohio, entrou no lugar do caçador de 1898). O descritor também diz a `epoca_aparente` da imagem.
 - **Cenas de época** (vídeos históricos; campo `epoca` de cada cena, um ano antes de 1950, e `epoca` de cada bloco no mapa): o agente pede material de arquivo (foto da época, gravura, ilustração de livro ou jornal, objeto de museu), nunca reconstituição com ação e hora que ninguém fotografou. A cena nunca vira vídeo (`cenas._balancear_foto_e_video`), busca só na Wikimedia e nos bancos de acervo (`midia._e_de_acervo` devolve "epoca", `Buscador._das_fontes`), e o Jev reprova foto atual. Cena sem `epoca` (bicho, paisagem, hoje) segue igual. No Tsavo de 1898, Pexels e Pixabay puseram obras modernas e uma estação de trem atual.
 - **O Jev responde três perguntas numa chamada só** (`corrigir._perguntas`): combina (a nota), **sujeito** (a imagem mostra AQUILO e não outra coisa, mesmo que genérica) e, em cena de época, **época**. Recebe também o assunto do bloco do mapa, o `exato` e o **`aceitavel`** (o mínimo para a cena estar certa, escrito pelo agente; o ideal fica no `mostrar`). Sujeito certo com nota baixa é cena genérica e **fica**: três leões sem juba tiravam 4% contra "dois leões entre tendas à noite" e seriam trocados à toa.
-- **Quem descreve no Corrigir não vê o pedido** (`corrigir._descrever_lote`, `midia.INSTRUCOES_SEM_PEDIDO`): vendo, ele escrevia o nome que estava nele. Descrição antiga feita com o pedido ("confere com o pedido") é refeita.
+- **Quem descreve no Corrigir não vê o pedido** (`corrigir._descrever_lote`, `midia.INSTRUCOES_SEM_PEDIDO`): vendo, ele escrevia o nome que estava nele. Descrição antiga feita com o pedido ("confere com o pedido") é refeita. Com uma cena por chamada, a resposta única é daquela cena, seja qual for o número que o modelo escreveu: o Qwen do Groq devolveu outro número e as imagens de IA ficaram sem descrição, sem a conferência do Jev.
 - **O Corrigir nunca termina com imagem sem conferência** (`corrigir._conferir_sem_nota`): a troca por repetida e as buscas do fim são julgadas antes de acabar. No virou-filme sobraram 77 sem ninguém olhar.
 - **A imagem de IA é conferida pelo Jev** (`corrigir.conferir_ia`, chamada por `imagens.gerar`): mostrando outra coisa, é feita de novo uma vez com o motivo no pedido. Refazer com o prompt da pessoa (`refazer`) não confere. Em cena de época a imagem sai no estilo de foto antiga (`imagens.prompt_final`).
 - **Nota mínima única** (`midia.NOTA_MINIMA_FIXA`, 40): a captura nunca aceita menos do que a conferência. Na criação (site e `tudo`) a conferência olha toda cena abaixo de 40 ou suspeita e troca sozinha, no acervo, sem deixar para o botão Corrigir Mídia. O `config.yaml` pode subir a nota, nunca baixar.
@@ -346,13 +347,26 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 | Pexels ou Pixabay atingem o limite | a fábrica espera sozinha e continua |
 | Um banco cai ("Server disconnected", tempo esgotado, erro 5xx) | a busca tenta de novo em 2 e 5 s (`midia.ESPERAS_QUEDA`); caindo 3 buscas seguidas, o banco fica 3 min de fora e volta sozinho (`Buscador._caiu`). Antes desistia na hora |
 | `'charmap' codec can't encode characters` derruba a esteira | o backend no Windows gravava o fabrica.log na codificação antiga e caía com um pedaço em chinês do modelo. `cli.main` força UTF-8 na saída desde 2026-10-03; se voltar, confira se alguém tirou isso |
-| Completar cenas depois de trocar a narração demora | a escolha das fotos roda `midia.escolhas_ao_mesmo_tempo` lotes de 6 cenas juntos (4; antes 2, uma cena por minuto). O ritmo depende também do limite de buscas do Pixabay e do Unsplash |
+| Criação pelo site parada nos 15% ("Esperando o agente terminar o JSON das cenas") | o agente de roteiro ainda decide as cenas, lote a lote (383 cenas no nunca-deve-ter-dentro-de-casa-parte-2 levaram quase uma hora). Desde 2026-10-05 a barra anda de 15% a 35% com os lotes decididos (`roteirista.PROGRESSO`), e o modelo que estoura o limite pensando tenta uma vez só, já no teto (`openrouter.max_tokens_teto`), e passa para o seguinte da cadeia (antes subia em dois degraus, minutos cada). Cada lote guardado é achado pelo trecho do roteiro, sem o resumo das cenas anteriores (`roteirista.arquivo_do_lote`): com o resumo na marca, um reinício refazia e pagava de novo lotes prontos. Para ver se anda: os arquivos novos em `cenas_lotes/` e o fim de `criacao.json` |
 | Render parado na mesma porcentagem, mas o FFmpeg segue montando clipes | um clipe falhou e o executor montava todos os outros calado antes de mostrar o erro. Desde 2026-10-06 o render para na hora e diz a cena (`render.renderizar`). A causa, no nunca-deve-ter-dentro-de-casa-parte-2, foi o Corrigir Mídia rodando junto: a cena 166 virou foto do Pexels e o FFmpeg não achou `imagens/0166.png`. Agora render, Corrigir, Continuar e Limpeza se recusam no mesmo projeto enquanto outro roda (`api._recusar_se_ocupado`) |
+| Completar cenas depois de trocar a narração demora | a escolha das fotos roda `midia.escolhas_ao_mesmo_tempo` lotes de 6 cenas juntos (4; antes 2, uma cena por minuto). O ritmo depende também do limite de buscas do Pixabay e do Unsplash |
 
 ## Quem responde cada etapa
 
-**Uma cadeia de modelos principais para tudo que não é o juiz:** `openrouter.principais` no `config.yaml`, em ordem:
-o `google/gemma-4-31b-it:free` (enxerga imagem) e, por último, o `qwen/qwen3.8-flash`, **pago** (US$ 0,15 e 0,47 por milhão de tokens, uns US$ 0,80 por vídeo se fizer tudo; aprovado pelo usuário em 2026-10-03), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. A cadeia também aceita rota pela
+**O máximo de API gratuita** (pedido do usuário em 2026-10-05, que trouxe o Groq de volta): toda cadeia começa pelos
+gratuitos e só termina no pago. **Groq** entra como rota `groq:MODELO` (`openrouter_local.uma_rota`, `groq_local.perguntar`
+com `na_cadeia=True`), revezando as `GROQ_API_KEY` do `.env` (11 hoje); cada chave tem 1.000 pedidos por dia e 8.000
+tokens por minuto por modelo. Ele tem hoje três modelos úteis: `qwen/qwen3.8-27b` (**enxerga imagem**: a folha de
+candidatos em 1,1 s), `openai/gpt-oss-120b` e `openai/gpt-oss-20b` (só texto). Rota do Groq que não atende (todas as
+chaves no limite do minuto ou do dia, fora do ar) levanta `RotaIndisponivel` e fica de lado em `_FORA_DO_AR`; resposta
+sem as chaves do esquema ou com outro alfabeto é pedida de novo uma vez. Pedido com imagem pula quem está em
+`openrouter.so_texto`. **Reserva da resposta no Groq: 3.000 tokens** (`groq.max_tokens`): o Groq conta a reserva no limite por minuto, e com 8.000 cada escolha de fotos ocupava o minuto inteiro da chave; na criação, com 4 escolhas ao mesmo tempo, as 11 chaves saturavam e a escolha caía no Qwen pago. 404 por causa de imagem (o `openrouter/free` mandou para um modelo que só lê texto) deixa a rota de lado 5 min, não 24 h. A cadeia de visão tem ainda o Gemma 4 26B e o Nemotron Nano Omni antes do pago. **Antes de pagar, espera uns segundos pelo gratuito** (`openrouter.espera_pelo_gratis`, 60 s, `openrouter_local._espera_pelo_gratis`): se as rotas gratuitas estão fora só pelo limite do minuto (o Groq diz em quantos segundos a chave volta; os gratuitos do OpenRouter têm um limite por minuto da conta inteira), a cadeia espera a primeira voltar em vez de ir para o pago; o pago só entra com o gratuito fora por mais tempo (cota do dia, fora do ar). Num pico da conferência do nunca-deve-ter-dentro-de-casa-parte-2, com tudo no limite do minuto, 27 descrições foram para o Qwen pago em 1 minuto. Esperar segundos não é esperar cota: a regra de nunca ficar parado vale para minutos e horas. Testado no natureza-teste-1min, de graça: escolha das fotos em 8 s (a foto 3 em primeiro, como o
+Qwen pago e o Dots), descrição para o Jev em 4 s, trilha e buscas em 1 s. **Descrição é uma cena por chamada**
+(`corrigir.cenas_por_descricao: 1`): com três imagens numa chamada, o Qwen do Groq descreveu o rinoceronte da cena 7
+com o guepardo da cena 3. O agente de roteiro não cabe no Groq (cada lote lê uns 6.800 tokens e escreve uns 7.800) e
+ficou com o `nvidia/nemotron-3-ultra-550b-a55b:free` na frente do DeepSeek (`roteirista.modelos`, `roteirista._PelaCadeia`). Comparados com o mesmo pedido em 3 lotes do nunca-deve-ter-dentro-de-casa-parte-2, ele foi igual ou melhor (acertou a Naja kaouthia do caso do DF, pediu a colagem dos 10 animais do vídeo anterior e os frascos de vacina antirrábica onde o DeepSeek repetia o quati na cozinha; uma vez inventou uma raposa-do-deserto que a fala não cita), de 1,5 a 4 min por lote, sem estourar o limite pensando. O DeepSeek custava US$ 0,28 num vídeo de 30 min. Cadeia de principais (`openrouter.principais`), em ordem:
+`groq:qwen/qwen3.8-27b`, `groq:openai/gpt-oss-120b`, os gratuitos do OpenRouter (Gemma 4 31B, Dots 3 Note, Nemotron
+Super, `openrouter/free`) e, por último, o `qwen/qwen3.8-flash`, **pago** (US$ 0,15 e 0,47 por milhão de tokens, uns US$ 0,80 por vídeo se fizer tudo; aprovado pelo usuário em 2026-10-03), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. A cadeia também aceita rota pela
 AIMLAPI (`aimlapi:` na frente do modelo, chave `aimlapi_api` no `.env`), tirada em 2026-10-03 a pedido do usuário. Quando um não atende (sem saldo, limite do dia dos
 gratuitos, retirado do ar, servidor cheio), `openrouter_local.perguntar` passa na hora para o seguinte e deixa o que
 caiu de lado um tempo (`_FORA_DO_AR`): nunca esperar. O Space Bunny (`stealth/space-bunny-alpha`), que abria a cadeia,
@@ -370,7 +384,18 @@ escolher entre imagens, compor a trilha, dividir o roteiro): o Qwen gratuito pas
 que o Space Bunny; Gemma gratuita vivia lotada (429), Inkling só serve em ferramenta de agente, Dots falha com imagem.
 O limite dos gratuitos na conta é de 1.000 chamadas por dia, e um vídeo usa de 1.200 a 2.300: por isso a cadeia. O
 Space Bunny da AIMLAPI vinha do mesmo espaço stealth do OpenRouter, e a AIMLAPI exige saldo até para ele.
-**MiMo, Groq e Gemini não são mais usados** em nenhuma etapa. O Jev continua sendo o juiz.
+**Cadeia de visão** (`midia.modelos_visao` e `midia.raciocinio_visao` no `config.yaml`, `openrouter_local.VISAO`,
+pedido do usuário em 2026-10-05: "as análises e buscas de mídia eram para ser gratuitas"): quem olha as imagens (escolha
+das fotos, descrição para o Jev, revisão do vídeo pronto) vai primeiro pelos gratuitos que enxergam imagem
+(`groq:qwen/qwen3.8-27b`, `dots-studio/dots-3-note-preview:free`, `google/gemma-4-31b-it:free`, `openrouter/free`)
+e só por último pelo Qwen Flash pago, **sem raciocínio**. No nunca-deve-ter-dentro-de-casa-parte-2 (30 min, 457 cenas) a escolha caiu toda no Qwen pago, com o
+raciocínio dele: 1.351 chamadas para 594 folhas de candidatos, 2.500 tokens escritos por chamada, US$ 2,44 (o vídeo
+inteiro, US$ 2,91, uns US$ 0,10 por minuto). Medido na cena 7 do natureza-teste-1min: Dots sem raciocínio escolhe em
+25 s, de graça, na mesma ordem do Qwen (com raciocínio ele levava 99 s); Qwen sem raciocínio, uns US$ 0,001 por folha;
+Nemotron Nano Omni sem raciocínio responde em 12 s mas não escolhe nenhuma foto. O pedido da descrição que faltou é
+feito uma vez só (`_completar_vejo`, antes duas). Os gratuitos têm 1.000 chamadas por dia na conta: um vídeo de 30 min
+usa umas 600 na escolha, então o segundo vídeo grande do dia cai no Qwen sem raciocínio.
+**MiMo e Gemini não são mais usados** em nenhuma etapa; o Groq voltou como rota gratuita. O Jev continua sendo o juiz.
 
 **Voz grátis: Fish Audio** (`fabrica/fish.py`, `voz.provedor: fish`), no lugar do Edge-TTS, pelo OpenRouter
 (`fish-audio/s2.1-pro-free:free`); as vozes são as da biblioteca pública da Fish (`GET /api/vozes/fish`, com amostra),
@@ -383,11 +408,11 @@ funcionando; no editor ele aparece como Fish e regerar troca a voz.
 
 | Etapa | Quem responde |
 |---|---|
-| Agente de roteiro (mapa e cenas) e diretor | `roteirista.modelo` (DeepSeek V4 Flash pelo OpenRouter), com a cadeia de principais de reserva |
-| Contexto dos blocos | modelo principal |
-| Buscas das reprovadas | modelo principal |
-| Escolha das fotos e vídeos do acervo (olha as miniaturas) | modelo principal |
-| Descrição das imagens para a conferência | modelo principal |
+| Agente de roteiro (mapa e cenas) e diretor | `roteirista.modelos` em cadeia: Nemotron Ultra 550B gratuito, DeepSeek V4 Flash pago de reserva, e depois a cadeia de principais |
+| Contexto dos blocos | cadeia de principais (Groq primeiro) |
+| Buscas das reprovadas | cadeia de principais (Groq primeiro) |
+| Escolha das fotos e vídeos do acervo (olha as miniaturas) | cadeia de visão: Qwen 27B do Groq, Dots, Gemma e `openrouter/free` gratuitos; Qwen Flash pago sem raciocínio de reserva |
+| Descrição das imagens para a conferência e revisão do vídeo pronto | cadeia de visão (a mesma) |
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
 | Imagens de IA | GPT-5.4 Image 2 em qualidade baixa pelo OpenRouter (`openai/gpt-5.4-image-2`), padrão do perfil base |
 

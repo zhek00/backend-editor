@@ -1686,10 +1686,11 @@ def _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes, esquem
     """
     from . import gemini_local, groq_local, openrouter_local
 
-    # quem olha as miniaturas e escolhe: o modelo principal (hoje o Gemma 4 gratuito, que enxerga imagens).
-    # MiMo, Groq e Gemini não são mais usados
-    modulo, modelo = openrouter_local, openrouter_local.principal(projeto)
-    def _completar_vejo(dados, n, pedido, folha, tentativas=2):
+    # quem olha as miniaturas e escolhe: a cadeia de visão (midia.modelos_visao), os gratuitos primeiro e o Qwen pago
+    # por último, sem raciocínio. MiMo, Groq e Gemini não são mais usados
+    modulo, modelo = openrouter_local.VISAO, None
+    # uma vez só: no nunca-deve-ter-dentro-de-casa-parte-2 eram 1.351 chamadas para 594 folhas, e as repetidas pagas
+    def _completar_vejo(dados, n, pedido, folha, tentativas=1):
         """Pede de novo quando o modelo escolheu candidatos sem descrever o que vê neles.
 
         A frase de cada escolhido é o que o Jev julga antes do download; sem ela o candidato passa sem conferência.

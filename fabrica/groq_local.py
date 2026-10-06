@@ -1,4 +1,7 @@
-"""Chamadas ao Groq para a divisão em cenas.
+"""Chamadas ao Groq, uma rota gratuita da cadeia de modelos (prefixo "groq:" em openrouter.principais e
+midia.modelos_visao). Pedido do usuário em 2026-10-05: o máximo de API gratuita. 11 chaves no .env, cada uma com
+1.000 pedidos por dia e 8.000 tokens por minuto por modelo; o qwen/qwen3.8-27b enxerga imagem (a folha de
+candidatos em 1,1 s).
 
 Mesmo formato do claude_local.perguntar: recebe instruções, pedido e esquema JSON e devolve
 o dicionário já lido. O Groq tem plano gratuito, então o limite de pedidos por minuto é o
@@ -92,8 +95,24 @@ def resumo_uso(projeto):
             "escritos": sum(h["tokens_escritos"] for h in historico)}
 
 
-def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
-    """imagens é uma lista de caminhos de JPG enviados junto do pedido, para modelos com visão."""
+def _esforco(modelo, raciocinio):
+    """O raciocínio do Groq pela mesma tabela da cadeia ("nenhum", "low"...): o Qwen aceita none e default, o GPT-OSS
+    low, medium e high."""
+    pedido = next((v for prefixo, v in (raciocinio or {}).items()
+                   if modelo.startswith(prefixo) or f"groq:{modelo}".startswith(prefixo)), None)
+    if "qwen" in modelo:
+        return "none" if pedido in (None, "nenhum", "low") else "default"
+    if "gpt-oss" in modelo:
+        return "low" if pedido in ("nenhum", "low") else (pedido or None)
+    return None
+
+
+def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
+              na_cadeia=False, raciocinio=None):
+    """imagens é uma lista de caminhos de JPG enviados junto do pedido, para modelos com visão.
+
+    na_cadeia=True: é uma rota da cadeia de openrouter_local. O que não atender (todas as chaves no limite, fora do
+    ar, chave recusada) levanta RotaIndisponivel, e a cadeia passa na hora para o seguinte."""
     cfg = projeto.config.get("groq") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     if imagens:
@@ -124,10 +143,19 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             "json_schema": {"name": "cenas", "strict": "gpt-oss" in modelo, "schema": esquema},
         },
     }
-    if "gpt-oss" in modelo:
+    if na_cadeia:
+        esforco = _esforco(modelo, raciocinio)
+        if esforco:
+            corpo["reasoning_effort"] = esforco
+    elif "gpt-oss" in modelo:
         corpo["reasoning_effort"] = cfg.get("raciocinio", "medium")
 
-    def mimo(motivo):
+    def mimo(motivo, minutos=1):
+        if na_cadeia:
+            from . import openrouter_local
+            with _trava:
+                openrouter_local._FORA_DO_AR[f"groq:{modelo}"] = time.time() + minutos * 60
+            raise openrouter_local.RotaIndisponivel(f"Groq: {motivo}")
         # nunca esperar cota: o Groq que não responde agora passa a vez para o MiMo na hora
         from . import openrouter_local
         return openrouter_local.pelo_mimo(projeto, etapa, instrucoes, pedido, esquema, log=log, imagens=imagens,
@@ -167,7 +195,8 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             log(f"  a cota de 24 horas da chave {_NUMERO.get(chaves[indice], indice + 1)} do Groq encheu, ela volta em {espera / 60:.0f} min")
             chaves.pop(indice)
             if not chaves:
-                return mimo("a cota de 24 horas de todas as chaves do Groq está cheia")
+                return mimo("a cota de 24 horas de todas as chaves do Groq está cheia",
+                            max(1, (min(_mortas.values()) - time.time()) / 60))
             indice = 0
             limitadas.clear()
             continue
@@ -178,7 +207,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                 # a outra chave ainda tem folga, então troca na hora em vez de esperar
                 indice = next(i for i in (_escolher_chave(chaves) for _ in range(len(chaves) * 2)) if i not in limitadas)
                 continue
-            return mimo("o Groq pediu para esperar em todas as chaves")
+            return mimo("o Groq pediu para esperar em todas as chaves", min(1, _espera(r, 0) / 60))
         if r.status_code == 401:
             if len(chaves) > 1:
                 log(f"  a chave {_NUMERO.get(chaves[indice], indice + 1)} do Groq foi recusada, usando a outra")

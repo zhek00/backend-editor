@@ -14,6 +14,7 @@ acontece em duas etapas.
 import hashlib
 import json
 import re
+import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
@@ -254,10 +255,14 @@ def _modelo_agente(projeto):
     cfg = projeto.config.get("roteirista") or {}
     provedor = cfg.get("provedor", "mimo")
     principal = ("modelo principal", openrouter_local, openrouter_local.principal(projeto))
-    if provedor == "openrouter" and cfg.get("modelo"):
-        # um modelo do OpenRouter só para o agente e o diretor (roteirista.modelo, hoje o DeepSeek V4 Flash: bom em
-        # seguir instruções longas e JSON, uns US$ 0,01 por vídeo). Se ele falhar, a cadeia de principais responde
-        return _ComReserva([(cfg["modelo"], openrouter_local, cfg["modelo"]), principal])
+    if provedor == "openrouter" and (cfg.get("modelos") or cfg.get("modelo")):
+        # os modelos do agente e do diretor (roteirista.modelos), e depois a cadeia de principais, como uma cadeia só:
+        # quem não atende passa a vez na hora. Pedido do usuário em 2026-10-05, o máximo de gratuito: o Nemotron Ultra
+        # gratuito na frente do DeepSeek pago (comparados no nunca-deve-ter-dentro-de-casa-parte-2, com o mesmo pedido,
+        # ele foi igual ou melhor: acertou a Naja kaouthia do caso do DF e a colagem dos 10 animais do vídeo anterior)
+        lista = list(dict.fromkeys([m for m in (cfg.get("modelos") or [cfg["modelo"]]) if m]
+                                   + openrouter_local.principais(projeto)))
+        return _PelaCadeia(lista)
     if provedor == "claude":
         # o Claude da assinatura do Claude Code: não cobra além da mensalidade e escreve o JSON limpo. O modelo
         # principal gratuito escreveu "exércitoBritish" e copiou descrições de uma cena para as seguintes. Se o
@@ -266,6 +271,19 @@ def _modelo_agente(projeto):
     if provedor != "mimo":
         return _modelo(projeto)
     return _ComReserva([principal])
+
+
+class _PelaCadeia:
+    """A cadeia do agente, com a mesma cara dos outros modelos: openrouter_local.perguntar pela lista inteira."""
+
+    def __init__(self, lista):
+        self.lista = lista
+
+    def perguntar(self, projeto, etapa, instrucoes, pedido, esquema, log=print, **resto):
+        from . import openrouter_local
+        resto.pop("modelo", None)
+        return openrouter_local.perguntar(projeto, etapa, instrucoes, pedido, esquema, log=log, modelo=self.lista[0],
+                                          cadeia_de=self.lista, **resto)
 
 
 class _PeloClaude:
@@ -574,6 +592,30 @@ def _converter(item, m, bloco):
     }
 
 
+# lotes de cenas decididos por projeto, {nome: {"feitos": n, "total": t}}: a criação pelo site mostra o andamento
+# enquanto espera o agente (antes a barra ficava parada nos 15% por quase uma hora)
+PROGRESSO = {}
+_TRAVA_PROGRESSO = threading.Lock()
+
+
+def arquivo_do_lote(projeto, inicio, pedido, resumo):
+    """Onde fica a resposta guardada de um lote. A marca vem do pedido SEM o resumo das cenas anteriores: com ele,
+    um lote que falhou e foi decidido de novo mudava o resumo dos seguintes, e um reinício refazia lotes prontos (no
+    nunca-deve-ter-dentro-de-casa-parte-2, os lotes dos blocos do papagaio e do quati foram pagos duas vezes). O
+    arquivo com a marca antiga, do pedido inteiro, vale também, e passa para o nome novo."""
+    sem_resumo = pedido.replace(resumo, "", 1) if resumo else pedido
+    novo = projeto.caminho("cenas_lotes", f"roteirista_{inicio:04d}_t{_marca(PROMPT_CENAS + sem_resumo)}.json")
+    if not novo.exists():
+        antigo = novo.with_name(f"roteirista_{inicio:04d}_{_marca(PROMPT_CENAS + pedido)}.json")
+        if antigo.exists():
+            novo.write_text(antigo.read_text(encoding="utf-8"), encoding="utf-8")
+    return novo
+
+
+def _marca(texto) -> str:
+    return hashlib.sha1(texto.encode("utf-8")).hexdigest()[:10]
+
+
 def planejar_grupos(projeto, unidades, cortes, log=print):
     """Decide a imagem de cada corte, bloco a bloco, com o mapa do vídeo. Devolve os grupos no formato de cenas.py.
 
@@ -595,6 +637,7 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
         por_bloco.setdefault(_bloco_da_frase(m, unidades[corte["primeira_frase"]])["id"], []).append(k)
     blocos = {b["id"]: b for b in m["blocos"]}
     log(f"  {len(cortes)} cortes prontos em {len(por_bloco)} bloco(s) do roteiro")
+    PROGRESSO[projeto.nome] = {"feitos": 0, "total": sum(-(-len(ks) // por_lote) for ks in por_bloco.values())}
 
     ordem = sorted(por_bloco)
 
@@ -625,8 +668,7 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
                       f"ÚLTIMAS CENAS DO BLOCO ANTERIOR (para manter continuidade):\n{resumo}\n\n"
                       f"BLOCO ATUAL: {bloco['id']}. {bloco['nome']} (âncora: {bloco['ancora']})\n\n"
                       f"TRECHOS DESTE BLOCO (devolva exatamente {len(lote)} cenas, de {lote[0] + 1} a {lote[-1] + 1}):\n{trechos}")
-            assinatura = hashlib.sha1((PROMPT_CENAS + pedido).encode("utf-8")).hexdigest()[:10]
-            arquivo = projeto.caminho("cenas_lotes", f"roteirista_{lote[0]:04d}_{assinatura}.json")
+            arquivo = arquivo_do_lote(projeto, lote[0], pedido, resumo)
             if arquivo.exists():
                 respostas = json.loads(arquivo.read_text(encoding="utf-8"))
             else:
@@ -657,6 +699,10 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
                     brutas[k] = item
                     locais[k] = _converter(item, m, bloco)
             log(f"  bloco {bloco['id']} ({bloco['nome']}): cenas {lote[0] + 1} a {lote[-1] + 1} decididas")
+            with _TRAVA_PROGRESSO:
+                andamento = PROGRESSO.get(projeto.nome)
+                if andamento:
+                    andamento["feitos"] = min(andamento["feitos"] + 1, andamento["total"])
         return brutas
 
     # os blocos não dependem um do outro, então vários rodam ao mesmo tempo (roteirista.paralelo)
