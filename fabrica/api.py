@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, qualidade, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, qualidade, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -2469,7 +2469,43 @@ def limpar_midia(nome: str, bg_tasks: BackgroundTasks):
 
 @app.get("/api/projetos/{nome}/status")
 def status_projeto(nome: str, task_id: Optional[str] = None):
-    """Retorna o progresso em tempo real da tarefa de renderização ou criação."""
+    """Retorna o progresso em tempo real da tarefa de renderização ou criação.
+
+    pago_pendente: os gratuitos esgotaram e a tarefa espera a pessoa liberar o modelo pago (pago.py). Vai em toda
+    resposta, porque o editor acompanha cada tarefa por aqui."""
+    resposta = _status_projeto(nome, task_id)
+    if isinstance(resposta, dict):
+        resposta["pago_pendente"] = pago.pendente(nome)
+    return resposta
+
+
+class PagoPayload(BaseModel):
+    liberar: bool = False
+
+
+@app.get("/api/projetos/{nome}/pago")
+def pago_do_projeto(nome: str):
+    """Os gratuitos esgotaram? (o pedido em aberto, ou None) e se o pago já está liberado hoje."""
+    pasta = PROJETOS / nome
+    if not pasta.exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    return {"pendente": pago.pendente(nome), "liberado_hoje": pago.liberado(p), "confirmar_pago": pago.confirmar(p)}
+
+
+@app.post("/api/projetos/{nome}/pago")
+def liberar_pago(nome: str, payload: PagoPayload):
+    """A pessoa liberou o modelo pago neste projeto até o fim do dia: a tarefa que esperava segue na hora."""
+    pasta = PROJETOS / nome
+    if not pasta.exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    if payload.liberar:
+        pago.liberar(p)
+    return {"pendente": pago.pendente(nome), "liberado_hoje": pago.liberado(p)}
+
+
+def _status_projeto(nome: str, task_id: Optional[str] = None):
     pasta = PROJETOS / nome
     if not pasta.exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")

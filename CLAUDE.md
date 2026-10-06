@@ -353,6 +353,19 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 
 ## Quem responde cada etapa
 
+**Modelo de texto pago só com a confirmação da pessoa, e só depois de TODOS os gratuitos** (`fabrica/pago.py`,
+`openrouter.confirmar_pago`, pedido do usuário em 2026-10-06: o saldo do OpenRouter caiu de US$ 6,10 para US$ 1,97 em
+dois dias, US$ 2,59 deles no Qwen Flash pago escolhendo as fotos do nunca-deve-ter-dentro-de-casa-parte-2, sem ninguém
+saber). `openrouter_local.perguntar` põe todos os gratuitos da cadeia na frente dos pagos (na do agente, o DeepSeek
+vinha antes do Groq) e, antes do primeiro pago, chama `pago.autorizar`: no servidor a tarefa **espera sem gastar** e o
+editor mostra "APIs gratuitas esgotadas" (`js/pago.js` do frontend, pelo `pago_pendente` de `GET /status` e por
+`GET /api/projetos/NOME/pago`), com "Usar a API paga" (`POST /pago`, vale para o projeto até o fim do dia, em
+`pago_liberado.json`) ou "Esperar os gratuitos" (a tarefa tenta os gratuitos de novo quando o primeiro volta, ou de
+minuto em minuto, e o aviso some quando um atende). No terminal pergunta [s/N]; sem terminal para com `GratisEsgotado`
+(BaseException, para os `except Exception` não mandarem a cena para o tapa-buraco ou para a IA paga) e
+`uv run fabrica pago NOME` libera. Cadeia sem nenhum gratuito (o Jev, escolhido de propósito) segue sem perguntar; as
+imagens de IA seguem com a estimativa de sempre.
+
 **O máximo de API gratuita** (pedido do usuário em 2026-10-05, que trouxe o Groq de volta): toda cadeia começa pelos
 gratuitos e só termina no pago. **Groq** entra como rota `groq:MODELO` (`openrouter_local.uma_rota`, `groq_local.perguntar`
 com `na_cadeia=True`), revezando as `GROQ_API_KEY` do `.env` (11 hoje); cada chave tem 1.000 pedidos por dia e 8.000

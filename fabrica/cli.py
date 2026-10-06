@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
-from . import custos_reais, qualidade
+from . import custos_reais, pago, qualidade
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
 from .projeto import PROJETOS, Projeto
@@ -834,9 +834,16 @@ def cmd_voz_salvar(a):
         "e depois ache pelo nome com uv run fabrica vozes NOME.")
 
 
+def cmd_pago(a):
+    p = Projeto(a.nome)
+    pago.liberar(p)
+    log(f"Modelo pago liberado em {a.nome} até o fim do dia. Ele só entra quando os gratuitos esgotam.")
+
+
 def cmd_servidor(a):
     import uvicorn
     from .api import criar_app
+    pago.responde_o_editor = True  # o modelo pago espera a confirmação no editor, em vez de perguntar no terminal
     app = criar_app(frontend_dir=getattr(a, "frontend", None))
     log(f"Iniciando API HTTP da Fábrica de Vídeos em http://{a.host}:{a.porta}")
     uvicorn.run(app, host=a.host, port=a.porta, proxy_headers=True, forwarded_allow_ips="*")
@@ -997,6 +1004,10 @@ def main():
     s = sub.add_parser("creditos", help="mostra os créditos da GenAIPro e quando vencem, sem gastar")
     s.set_defaults(funcao=cmd_creditos)
 
+    s = sub.add_parser("pago", help="libera o modelo de texto pago neste projeto até o fim do dia (quando os gratuitos esgotam)")
+    s.add_argument("nome")
+    s.set_defaults(funcao=cmd_pago)
+
     s = sub.add_parser("voz-desenhar", help="cria prévias de uma voz nova a partir de uma descrição (ElevenLabs direta, opcional)")
     s.add_argument("descricao", help="descrição da voz, de preferência em inglês")
     s.add_argument("--rotulo", help="nome curto para reconhecer a variação na página")
@@ -1021,5 +1032,7 @@ def main():
         argumentos.funcao(argumentos)
     except KeyboardInterrupt:
         raise SystemExit("\nInterrompido. Rode o mesmo comando para continuar de onde parou.")
+    except pago.GratisEsgotado as aviso:
+        raise SystemExit(str(aviso))
     except RuntimeError as erro:
         raise SystemExit(f"Erro: {erro}")

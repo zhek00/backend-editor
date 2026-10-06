@@ -160,7 +160,8 @@ def test_antes_de_pagar_espera_uns_segundos_pelo_gratis(monkeypatch):
     openrouter_local._FORA_DO_AR.clear()
 
 
-def test_gratis_fora_por_muito_tempo_vai_para_o_pago(monkeypatch):
+def test_gratis_fora_por_muito_tempo_vai_para_o_pago_sem_confirmacao(monkeypatch):
+    # com openrouter.confirmar_pago desligado; ligado (o padrão desde 2026-10-06), quem decide é a pessoa (test_pago)
     import time as _time
     openrouter_local._FORA_DO_AR.clear()
     rotas = []
@@ -174,7 +175,8 @@ def test_gratis_fora_por_muito_tempo_vai_para_o_pago(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(openrouter_local, "uma_rota", rota)
-    projeto = SimpleNamespace(config={"openrouter": {"principais": ["groq:qwen/qwen3.8-27b", "qwen/qwen3.8-flash"]}})
+    projeto = SimpleNamespace(config={"openrouter": {"principais": ["groq:qwen/qwen3.8-27b", "qwen/qwen3.8-flash"],
+                                                     "confirmar_pago": False}})
     openrouter_local.perguntar(projeto, "teste", "i", "p", {}, log=lambda *a: None, modelo="groq:qwen/qwen3.8-27b")
     assert rotas == ["groq:qwen/qwen3.8-27b", "qwen/qwen3.8-flash"]
     openrouter_local._FORA_DO_AR.clear()
