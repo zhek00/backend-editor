@@ -378,7 +378,7 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
     prompt = prompt_final(cena, projeto.perfil, com_referencia)
     usar = referencias if com_referencia else []
 
-    erro = None
+    erro, suavizado = None, False
     for tentativa in range(tentativas):
         try:
             prov = provedor(projeto.perfil)
@@ -415,8 +415,52 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
             time.sleep((20 if e.code == 429 else 4) * (tentativa + 1))
         except Exception as e:
             erro = e
+            if _recusa_de_seguranca(e):
+                # repetir o mesmo pedido recusado não adianta: ele é reescrito uma vez, sem o detalhe que o filtro barrou
+                novo = None if suavizado else _prompt_sem_recusa(projeto, cena, prompt)
+                if not novo:
+                    raise SemImagem(f"o filtro de segurança do provedor recusou o pedido: {str(e)[:200]}") from e
+                prompt, suavizado = novo, True
+                continue
             time.sleep(4 * (tentativa + 1))
     raise erro
+
+
+def _recusa_de_seguranca(erro) -> bool:
+    texto = str(erro).lower()
+    return any(t in texto for t in ("safety system", "content_policy", "content policy", "moderation", "safety_violation"))
+
+
+INSTRUCOES_SEM_RECUSA = """O filtro de segurança do gerador de imagens recusou o prompt abaixo. Reescreva o prompt para ele
+passar no filtro e continuar mostrando o assunto da fala.
+
+Regras:
+1. O mesmo sujeito (a mesma espécie, a mesma pessoa, o mesmo lugar) e o mesmo enquadramento.
+2. Tire o que soa gráfico ou como pedido de violência: ferida, sangue, pele exposta, arrancar, automutilação, morte,
+   sofrimento em close. Diga a ideia pelo sinal visível e leve: "pelagem rala e falhada", "postura tensa", "olhar
+   assustado", "animal sozinho num canto da gaiola".
+3. Mantenha o estilo, a lente e a luz que o prompt já tinha.
+4. Só o prompt, em inglês, numa frase corrida."""
+
+ESQUEMA_SEM_RECUSA = {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}
+
+
+def _prompt_sem_recusa(projeto, cena, prompt):
+    """O prompt recusado pelo filtro de segurança, reescrito pelo modelo principal (grátis). None se não deu.
+
+    No nunca-deve-ter-dentro-de-casa-parte-2 o OpenAI recusou "petauro arrancando o próprio pelo, pele exposta" nas
+    cenas 65 e 66, três vezes cada, e as duas ficaram sem imagem."""
+    from . import openrouter_local
+
+    try:
+        resposta = openrouter_local.perguntar(
+            projeto, "prompt recusado pelo filtro", INSTRUCOES_SEM_RECUSA,
+            f"Fala da cena: {cena.get('texto', '')}\n\nPrompt recusado:\n{prompt}", ESQUEMA_SEM_RECUSA,
+            log=lambda *_: None, modelo=openrouter_local.principal(projeto), temperatura=0.3)
+    except (Exception, SystemExit):
+        return None
+    novo = " ".join(str(resposta.get("prompt") or "").split())
+    return novo if len(novo.split()) >= 8 and novo != prompt else None
 
 
 def _cliente_google():

@@ -100,7 +100,11 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
   - o agente marca `onde_existe` em cada cena (`banco`, `arquivo` ou `nao_existe`); `nao_existe` (um momento que ninguém fotografou) nasce como IA, mas **passa por uma busca antes** (`midia.tentar_banco_nas_nao_existe`, no fim de `midia.buscar` do projeto inteiro, uma vez por cena: `banco_tentado`). A regra é estrita: só fica a foto que o Jev aprovou antes de baixar, com a nota mínima e sem suspeita; o resto volta para a IA. No natureza-nos-ensina 4 de 13 acharam foto aprovada (o elefante derrubando árvores, o búfalo escondido no capim);
   - na conferência, cena **errada** (`corrigir.errada`: sujeito errado, época errada ou nota muito baixa sem sujeito certo) tem **uma** busca nova e, se continuar errada, vai para a IA (`corrigir.resolver_com_ia`). Três rodadas de busca quando o banco não tem a coisa só trouxeram mais lixo;
   - **só a cena errada vai para a IA, também no fim do `corrigir`**: a devolução da melhor imagem punha na lista da IA toda cena abaixo da nota mínima, e no natureza-nos-ensina hipopótamo (94% de sujeito certo), crocodilo (91%) e búfalo (88%) foram para a IA. Antes de `resolver_com_ia`, quem não é `errada` sai da lista e vai para revisão;
-  - a foto que a cena tinha fica em `ia_reserva` e volta se a imagem de IA sair pior (`conferir_ia`);
+  - a foto que a cena tinha fica em `ia_reserva` e volta se a imagem de IA sair pior (`conferir_ia`) **ou não sair**
+    (`corrigir._devolver_sem_imagem`): no nunca-deve-ter-dentro-de-casa-parte-2 o filtro recusou as cenas 65 e 66, a
+    imagem antiga ficou em `antigas/` e o render parou com "Faltam imagens de 2 cenas";
+  - **pedido recusado pelo filtro de segurança do provedor** ("rejected by the safety system") é reescrito uma vez pelo
+    modelo principal, sem o detalhe gráfico (`imagens._prompt_sem_recusa`), em vez de repetir o mesmo pedido três vezes;
   - **o teto de 15% saiu** (`ESTILO_TETO_IA` não existe mais): ele transformava em foto de banco as cenas que o agente marcou como IA, e o virou-filme-em-1996 saiu com 86 cenas de outra coisa;
   - a estimativa da criação mostra o custo das imagens (total e por minuto); ela informa, não corta cena. Com `ia.ativa: false`, nenhuma IA e o tapa-buraco preenche.
 - Ao refazer cenas, o `--forcar` apaga o cache dos lotes e guarda `imagens` e `midia` em pastas `_antigas_`.
@@ -343,6 +347,7 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 | Um banco cai ("Server disconnected", tempo esgotado, erro 5xx) | a busca tenta de novo em 2 e 5 s (`midia.ESPERAS_QUEDA`); caindo 3 buscas seguidas, o banco fica 3 min de fora e volta sozinho (`Buscador._caiu`). Antes desistia na hora |
 | `'charmap' codec can't encode characters` derruba a esteira | o backend no Windows gravava o fabrica.log na codificação antiga e caía com um pedaço em chinês do modelo. `cli.main` força UTF-8 na saída desde 2026-10-03; se voltar, confira se alguém tirou isso |
 | Completar cenas depois de trocar a narração demora | a escolha das fotos roda `midia.escolhas_ao_mesmo_tempo` lotes de 6 cenas juntos (4; antes 2, uma cena por minuto). O ritmo depende também do limite de buscas do Pixabay e do Unsplash |
+| Render parado na mesma porcentagem, mas o FFmpeg segue montando clipes | um clipe falhou e o executor montava todos os outros calado antes de mostrar o erro. Desde 2026-10-06 o render para na hora e diz a cena (`render.renderizar`). A causa, no nunca-deve-ter-dentro-de-casa-parte-2, foi o Corrigir Mídia rodando junto: a cena 166 virou foto do Pexels e o FFmpeg não achou `imagens/0166.png`. Agora render, Corrigir, Continuar e Limpeza se recusam no mesmo projeto enquanto outro roda (`api._recusar_se_ocupado`) |
 
 ## Quem responde cada etapa
 

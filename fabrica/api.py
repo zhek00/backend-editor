@@ -1506,6 +1506,25 @@ def apagar_projeto(nome: str):
     ultimo_erro = None
     for tentativa in range(5):
         try:
+# tarefas que trocam a imagem das cenas: o render não pode rodar junto (nem elas junto do render)
+_MEXEM_NA_MIDIA = ("corrigir_", "continuar_", "limpeza_")
+
+
+def _recusar_se_ocupado(nome: str, prefixos: tuple, acao: str) -> None:
+    """O render lê o arquivo de cada cena minutos depois de montar a lista; o Corrigir Mídia troca esses arquivos.
+
+    No nunca-deve-ter-dentro-de-casa-parte-2 os dois rodaram juntos: a cena 166 passou de imagem de IA para foto do
+    Pexels no meio do render, o FFmpeg não achou imagens/0166.png e a tela ficou 20 min parada nos 32%."""
+    with TAREFAS_LOCK:
+        ativa = next((t for tid, t in TAREFAS.items() if t.get("projeto") == nome and tid.startswith(prefixos)
+                      and t.get("status") in ("processando", "renderizando")), None)
+    if ativa:
+        andamento = ativa.get("mensagem") or ativa.get("etapa_atual") or ""
+        raise HTTPException(status_code=409, detail=(
+            f"Outra tarefa está mexendo neste vídeo ({ativa.get('progresso_pct') or 0}%: {andamento}). "
+            f"Espere terminar para {acao}."))
+
+
             shutil.rmtree(pasta_resolvida)
             return {"ok": True, "nome": nome}
         except PermissionError as e:
@@ -2027,6 +2046,7 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
             "projeto": nome,
             "status": "renderizando",
             "progresso_pct": 5,
+    _recusar_se_ocupado(nome, _MEXEM_NA_MIDIA, "renderizar")
             "etapa_atual": "Iniciando a versão em pé (9:16)..." if payload.vertical else "Iniciando montagem com FFmpeg...",
             "concluido": False,
             "logs": ["Iniciando renderização da versão em pé..." if payload.vertical else "Iniciando renderização..."],
@@ -2204,6 +2224,7 @@ def corrigir_midia(nome: str, bg_tasks: BackgroundTasks, payload: Optional[Corri
         def log_w(msg):
             _atualizar_progresso(task_id, msg)
 
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "corrigir a mídia")
         try:
             cfg = p.config.get("corrigir") or {}
             usos = {"groq": groq_local, "gemini": gemini_local, "jev": openrouter_local}
@@ -2332,6 +2353,7 @@ def continuar_carregamento(nome: str, bg_tasks: BackgroundTasks, payload: Option
                 if task_id in TAREFAS:
                     TAREFAS[task_id]["logs"].append(str(msg))
 
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "continuar o carregamento")
         try:
             if sem_acervo:
                 with TAREFAS_LOCK:
@@ -2375,6 +2397,7 @@ def limpar_midia(nome: str, bg_tasks: BackgroundTasks):
             "inicio": datetime.now().isoformat(),
         }
 
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "limpar a mídia")
     def limpeza_worker():
         def log_w(msg):
             with TAREFAS_LOCK:

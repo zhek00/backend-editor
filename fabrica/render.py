@@ -176,9 +176,19 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     processos = cfg.get("processos") or max(1, (os.cpu_count() or 4) // 2)
     log(f"  {len(pendentes)} clipes para renderizar, {len(tarefas) - len(pendentes)} já prontos")
     with ThreadPoolExecutor(processos) as executor:
-        futuros = [executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg) for t in pendentes]
+        futuros = {executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg): t for t in pendentes}
         for i, futuro in enumerate(as_completed(futuros), 1):
-            futuro.result()
+            try:
+                futuro.result()
+            except Exception as erro:
+                # sem isto o executor montava todos os outros clipes calado antes de mostrar o erro: a tela ficou
+                # 20 min nos 32% no nunca-deve-ter-dentro-de-casa-parte-2, com o vídeo já perdido
+                for outro in futuros:
+                    outro.cancel()
+                cena = (futuros[futuro].get("cena") or {}).get("n")
+                onde = f"a cena {cena}" if cena else futuros[futuro]["destino"].name
+                raise RuntimeError(f"Não deu para montar {onde}: {str(erro)[:600]}. Os clipes prontos ficam guardados: "
+                                   f"confira a cena e renderize de novo.") from erro
             if i % 10 == 0 or i == len(futuros):
                 log(f"  clipes {i}/{len(futuros)}")
 

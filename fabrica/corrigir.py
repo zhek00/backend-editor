@@ -1000,10 +1000,42 @@ def resolver_com_ia(projeto, itens, log=print) -> list[int]:
     try:
         imagens.gerar(projeto, apenas=set(mandadas), log=log, conferir=False)
     except (Exception, SystemExit) as erro:
-        log(f"  as imagens de IA não saíram agora ({str(erro)[:160]}); as cenas seguem marcadas e saem na próxima rodada")
+        log(f"  as imagens de IA não saíram agora ({str(erro)[:160]})")
+        _devolver_sem_imagem(projeto, set(mandadas), log)
         return mandadas
-    conferir_ia(projeto, set(mandadas), log)
-    return [c["n"] for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] in mandadas and c.get("tipo") == "ia"]
+    voltaram = set(_devolver_sem_imagem(projeto, set(mandadas), log))
+    conferir_ia(projeto, set(mandadas) - voltaram, log)
+    return [c["n"] for c in projeto.ler_json("cenas.json")["cenas"]
+            if c["n"] in mandadas and c["n"] not in voltaram and c.get("tipo") == "ia"]
+
+
+def _devolver_sem_imagem(projeto, numeros, log=print) -> list[int]:
+    """A imagem de IA não saiu (filtro de segurança, provedor fora do ar): a cena volta para a imagem que tinha.
+
+    mandar_para_ia tira a imagem antiga do lugar antes de gerar a nova. No nunca-deve-ter-dentro-de-casa-parte-2 o
+    filtro recusou as cenas 65 e 66, a antiga ficou em antigas/ e o render parou: "Faltam imagens de 2 cenas".
+    Uma imagem que mostra outra coisa fica marcada para revisão; uma cena vazia derruba o vídeo."""
+    dados = projeto.ler_json("cenas.json")
+    voltaram = []
+    for c in dados["cenas"]:
+        if c["n"] not in numeros or c.get("midia") or projeto.imagem(c["n"]).exists():
+            continue
+        reserva = c.get("ia_reserva") or {}
+        movidos = [(o, d) for o, d in reserva.get("movidos") or [] if Path(o).exists() and not Path(d).exists()]
+        if not movidos:
+            continue
+        for origem, destino in movidos:
+            shutil.move(origem, destino)
+        if reserva.get("midia"):
+            c["midia"], c["tipo"], c["busca"] = reserva["midia"], reserva.get("tipo") or "foto_real", reserva.get("busca")
+        c["captura"] = {**(c.get("captura") or {}), "suspeita": True}
+        c.pop("ia_reserva", None)
+        voltaram.append(c["n"])
+    if voltaram:
+        projeto.salvar_json("cenas.json", dados)
+        log(f"  a imagem de IA não saiu em {len(voltaram)} cena(s) ({', '.join(map(str, voltaram))}): "
+            f"voltou a imagem que estava, marcada para revisão")
+    return voltaram
 
 
 def _nota_final(cena):
