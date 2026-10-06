@@ -405,8 +405,10 @@ e só por último pelo Qwen Flash pago, **sem raciocínio**. No nunca-deve-ter-d
 raciocínio dele: 1.351 chamadas para 594 folhas de candidatos, 2.500 tokens escritos por chamada, US$ 2,44 (o vídeo
 inteiro, US$ 2,91, uns US$ 0,10 por minuto). Medido na cena 7 do natureza-teste-1min: Dots sem raciocínio escolhe em
 25 s, de graça, na mesma ordem do Qwen (com raciocínio ele levava 99 s); Qwen sem raciocínio, uns US$ 0,001 por folha;
-Nemotron Nano Omni sem raciocínio responde em 12 s mas não escolhe nenhuma foto. O pedido da descrição que faltou é
-feito uma vez só (`_completar_vejo`, antes duas). Os gratuitos têm 1.000 chamadas por dia na conta: um vídeo de 30 min
+Nemotron Nano Omni sem raciocínio responde em 12 s mas não escolhe nenhuma foto. A descrição que o modelo não
+escreveu na escolha **não é pedida de novo** (o `_completar_vejo` saiu em 2026-10-06, pedido do usuário: era 551 das
+1.570 chamadas da escolha no nunca-deve-ter-dentro-de-casa-parte-2, US$ 0,97 no Qwen pago); o escolhido passa sem o
+Jev antes do download e a conferência depois do download julga a cena, que não foi aprovada na captura. Os gratuitos têm 1.000 chamadas por dia na conta: um vídeo de 30 min
 usa umas 600 na escolha, então o segundo vídeo grande do dia cai no Qwen sem raciocínio.
 **MiMo e Gemini não são mais usados** em nenhuma etapa; o Groq voltou como rota gratuita. O Jev continua sendo o juiz.
 

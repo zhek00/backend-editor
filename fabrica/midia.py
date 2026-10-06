@@ -1689,29 +1689,10 @@ def _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes, esquem
     # quem olha as miniaturas e escolhe: a cadeia de visão (midia.modelos_visao), os gratuitos primeiro e o Qwen pago
     # por último, sem raciocínio. MiMo, Groq e Gemini não são mais usados
     modulo, modelo = openrouter_local.VISAO, None
-    # uma vez só: no nunca-deve-ter-dentro-de-casa-parte-2 eram 1.351 chamadas para 594 folhas, e as repetidas pagas
-    def _completar_vejo(dados, n, pedido, folha, tentativas=1):
-        """Pede de novo quando o modelo escolheu candidatos sem descrever o que vê neles.
-
-        A frase de cada escolhido é o que o Jev julga antes do download; sem ela o candidato passa sem conferência.
-        O MiMo devolvia o campo vejo sempre vazio, então aqui ele recebe o próprio resultado e a ordem de completar."""
-        for _ in range(tentativas):
-            item = next((i for i in dados.get("cenas", []) if i.get("cena") == n), None)
-            if not item or not item.get("escolhas"):
-                return dados
-            descritos = {int(v.get("indice", -1)) for v in item.get("vejo", []) if compor_o_que_se_ve(v)}
-            faltam = [i for i in item["escolhas"] if i not in descritos]
-            if not faltam:
-                return dados
-            reforco = (f"{pedido}\n\nATENÇÃO: na resposta anterior você escolheu {item['escolhas']} mas não escreveu o "
-                       f"campo vejo para {faltam}. Responda de novo com as mesmas escolhas e, em vejo, um item para CADA "
-                       "número escolhido, com indice igual ao número e todos os campos do que você vê na miniatura.")
-            try:
-                dados = modulo.perguntar(projeto, "escolha de material real", instrucoes, reforco,
-                                         esquema or ESQUEMA_ESCOLHA, modelo=modelo, imagens=[folha])
-            except (RuntimeError, SystemExit):
-                return {"cenas": [item]}  # fica o que já veio; o candidato sem frase passa como antes
-        return dados
+    # o escolhido que veio sem a frase do que se vê não é pedido de novo: passa sem o Jev antes do download e a
+    # conferência depois do download (descrição grátis + Jev) julga a cena, porque ela não foi aprovada na captura
+    # (api._esteira, cli). O pedido repetido era 551 das 1.570 chamadas da escolha no nunca-deve-ter-dentro-de-
+    # casa-parte-2 (US$ 0,97 no Qwen pago), pedido do usuário em 2026-10-06
 
     def escolher(par):
         (cena, _, _), bloco = par
@@ -1724,8 +1705,6 @@ def _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes, esquem
                 return None  # a cena fica para a próxima rodada
         except RuntimeError:
             return None
-        if vejos is not None:
-            dados = _completar_vejo(dados, cena["n"], pedido, folhas[cena["n"]][0])
         for item in dados.get("cenas", []):
             if item.get("cena") == cena["n"]:
                 if vejos is not None:
