@@ -624,9 +624,19 @@ def formatar_gasto_real(r):
                           f"{numero(n['incluido_no_mes'])} caracteres")
             linhas.append(f"  este vídeo usou {n['fatia_da_franquia']}% da franquia do mês, "
                           f"que dá para uns {n['videos_por_mes']} vídeos deste tamanho")
+    if r.get("tarefas_dos_modelos"):
+        linhas.append("")
+        linhas.append("Modelos de linguagem, por tarefa")
+        for t in r["tarefas_dos_modelos"]:
+            linhas.append(f"  {t['tarefa']:<40}{custos.dinheiro(t['custo_usd']):>10}  {t['chamadas']} chamadas, "
+                          f"{t['gratis']} grátis")
+            pagos = [m for m in t["modelos"] if m["custo_usd"] > 0]
+            if pagos:
+                linhas.append("      pago: " + ", ".join(f"{m['modelo']} {m['chamadas']}x {custos.dinheiro(m['custo_usd'])}"
+                                                    for m in pagos))
     if r["modelos_de_texto"]:
         linhas.append("")
-        linhas.append("Modelos de texto")
+        linhas.append("Modelos de linguagem, por provedor")
         for m in r["modelos_de_texto"]:
             valor = "grátis" if m["gratuito"] else custos.dinheiro(m["custo_usd"])
             linhas.append(f"  {m['provedor']:<12}{valor:>10}  {m['chamadas']} chamadas, "

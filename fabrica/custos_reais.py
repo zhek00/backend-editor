@@ -27,7 +27,27 @@ CATEGORIAS = {
     "escolha": ("Escolha do acervo", "tokens"),
     "conferencia": ("Conferência das cenas", "tokens"),
     "texto": ("Modelos de texto", "tokens"),
+    "visao": ("Análise das imagens", "tokens"),
+    "juiz": ("Jev (juiz)", "tokens"),
 }
+
+# tarefa dos modelos de linguagem -> (categoria, nome para a pessoa, começos do campo etapa do uso_*.json). O Custos
+# mostrava uma linha por provedor ("OpenRouter: 2.076 chamadas, US$ 3,00") e a pessoa não via que US$ 2,59 eram a
+# escolha das fotos (nunca-deve-ter-dentro-de-casa-parte-2, pedido do usuário em 2026-10-06)
+TAREFAS = [
+    ("visao", "Escolha das fotos do acervo", ("escolha de material real",)),
+    ("visao", "Descrição das imagens", ("descrever imagens",)),
+    ("visao", "Revisão do vídeo pronto", ("revisão do vídeo",)),
+    ("juiz", "Jev: julgamento das imagens e do motion", ("julgar mídia", "motion IA: vale a pena")),
+    ("texto", "Roteiro e divisão em cenas", ("roteirista:", "cenas", "busca das cenas cortadas",
+                                            "prompts de IA em sequência", "textos na tela")),
+    ("texto", "Diretor do Corrigir Mídia", ("diretor",)),
+    ("texto", "Buscas e traduções", ("buscas das reprovadas", "traduzir busca", "prompt recusado")),
+    ("texto", "Animações e Motion IA", ("animação da cena", "motion IA: modelo")),
+    ("texto", "Trilha", ("trilha",)),
+]
+_USOS = (("uso_groq.json", "Groq"), ("uso_openrouter.json", "OpenRouter"), ("uso_jev.json", "Jev"),
+         ("uso_gemini.json", "Gemini"))
 
 
 # Créditos da GenAIPro gastos por caractere narrado. NÃO é 1 crédito por caractere: o saldo mostrou 676 créditos
@@ -131,26 +151,11 @@ def _uso_dos_modelos(projeto) -> list:
     O OpenRouter e o Jev informam o custo real de cada chamada. O Groq é do plano gratuito, então
     conta zero. O Gemini cobra por token, e o preço sai do config.
     """
-    precos = projeto.config.get("precos") or {}
     linhas = []
-    for arquivo, nome in (("uso_groq.json", "Groq"), ("uso_openrouter.json", "OpenRouter"),
-                          ("uso_jev.json", "Jev"), ("uso_gemini.json", "Gemini")):
-        caminho = projeto.pasta / arquivo
-        if not caminho.exists():
-            continue
-        try:
-            chamadas = json.loads(caminho.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not chamadas:
-            continue
+    for nome, chamadas in _chamadas(projeto):
         lidos = sum(c.get("tokens_lidos", 0) for c in chamadas)
         escritos = sum(c.get("tokens_escritos", 0) + c.get("tokens_pensamento", 0) for c in chamadas)
-        if nome == "Gemini":
-            custo = (lidos * precos.get("gemini_entrada_por_milhao", 0.75)
-                     + escritos * precos.get("gemini_saida_por_milhao", 3.75)) / 1e6
-        else:
-            custo = sum(c.get("custo_usd", 0) or 0 for c in chamadas)
+        custo = sum(_custo_da_chamada(projeto, nome, c) for c in chamadas)
         por_etapa: dict = {}
         for c in chamadas:
             etapa = c.get("etapa", "?")
@@ -166,6 +171,68 @@ def _uso_dos_modelos(projeto) -> list:
             "quando": max((c.get("quando", "") for c in chamadas), default=""),
         })
     return linhas
+
+
+def _chamadas(projeto):
+    """(provedor, chamadas) de cada uso_*.json do projeto que tem alguma chamada."""
+    for arquivo, nome in _USOS:
+        caminho = projeto.pasta / arquivo
+        if not caminho.exists():
+            continue
+        try:
+            chamadas = json.loads(caminho.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if chamadas:
+            yield nome, chamadas
+
+
+def _custo_da_chamada(projeto, provedor, c) -> float:
+    """O OpenRouter e o Jev informam o custo real; o Groq é gratuito; o Gemini sai dos preços do config."""
+    if provedor == "Groq":
+        return 0.0
+    if provedor == "Gemini":
+        precos = projeto.config.get("precos") or {}
+        return (c.get("tokens_lidos", 0) * precos.get("gemini_entrada_por_milhao", 0.75)
+                + (c.get("tokens_escritos", 0) + c.get("tokens_pensamento", 0))
+                * precos.get("gemini_saida_por_milhao", 3.75)) / 1e6
+    return float(c.get("custo_usd", 0) or 0)
+
+
+def tarefa_da_etapa(etapa: str) -> tuple:
+    """(categoria, tarefa) de uma etapa gravada no uso_*.json. "(tradução)" é da mesma tarefa."""
+    base = (etapa or "").split(" (")[0].strip()
+    for categoria, tarefa, comecos in TAREFAS:
+        if any(base == c or base.startswith(c) for c in comecos):
+            return categoria, tarefa
+    return "texto", "Outros textos"
+
+
+def uso_por_tarefa(projeto) -> list:
+    """O que os modelos de linguagem fizeram neste vídeo, por tarefa: chamadas, quantas foram grátis, o custo e
+    quais modelos responderam (com o custo de cada um)."""
+    tarefas: dict = {}
+    for provedor, chamadas in _chamadas(projeto):
+        for c in chamadas:
+            categoria, nome = tarefa_da_etapa(c.get("etapa", ""))
+            t = tarefas.setdefault(nome, {"tarefa": nome, "categoria": categoria, "chamadas": 0, "gratis": 0,
+                                          "custo_usd": 0.0, "tokens": 0, "modelos": {}})
+            custo = _custo_da_chamada(projeto, provedor, c)
+            t["chamadas"] += 1
+            t["gratis"] += 1 if custo <= 0 else 0
+            t["custo_usd"] += custo
+            t["tokens"] += c.get("tokens_lidos", 0) + c.get("tokens_escritos", 0) + c.get("tokens_pensamento", 0)
+            modelo = c.get("modelo") or provedor
+            modelo = f"Groq {modelo}" if provedor == "Groq" else modelo
+            m = t["modelos"].setdefault(modelo, {"modelo": modelo, "chamadas": 0, "custo_usd": 0.0})
+            m["chamadas"] += 1
+            m["custo_usd"] += custo
+    saida = []
+    for t in tarefas.values():
+        modelos = sorted(t["modelos"].values(), key=lambda m: (-m["custo_usd"], -m["chamadas"]))
+        saida.append({**t, "custo_usd": round(t["custo_usd"], 6),
+                      "modelos": [{**m, "custo_usd": round(m["custo_usd"], 6)} for m in modelos]})
+    return sorted(saida, key=lambda t: (-t["custo_usd"], -t["chamadas"]))
 
 
 def _narracao_em_creditos(h: dict, config, por_credito: float) -> dict:
@@ -200,10 +267,11 @@ def resumo(projeto) -> dict:
         por_categoria[h["categoria"]] = por_categoria.get(h["categoria"], 0.0) + h["valor_usd"]
         if h.get("unidades"):
             medidas[h["categoria"]] = medidas.get(h["categoria"], 0.0) + h["unidades"]
-    custo_texto = sum(m["custo_usd"] for m in modelos)
-    if modelos:
-        por_categoria["texto"] = por_categoria.get("texto", 0.0) + custo_texto
-        medidas["texto"] = sum(m["tokens_lidos"] + m["tokens_escritos"] for m in modelos)
+    # os modelos de linguagem em três cartões: texto (roteiro, buscas), análise das imagens e o Jev
+    tarefas = uso_por_tarefa(projeto)
+    for t in tarefas:
+        por_categoria[t["categoria"]] = por_categoria.get(t["categoria"], 0.0) + t["custo_usd"]
+        medidas[t["categoria"]] = medidas.get(t["categoria"], 0.0) + t["tokens"]
 
     total = sum(por_categoria.values())
     duracao = 0.0
@@ -226,6 +294,7 @@ def resumo(projeto) -> dict:
         "rotulos": {k: v[0] for k, v in CATEGORIAS.items()},
         "unidades": {k: v[1] for k, v in CATEGORIAS.items()},
         "modelos_de_texto": sorted(modelos, key=lambda m: -m["custo_usd"]),
+        "tarefas_dos_modelos": tarefas,
         "narracao": {
             "caracteres": round(caracteres_narrados),
             "creditos": round(creditos, 1),
