@@ -173,7 +173,11 @@ midia:
     - google/gemma-4-26b-a4b-it:free
     - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free   # descreve bem; na escolha às vezes não escolhe nada
     - openrouter/free
-    - qwen/qwen3.8-flash
+    # o pago de reserva: teste de bancada de 2026-10-07 (98 folhas do mcp-cafe-5min contra a escolha do Claude), a 1ª
+    # foto entre as que o Claude aceitou: qwen3.7-flash 78% a US$ 0,00008 por folha, qwen3-vl-32b 64% a US$ 0,00026,
+    # qwen3.8-flash 62% a US$ 0,00033. O 3.7 quase sempre escolhe alguma foto quando nada serve (3 de 10 recusas
+    # certas); a conferência do Jev, depois do download, troca a que mostra outra coisa
+    - qwen/qwen3.7-flash
   raciocinio_visao:
     dots-studio/: nenhum
     qwen/: nenhum
