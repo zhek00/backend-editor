@@ -98,6 +98,13 @@ def _reduzir(origem, destino):
         imagem.save(destino, quality=85)
 
 
+def imagem_de_ia(cena) -> bool:
+    """A cena mostra uma imagem de IA: sem foto ou vídeo de banco e marcada para a IA, seja do tipo "ia" ou uma cena
+    de foto que nenhum banco resolveu (sem_midia_real). Antes valia só o tipo "ia", e a imagem gerada da cena 15 do
+    ouro-serra-1min (uma foto_real sem material) nunca era conferida."""
+    return not cena.get("midia") and midia.precisa_ia(cena)
+
+
 def _quadros(projeto, cena):
     """Arquivos de imagem que mostram o que a cena exibe hoje. Vídeo vira dois quadros, aos 25% e 75%."""
     pasta = projeto.caminho("conferir")
@@ -474,7 +481,7 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
         estado["o_que_basta"] = cena["aceitavel"].strip()
     if cena.get("exato"):
         estado["tem_que_ser"] = cena["exato"]
-    if cena.get("tipo") == "ia" and not cena.get("midia"):
+    if imagem_de_ia(cena):
         estado["imagem_gerada_por_ia"] = "sim: não pese contra por ser imagem gerada; julgue se mostra o certo"
     # escrito pelo agente que leu o roteiro inteiro: "Coincidieron." sozinho não diz que é sobre Watson Brake
     if cena.get("visual") in animacoes.tipos(projeto) and animacoes.config(projeto).get("ativo", True):
@@ -695,7 +702,7 @@ def linhas_do_estado(projeto, cena, vizinhas=None) -> str:
         linhas.append(f"Pessoa citada: {pessoa}")
     if cena.get("item_citado"):
         linhas.append(f"Item da lista nesta cena: {cena['item_citado']}")
-    if cena.get("tipo") == "ia" and not cena.get("midia"):
+    if imagem_de_ia(cena):
         linhas.append("A imagem foi gerada por IA: não pese contra por isso; julgue se mostra o certo")
     return "\n".join(linhas)
 
@@ -812,7 +819,7 @@ def _avaliar(projeto, numeros, log, nota_minima=NOTA_MINIMA):
     cenas = conferiveis(projeto, numeros)
     if numeros:
         # a imagem de IA também é conferida quando a cena é pedida pelo número (conferir_ia)
-        cenas += [c for c in todas if c["n"] in numeros and c.get("tipo") == "ia" and not c.get("midia")
+        cenas += [c for c in todas if c["n"] in numeros and imagem_de_ia(c)
                   and projeto.imagem(c["n"]).exists() and (c.get("texto") or "").strip()]
     from . import cliente
 
@@ -1107,7 +1114,7 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
 
     dados = projeto.ler_json("cenas.json")
     alvo = {c["n"] for c in dados["cenas"]
-            if c.get("tipo") == "ia" and not c.get("midia") and projeto.imagem(c["n"]).exists()
+            if imagem_de_ia(c) and projeto.imagem(c["n"]).exists()
             and (numeros is None or c["n"] in numeros) and not (c.get("conferencia") or {}).get("legenda")}
     if not alvo:
         return {}

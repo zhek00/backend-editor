@@ -60,6 +60,7 @@ _PRODUCOES: dict = {}       # nome -> {"estado", "log", "inicio", "fim", "erro"}
 _INSTRUCOES: dict = {}      # marca -> texto das instruções de uma etapa
 _local = threading.local()
 _NOME_VALIDO = re.compile(r"^[a-z0-9][a-z0-9-]{2,59}$")
+VOZ_FISH_PADRAO = "0ba1afd27db44eb2b4cb27fd331b93aa"  # "Narrador de Histórias e Ciências", a do virou-filme-em-1996
 _URL_PUBLICA = ""  # com URL pública, o MCP exige o token de cada cliente (clientes_mcp.py)
 
 
@@ -136,11 +137,16 @@ def listar_perfis() -> str:
 
 @servidor.tool(structured_output=False)
 def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar: bool = False,
-                voz_do_computador: bool = False, imagens_de_ia: bool = True) -> str:
+                voz_do_computador: bool = False, imagens_de_ia: bool = True, voz: str = "") -> str:
     """Cria o vídeo a partir do roteiro. Sem confirmar, só cria o projeto e devolve a estimativa de custo (nada é
     gasto). Com confirmar=true, a produção começa e você passa a responder as tarefas (proximas_tarefas).
 
-    nome: letras minúsculas, números e hífen. voz_do_computador e imagens_de_ia=false fazem um teste sem custo."""
+    nome: letras minúsculas, números e hífen. voz: vazio usa a voz do perfil; "fish" usa a voz grátis da Fish Audio
+    (o narrador padrão) e "fish:CODIGO" outra voz da biblioteca da Fish. voz_do_computador e imagens_de_ia=false
+    fazem um teste sem custo."""
+    voz = (voz or "").strip()
+    if voz and not re.fullmatch(r"fish(:[0-9a-f]{32})?", voz):
+        return 'Voz inválida: use "fish" ou "fish:CODIGO_DA_VOZ" (32 letras e números), ou deixe vazio.'
     if not _NOME_VALIDO.match(nome):
         return "Nome inválido: use de 3 a 60 letras minúsculas, números e hífen (ex.: animais-perigosos-1)."
     if ((PROJETOS / nome).exists() or (pacote.ENTREGAS / nome).exists()) and not _e_meu(nome):
@@ -156,6 +162,9 @@ def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar
         p.dados["dono"] = _cliente()
         if voz_do_computador:
             p.dados["voz_override"] = {"provedor": "computador"}
+        elif voz:
+            p.dados["voz_override"] = {"provedor": "fish", "voice_id": voz.partition(":")[2] or VOZ_FISH_PADRAO,
+                                       "idioma": "pt", "velocidade": 1.0}
         if not imagens_de_ia:
             p.dados["config_override"] = {"ia": {"ativa": False}}
         p.salvar_json("projeto.json", p.dados)
@@ -377,8 +386,9 @@ Repita até 5 vezes: proximas_tarefas(nome="{nome}", tipo="{tipo}", limite=2, in
 instruções que você já recebeu, separadas por vírgula>"). Se vier "Nenhuma tarefa", pare. Para cada tarefa, siga as
 instruções e o esquema dela à risca e chame responder(tarefa_id, resposta_json) com um JSON só com as chaves do esquema;
 se for recusada, corrija e responda de novo. Olhe cada imagem com atenção: o sujeito que a narração cita tem que ser
-exatamente aquele, nunca outra coisa parecida. Não escreva arquivos nem explique nada ao usuário. No fim, devolva uma
-linha só: quantas tarefas respondeu e de quais etapas."""
+exatamente aquele, nunca outra coisa parecida. Decida direto: as instruções de cada tarefa já dizem como julgar, então
+não delibere longamente nem reveja a resposta antes de mandar. Não escreva arquivos nem explique nada ao usuário. No
+fim, devolva uma linha só: quantas tarefas respondeu e de quais etapas."""
 
 COMANDO = """Produza um vídeo com a fábrica TipLabs (MCP fabrica).
 {argumentos}
@@ -416,9 +426,12 @@ def texto_do_comando(roteiro="", nome="", perfil="") -> str:
     return COMANDO.format(argumentos=argumentos, ajudante=ajudante)
 
 
+# model: sonnet. Quem coordena só espera a fábrica e lança subagentes: no teste do ouro-serra-1min o coordenador no
+# Opus custou US$ 0,83 (equivalente em API) de US$ 2,22 sem tomar nenhuma decisão do vídeo
 ARQUIVO_DO_COMANDO = """---
 description: Produz um vídeo narrado com a fábrica TipLabs, do roteiro ao MP4
 argument-hint: <roteiro.txt> <nome-do-video> [perfil]
+model: sonnet
 ---
 {texto}
 """

@@ -105,3 +105,16 @@ def test_imagem_nova_que_saiu_fica(tmp_path):
     projeto.imagem(65).write_bytes(b"nova")
     assert corrigir._devolver_sem_imagem(projeto, {65}, log=lambda *_: None) == []
     assert projeto.imagem(65).read_bytes() == b"nova"
+
+
+def test_imagem_de_ia_de_cena_de_foto_tambem_e_conferida(monkeypatch, tmp_path):
+    # ouro-serra-1min, cena 15: foto_real sem material ganhou imagem de IA e ficou sem conferência
+    cenas = [{"n": 15, "tipo": "foto_real", "sem_midia_real": True, "midia": None, "texto": "na alquimia do tempo"},
+             {"n": 16, "tipo": "foto_real", "midia": {"arquivo": "midia/0016.jpg"}, "texto": "o fogo"}]
+    projeto = _projeto(tmp_path, cenas)
+    projeto.imagem(15).write_bytes(b"png")
+    conferidas = []
+    monkeypatch.setattr(corrigir, "_avaliar", lambda p, alvo, log, minima: conferidas.append(set(alvo)) or {})
+    monkeypatch.setattr(corrigir, "_guardar", lambda *a, **k: None)
+    corrigir.conferir_ia(projeto, log=lambda *a: None)
+    assert conferidas == [{15}]

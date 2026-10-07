@@ -124,5 +124,6 @@ def test_revisao_do_cliente_so_olha_o_que_ele_nao_viu_pronto(projeto, monkeypatc
         {"n": 4, "midia": {"fonte": "motion_ia", "tipo": "video"}, "captura": {}},          # clipe do Motion IA
         {"n": 5, "midia": midia_ok, "captura": {}, "conferencia": {"nota": 2}},             # ficou reprovada
         {"n": 6, "midia": midia_ok, "captura": {}, "conferencia": {"nota": 85}},            # aprovada na conferência
+        {"n": 7, "tipo": "ia", "midia": None, "captura": {}},                                 # imagem de IA
     ]
-    assert revisao_video.cenas_que_o_cliente_ainda_nao_viu(projeto, cenas) == {2, 3, 4, 5}
+    assert revisao_video.cenas_que_o_cliente_ainda_nao_viu(projeto, cenas) == {2, 3, 4, 5, 7}
