@@ -57,7 +57,7 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - Frases curtas que se repetem no final ("X está nessa lista. Y está nessa lista.") viram uma cena por frase (`_frases_paralelas`).
 - Listas com vírgulas ou "e" viram uma cena por item (`_itens_enumerados`).
 - Cena que cita duas ou mais coisas visuais diferentes: o Groq (ou o MiMo de reserva) devolve `citacoes`, e o código corta a cena onde cada uma é falada, com a busca e o prompt da própria coisa.
-- Cenas de citação e de enumeração têm mínimo de 1 segundo em vez de 3. **Item curto nunca engole o seguinte** ("alces" dura 0,6 s antes de "cavalos-de-przewalski"): o corte do próximo item é empurrado só o necessário (`_dividir_enumeracoes`), e na fase de cenas curtas o item empresta tempo da vizinha em vez de se fundir a ela. Cada citação do agente traz a própria `descricao`, `exato` e `animal`, e a fatia leva `item_citado`: o Jev julga se a imagem mostra AQUELE item, não os outros da frase. **Item citado no fim da cena adianta o corte** (tirando tempo do item anterior, os dois com o mínimo), em vez de ser jogado fora: "outras pela velocidade" é dita a 0,92 s do fim da frase, e o guepardo que o agente pediu sumia. **Cena comum curta nunca funde nem divide tempo com a fatia de um item citado** (`livre` em `_garantir_limites_estritos`): a frase do mosquito (2,6 s) era fundida com a fatia do guepardo, e ele sumia de novo; ela busca o tempo do outro lado.
+- Cenas de citação e de enumeração têm mínimo de 1 segundo em vez de 3. **Item curto nunca engole o seguinte** ("alces" dura 0,6 s antes de "cavalos-de-przewalski"): o corte do próximo item é empurrado só o necessário (`_dividir_enumeracoes`), e na fase de cenas curtas o item empresta tempo da vizinha em vez de se fundir a ela. Cada citação do agente traz a própria `descricao`, `exato` e `animal`, e a fatia leva `item_citado`: o Jev julga se a imagem mostra AQUELE item, não os outros da frase. **Item citado no fim da cena adianta o corte** (tirando tempo do item anterior, os dois com o mínimo), em vez de ser jogado fora: "outras pela velocidade" é dita a 0,92 s do fim da frase, e o guepardo que o agente pediu sumia. **Cena comum curta nunca funde nem divide tempo com a fatia de um item citado** (`livre` em `_garantir_limites_estritos`): a frase do mosquito (2,6 s) era fundida com a fatia do guepardo, e ele sumia de novo; ela busca o tempo do outro lado. **Lista falada depressa não desloca os pedidos** (`_itens_por_fatia`): cada fatia mostra o item que começa a ser falado nela. Em "chocolate, caramelo e flores" (2 s) não cabiam três fatias de 1 s, e a fatia que fala "e flores" ficava com o caramelo (mcp-cafe-5min); agora sai o item espremido no meio.
 - Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 80% dos 3 primeiros minutos e 40% até os 7 (`_balancear_foto_e_video`). Os 30% de vídeo permitidos no total são gastos primeiro no começo, com prioridade para os 3 primeiros minutos.
 - **Precisão literal (direção de arte).** O agente (`roteirista.PROMPT_CENAS`, "Diretor de Arte Sênior") e o Jev (`corrigir.PERGUNTAS_JEV`) seguem as mesmas 6 regras: sujeito exato sem substituições, cenário fiel, nada de B-roll desconexo ou metáfora, ação e característica exatas, placas e telas do contexto certo, nada de reaproveitar entre blocos sem relação. Só o que existe apenas como tipo genérico (o gráfico de um estudo, uma pessoa anônima) aceita uma representação direta do mesmo tipo. **Animal tem ainda a regra de código abaixo**: se a fala cita o pangolim, aparece um pangolim — nunca um gato, um tatu, outro lêmure ou "um animal parecido". Vale para o agente (busca pelo nome da espécie, nome científico na alternativa), para o Jev (`corrigir.PERGUNTAS_JEV`) e para o código: em cena de animal (`midia.animal_da_cena`) só entra candidato cujas tags citam a espécie ou o tipo do bicho ("snake" para uma cobra, porque os bancos descrevem assim; a espécie exata quem confere é o julgamento), a Wikimedia vem primeiro e o tapa-buraco nunca põe outro bicho. **Nunca encher cenas repetindo a mesma foto do animal**: isso já foi feito e ficou pior (cenas 4 a 7 com a mesma cobra).
 - **Onze bancos de imagem** (`midia.Buscador._das_fontes`, `fontes_foto` do perfil base), consultados ao mesmo tempo e com os resultados intercalados (antes a lista era cortada na ordem dos bancos). Wikimedia, Pexels, Pixabay e Unsplash entram em toda busca de foto. O iNaturalist entra primeiro em cena de animal e a NASA só em cena de espaço. **Os bancos de acervo (Harvard, Europeana, Smithsonian, NYPL e Te Papa, `bancos.ACERVO`) só entram em cena de acervo** (`midia._e_de_acervo`): o agente mandou buscar na Wikimedia, ou a cena fala de história, arte, artefato ou ano antes de 1950; em cena de animal, só com fóssil, esqueleto, espécime ou espécie extinta. Antes eles entravam em tudo e só tomavam vaga: no lince2 o Harvard trouxe 4.303 candidatos, quase todos quadros, e 1 entrou no vídeo. O Biodiversity Heritage Library ficou de fora porque devolve livros, não imagens. O Unsplash da chave atual é do plano de demonstração (50 buscas por hora) e acaba cedo; a fábrica segue com os outros. Vídeo continua só no Pexels e no Pixabay. 12 candidatos por cena (`midia.candidatos`).
@@ -90,7 +90,7 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - **O Corrigir nunca termina com imagem sem conferência** (`corrigir._conferir_sem_nota`): a troca por repetida e as buscas do fim são julgadas antes de acabar. No virou-filme sobraram 77 sem ninguém olhar.
 - **A imagem de IA é conferida pelo Jev** (`corrigir.conferir_ia`, chamada por `imagens.gerar`): mostrando outra coisa, é feita de novo uma vez com o motivo no pedido. Refazer com o prompt da pessoa (`refazer`) não confere. Em cena de época a imagem sai no estilo de foto antiga (`imagens.prompt_final`).
 - **Nota mínima única** (`midia.NOTA_MINIMA_FIXA`, 40): a captura nunca aceita menos do que a conferência. Na criação (site e `tudo`) a conferência olha toda cena abaixo de 40 ou suspeita e troca sozinha, no acervo, sem deixar para o botão Corrigir Mídia. O `config.yaml` pode subir a nota, nunca baixar.
-- **O agente diz o que a foto obrigatoriamente mostra** (campo `exato` de cada cena: "Pripyat", "Geiger counter", "New Safe Confinement", "Eurasian lynx", ou vazio quando qualquer representação direta serve). Com `exato`, a Wikimedia vem primeiro e só entra foto cujas tags citem o nome (nome composto: todas as palavras, senão "Chernobyl Elephant's Foot" aceitaria um elefante). **O `exato` também é o primeiro termo de busca**, na busca da cena e no tapa-buraco: antes ele era só filtro, e a cena 11 do aparte2-2min-v2 exigia "Instituto Butantan", buscava "antivenom vials corridor" e descartava todos os candidatos (0 de 12 citavam o nome; com o `exato` na busca, 7 de 12). É a correção de raiz: antes cada etapa adivinhava o essencial pela busca, e toda adivinhação tinha furo. Sem o campo (projeto antigo), `midia.exigido_da_cena` deduz o animal ou o nome próprio do roteiro.
+- **O agente diz o que a foto obrigatoriamente mostra** (campo `exato` de cada cena: "Pripyat", "Geiger counter", "New Safe Confinement", "Eurasian lynx", ou vazio quando qualquer representação direta serve). Com `exato`, a Wikimedia vem primeiro e só entra foto cujas tags citem o nome (nome composto: todas as palavras, senão "Chernobyl Elephant's Foot" aceitaria um elefante). **O `exato` também é o primeiro termo de busca**, na busca da cena e no tapa-buraco: antes ele era só filtro, e a cena 11 do aparte2-2min-v2 exigia "Instituto Butantan", buscava "antivenom vials corridor" e descartava todos os candidatos (0 de 12 citavam o nome; com o `exato` na busca, 7 de 12). É a correção de raiz: antes cada etapa adivinhava o essencial pela busca, e toda adivinhação tinha furo. **O `exato` dentro da busca também é buscado sozinho**, e palavra que as tags perdem (`_SO_ESTILO`, como "stock") nunca é exigida: a cena 35 do mcp-cafe-5min buscava "New York stock exchange screen", o "New York Stock Exchange" sozinho nunca era buscado e o filtro exigia "stock", que nenhuma tag tinha; entrou um túnel de trem. Sem o campo (projeto antigo), `midia.exigido_da_cena` deduz o animal ou o nome próprio do roteiro.
 - **Busca com o contexto do bloco**: quando a busca fala do assunto do bloco, o `contexto` do mapa vai junto ("sugar glider" vira "sugar glider marsupial animal"). No tapa-buraco, candidato cujas tags não citam o assunto nunca entra às cegas.
 - **Texto curto com fundamento** (`textos.REGRAS_QUALIDADE`, no pedido do agente para o `overlay`, que vira o texto da animação em camada): número com o que ele mede, nome com a identificação ou a conclusão do trecho. Nunca metadados ("PARTE 2", "NÚMERO 8" sem o nome), palavra solta ou palavra que não foi falada. Na dúvida, sem texto.
 - **Voz do Edge com o tempo de cada palavra** (`boundary="WordBoundary"`): legenda e cortes seguem a fala. Projeto antigo se corrige com `narracao.realinhar_edge`.
@@ -201,6 +201,27 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   (`animacoes._conferir(..., clipe=True)`). Texto fora da tela ou fora do card (`canvas_overflow`,
   `text_box_overflow`) o HyperFrames marca só como informação, e o clipe passava com o card vazio: no clipe isso
   reprova (`_ESTOURO_NO_CLIPE`), com uma dica para o modelo. O que reprovar volta para o modelo, até `motion_ia.tentativas`.
+- **Revisão visual antes de gravar** (`motion_ia._revisado` e `criticar`, do vídeo de motion graphics estudado a pedido
+  do usuário em 2026-10-06: "olhe os quadros, dê nota, corrija os 3 piores, só então grave"). Antes ninguém olhava o
+  clipe, só o código e o `hyperframes check`. Agora o `hyperframes snapshot --describe=false` tira uns 4 quadros numa
+  folha de contato (uns 8 s, sem gravar o MP4; sem o `--describe=false` ele mandaria os quadros ao Gemini), e a cadeia
+  de visão **só com os gratuitos** (`VISAO.perguntar(..., so_gratuitos=True)`, o Qwen 27B do Groq em uns 8 s) dá nota
+  de 1 a 10 em legibilidade no celular, composição, clareza, fidelidade à fala, movimento e acabamento (`CRITERIOS`).
+  Abaixo de `motion_ia.critica.nota` (8), os até 3 piores problemas, com a correção, voltam para quem fez o clipe
+  (o modelo pronto troca de desenho ou de dados; o HTML livre muda o código), até `critica.rodadas` (3) revisões. Sem
+  passar, fica o de melhor nota se a pior nota dele chegar a `critica.aceitavel` (5); abaixo disso a cena segue o
+  caminho de antes. Sem quadros ou sem modelo de visão gratuito, o clipe segue sem a revisão (nunca para o vídeo). As
+  notas ficam em `partes.json` (`critica` e `criticas`) e a folha da última revisão em `motion_ia/NNNN/revisao.jpg`.
+- **Som no tempo do movimento** (`motion_ia.sons_do_clipe` e `sons_na_linha`, mesmo estudo: o que mais pesa no nível
+  de um motion é o som batendo junto). Os clipes saíam mudos. Os momentos saem da linha do tempo do próprio clipe (o
+  js do `partes.json`, `eventos_de_som`): card ou texto entrando é **pop**, linha se desenhando é **risco**, número
+  contando é **contagem** (tiques juntos no começo e espaçados no fim, como a mola `power3.out`) e peso caindo
+  (`bounce`) é **baque**. Movimento contínuo (`repeat`, `yoyo`, `sine.inOut`) e saída não têm som; no máximo 6 por
+  clipe, com 0,3 s entre eles. Os sons são tocados pelo código (`trilha._efeito`, em `efeitos/gerados`) e misturados
+  num arquivo por clipe (`motion_ia/NNNN/sons-ASSINATURA.wav`, com 6 dB de folga para não estourar), que o render põe
+  no segundo da cena com qualquer perfil, em `motion_ia.volume_sons_db` (-20) depois do pico a -1 dB. Clipe já gravado
+  também ganha som, sem gravar de novo. `motion_ia.sons: false` desliga; mudou a leitura dos momentos ou a mistura,
+  suba `VERSAO_SONS`.
 - **Gravação:** o HyperFrames grava o MP4 quadro a quadro num Chrome escondido (é o pipeline do PRD, sem Playwright),
   1920x1080, 30 quadros (`MOTION_RENDER_FPS` no `.env`), com a duração exata da cena (cena 6 do natureza-teste-1min: 3,231 s, clipe de 3,233 s).
   Fica em `midia/NNNN_motion.mp4`, com capa, e entra como a mídia da cena (`midia.fonte: motion_ia`, tipo
@@ -257,6 +278,96 @@ status` e em `GET /api/projetos/NOME/qualidade`. Serve para saber se uma mudanç
 `uv run --no-sync --with pytest python -m pytest tests`: os filtros da captura e a decisão da conferência, com os casos
 reais que já deram errado (elefante de Tsavo no acampamento, zebra no leão, "Patterson" trazendo ginasta, "tranca
 quebrada" trazendo cânion). Sem rede e sem custo. Toda regra nova da captura ganha um caso aqui.
+
+## MCP: o Claude do cliente pensa o vídeo (teste)
+
+`fabrica/mcp_servidor.py` e `fabrica/cliente.py`, pedido do usuário em 2026-10-06: quem usa o MCP manda o roteiro pelo
+próprio Claude Code, e as decisões saem da assinatura dele. `fabrica mcp --porta 8092` sobe o MCP em
+`http://127.0.0.1:8092/mcp` (biblioteca `mcp` 2.x: `MCPServer`, não `FastMCP`).
+
+- **Projeto do MCP** (`"modelo": "cliente"` no `projeto.json`, `cliente.ativo`): todo pedido a modelo de linguagem
+  (`openrouter_local.perguntar` e `uma_rota`, e o Jev, que nesse modo julga pelo caminho do modelo principal) vira uma
+  tarefa na fila de `cliente.py`, com o mesmo texto, as mesmas imagens e o mesmo esquema; a produção espera a
+  resposta. Resposta sem as chaves obrigatórias é recusada e a tarefa continua; tarefa entregue e não respondida em
+  15 min volta para a fila. As regras da fábrica valem iguais: só muda quem responde.
+- **Ferramentas:** `criar_video` (sem `confirmar`, só a estimativa, que zera as decisões do modelo nesse modo;
+  `voz_do_computador` e `imagens_de_ia=false` fazem um teste sem custo), `andamento`, `proximas_tarefas` (as
+  instruções de uma etapa vão inteiras só na primeira tarefa dela; `ver_instrucoes` mostra de novo), `responder`,
+  `entregar_video` (pacote para o cliente, MP4 em `entregas/`), `importar_pacote`, `cancelar`, `listar_perfis`.
+- **Ajustes por projeto:** `config_override` no `projeto.json` mistura seções por cima do `config.yaml`
+  (`Projeto.__init__`); voz `"computador"` é a voz do sistema fora do modo offline.
+- **Teste de 2026-10-06** (`mcp-pangolim`, 3 frases, 11,6 s): o ciclo inteiro pelo MCP, com as decisões tomadas pelo
+  Claude no papel do cliente, saiu em US$ 0 (nenhum `uso_*.json`). Foram 17 tarefas: mapa 1, cenas 1, escolha das
+  fotos 3, Jev antes do download 3, descrição 3, Jev depois do download 3, busca nova 1, trilha 1, revisão do vídeo 1.
+- **O que falta:** juntar escolha e julgamento (quem escolheu já viu a imagem: o Jev antes e depois do download e a
+  descrição repetem o trabalho; são 3 das 4 tarefas por cena), várias cenas por tarefa, links de download em vez de
+  caminhos (o teste roda na mesma máquina), um token por cliente e a contagem das tarefas por vídeo.
+
+- **Comando `/tiplabs roteiro.txt nome [perfil]`** (pedido do usuário em 2026-10-07; `mcp_servidor.texto_do_comando`).
+  Comando que vem de MCP sempre ganha o prefixo `/mcp__servidor__` no Claude Code, então o `/tiplabs` é um arquivo
+  no computador do cliente, `~/.claude/commands/tiplabs.md`: a ferramenta `instalar_tiplabs` devolve o conteúdo e o
+  Claude do cliente grava uma vez (a cópia fica em `comandos/tiplabs.md`). Sem o arquivo, o mesmo texto está no
+  prompt `tiplabs` do servidor (`/mcp__fabrica__tiplabs`). O comando produz até o fim sem ninguém chamar o MCP à mão. Ele cria o vídeo, mostra a
+  estimativa, e então repete `esperar(nome)` (espera até 55 s no servidor por tarefa nova ou pelo fim, sem gastar nada
+  e sem dormir no terminal) e, quando há tarefa, lança um **subagente** por grupo (`cliente.grupo`): **roteiro** (mapa,
+  cenas, diretor) com o Opus e **visual** (fotos, conferência, revisão, animação, trilha) com o Sonnet. Cada subagente
+  responde até 10 tarefas e é descartado: as imagens nunca se acumulam na conversa principal, que o Claude Code relê a
+  cada passo. No mcp-cafe-5min a fábrica ficou 6 h parada porque ninguém chamou o MCP.
+- **Instruções uma vez por chamada** (`proximas_tarefas(..., tipo, instrucoes_que_ja_tenho)`): antes o "já entregue"
+  era global, e o segundo subagente ficaria sem as regras. Agora cada chamada manda as instruções inteiras uma vez,
+  menos as das marcas que quem pede diz que já tem.
+- **Menos tokens na escolha das fotos** (43% do consumo do mcp-cafe-5min): a folha de candidatos vai com 1280 px de
+  largura (`midia._folha_leve`, `cliente.largura_da_folha`; uns 920 tokens em vez de 1.380, miniaturas de 320 px ainda
+  legíveis), e o texto só com o que decide (`midia._bloco_do_cliente`): sem os termos buscados, a duração, os trechos
+  vizinhos e o "deveria mostrar" repetido; a descrição de cada candidato sem tags repetidas e em até 90 letras.
+- **Revisão do vídeo só onde ela acrescenta** (`revisao_video.cenas_que_o_cliente_ainda_nao_viu`): o cliente já viu
+  cada foto na escolha e na conferência, então a revisão olha só as cenas com animação por cima, Motion IA, as tapadas
+  ou suspeitas e as que ficaram reprovadas. No mcp-cafe-5min, 11 cenas em vez de 88.
+- **Medido no mcp-cafe-5min** (4min48s, 88 cenas, antes destas mudanças): 53 tarefas, 200 imagens, uns 295 mil tokens
+  lidos e 35 mil escritos pelo conteúdo das tarefas (sem contar o contexto relido nem o raciocínio). A escolha das
+  fotos 197 mil, as cenas 46 mil, a revisão 44 mil.
+
+
+- **MCP na internet** (`fabrica mcp --porta 8092 --url-publica https://mcp.DOMINIO`, `fabrica/clientes_mcp.py`, pedido
+  do usuário em 2026-10-07). Sem a URL, o MCP de teste roda só nesta máquina e sem senha. Com ela:
+  - **Token por cliente** (`fabrica mcp-cliente criar NOME [--por-dia 2] [--url ...]`, `listar`, `revogar NOME`): o
+    Claude Code dele manda `Authorization: Bearer TOKEN` (`claude mcp add ... --header`). O arquivo
+    `clientes_mcp.json` (fora do Git) guarda só o hash do token. Sem token ou com token errado: 401.
+  - **Cada projeto tem dono** (`dono` no projeto.json e no entrega.json): um cliente nunca vê, responde nem baixa o
+    projeto de outro, e `proximas_tarefas` exige o nome do vídeo.
+  - **Limite de vídeos por dia** (2 por padrão, o produto de R$ 1.000): conta o vídeo começado com `confirmar=true`;
+    retomar o mesmo vídeo não conta de novo (`producao_contada`).
+  - **Entrega por link** (`/baixar/CODIGO/ARQUIVO`, válido 7 dias): `entregar_video(nome)` deixa o MP4 e o pacote em
+    `entregas/NOME/` e devolve os dois links; o /tiplabs baixa com curl. Antes era um caminho no disco do servidor.
+    `importar_pacote` fica fora pela internet (falta o envio do pacote).
+  - Só o Host da URL pública é aceito (o resto, 421). Testado na porta 8093: sem token 401, token errado 401, token
+    certo entra e não vê o projeto de outro dono, código de download inventado 404.
+  - **No ar em https://mcp.bbnews.cc** (2026-10-07): subdomínio no túnel da Cloudflare que já serve o editor, apontando para localhost:8092, com uma Regra de Configuração para o host mcp.bbnews.cc que desliga o "Estou Sob Ataque" e a verificação de integridade do navegador (o domínio está em modo Sob Ataque, e o desafio barrava o Claude Code com 403). Testado por fora: 401 sem token, 200 com token, o vídeo de 209 MB baixado em 26 s.
+  - **Falta:** apagar os pacotes de `entregas/` depois de baixados ou vencidos, e o MCP subir junto no LIGAR-TIPLABS.
+
+## Pacote do projeto (teste do MCP)
+
+`fabrica/pacote.py`, pedido do usuário em 2026-10-06, nesta cópia de teste do MCP: **no servidor fica só o MP4
+pronto; o projeto fica com o cliente.** `fabrica entregar NOME --cliente PASTA` escreve o pacote (`NOME.zip`) na pasta
+do cliente, guarda o vídeo em `entregas/NOME/` e apaga a pasta de trabalho (só depois de o zip ser conferido).
+`fabrica importar ARQUIVO.zip [--nome] [--substituir]` remonta a pasta para editar, e `fabrica pacote NOME [--medir]`
+exporta ou só mede.
+
+- **Vai no pacote o que custa refazer:** os textos do projeto e os caches em JSON (que evitam pagar o modelo de novo),
+  a narração paga (`.mp3` e `.json` de cada bloco; sem `.mp3`, o `_bruto.wav`), as imagens de IA e as da pessoa, e as
+  fotos e vídeos de banco **usados nas cenas** (o endereço do arquivo não é guardado, e o do Pixabay nem é permanente).
+  O perfil do canal vai junto (`perfil.yaml`, com a base aplicada) e vale quando o servidor não tem esse perfil.
+- **Fica de fora o que a fábrica refaz de graça:** os clipes do render, a narração aberta (`.wav`, sai do `.mp3`), a
+  trilha tocada (sai da partitura), os MOV das animações (saem do `motion.json`), as prévias, as versões antigas, as
+  folhas de candidatos e as fotos recusadas.
+- **Importar não gasta:** `narracao.narrar(sem_gastar=True)` remonta a narração com os blocos do pacote e para antes de
+  chamar a voz paga se o texto ou a voz mudou. O render refaz a trilha e as animações sozinho. Pacote com caminho para
+  fora da pasta é recusado, e importação que falha não deixa projeto pela metade.
+- **Medido:** o nunca-deve-ter-dentro-de-casa-parte-2 (30 min) dá um pacote de 941 MB contra 6,2 GB de projeto (643 MB
+  de fotos e vídeos de banco, 263 MB de imagens de IA, 30 MB de narração). No teste offline (`teste-pacote`), entregar,
+  importar e renderizar de novo deu o mesmo vídeo, pixel a pixel e com o mesmo áudio.
+- **Próximo passo:** baixar de novo as fotos e vídeos de banco pelo número de cada um no banco, em vez de levá-los no
+  pacote (o pacote de 30 min cairia para uns 300 MB).
 
 ## Revisão do vídeo pronto
 

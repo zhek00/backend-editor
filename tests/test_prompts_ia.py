@@ -128,6 +128,34 @@ def test_item_citado_no_fim_da_cena_ganha_a_propria_fatia():
     assert fatias[1]["ini"] == 11.22 and fatias[1]["busca"] == "cheetah running savanna"
 
 
+def test_lista_falada_depressa_nao_desloca_os_pedidos():
+    # mcp-cafe-5min: "chocolate, caramelo e flores" em 2 s não cabe em três fatias de 1 s. A fatia que fala "e flores"
+    # ficava com o caramelo; agora sai o item espremido no meio e cada fatia mostra o que se fala nela
+    tempos = [("dentro", 192.132), ("da", 192.599), ("xícara,", 192.799), ("como", 193.332), ("notas", 193.665),
+              ("de", 194.065), ("frutas", 194.265), ("vermelhas,", 194.732), ("chocolate,", 195.465),
+              ("caramelo", 196.199), ("e", 196.799), ("flores.", 196.932), ("É", 197.465)]
+    palavras = [{"texto": w, "ini": t} for w, t in tempos]
+    itens = ("frutas vermelhas", "chocolate", "caramelo", "flores")
+    cena = {"n": 59, "ini": 192.13, "fim": 197.47, "tipo": "foto_real", "busca": "red berries",
+            "texto": "dentro da xícara, como notas de frutas vermelhas, chocolate, caramelo e flores.",
+            "citacoes": [{"palavra": i, "busca": i, "descricao": i} for i in itens]}
+    fatias = cenas_mod._dividir_enumeracoes([cena], {"palavras": palavras}, log=lambda *a: None)
+    assert [f["item_citado"] for f in fatias] == ["frutas vermelhas", "chocolate", "flores"]
+    assert fatias[-1]["texto"].strip(" .") == "e flores"
+
+
+def test_itens_curtos_em_sequencia_cada_um_na_sua_fatia():
+    # "alces" dura 0,6 s: o corte dos cavalos é empurrado, e a fatia segue sendo dos cavalos (ainda falados nela)
+    palavras = [{"texto": "alces,", "ini": 10.0}, {"texto": "cavalos-de-przewalski", "ini": 10.6},
+                {"texto": "e", "ini": 12.2}, {"texto": "lobos", "ini": 12.5}]
+    cena = {"n": 1, "ini": 10.0, "fim": 15.0, "tipo": "foto_real", "busca": "moose",
+            "texto": "alces, cavalos-de-przewalski e lobos",
+            "citacoes": [{"palavra": i, "busca": i, "descricao": i} for i in ("alces", "cavalos", "lobos")]}
+    fatias = cenas_mod._dividir_enumeracoes([cena], {"palavras": palavras}, log=lambda *a: None)
+    assert [f["item_citado"] for f in fatias] == ["alces", "cavalos", "lobos"]
+    assert fatias[1]["ini"] == 11.0
+
+
 def test_cena_curta_nao_engole_a_fatia_de_um_item_citado():
     # a frase do mosquito (2,6 s) pega tempo da cena seguinte, e não a fatia de 1 s do guepardo
     cenas = [

@@ -140,8 +140,15 @@ class _Visao:
     tokens pagos."""
 
     @staticmethod
-    def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
+    def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
+                  so_gratuitos=False):
+        """so_gratuitos=True: só as rotas gratuitas da cadeia, sem o pago de reserva (a crítica do Motion IA, que é
+        custo zero). Sem nenhuma, levanta RuntimeError."""
         lista = visao(projeto)
+        if so_gratuitos:
+            lista = [r for r in lista if gratuita(r) and (not imagens or ve_imagem(projeto, r))]
+            if not lista:
+                raise RuntimeError("nenhum modelo de visão gratuito em midia.modelos_visao")
         cfg = projeto.config.get("openrouter") or {}
         raciocinio = {**(cfg.get("raciocinio_por_modelo") or {}),
                       **((projeto.config.get("midia") or {}).get("raciocinio_visao") or {})}
@@ -174,8 +181,11 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
 
     Com um modelo da cadeia de principais (ou de cadeia_de), quem não atender passa a vez para o seguinte na hora
     (nunca esperar). raciocinio: a tabela de esforço por modelo no lugar de openrouter.raciocinio_por_modelo."""
-    from . import pago
+    from . import cliente, pago
 
+    if cliente.ativo(projeto):
+        # projeto do MCP: quem responde é o Claude de quem usa o MCP, pela fila (cliente.py)
+        return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
     cfg = projeto.config.get("openrouter") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     cadeia = cadeia_de or principais(projeto)
@@ -238,6 +248,11 @@ def ve_imagem(projeto, rota) -> bool:
 def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura, cadeia=False,
              raciocinio=None):
     """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
+    from . import cliente
+
+    if cliente.ativo(projeto):
+        # o Motion IA chama a rota direto, sem passar por perguntar
+        return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
     if not rota.startswith("groq:"):
         return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
                                cadeia=cadeia, raciocinio=raciocinio)

@@ -428,7 +428,11 @@ def gerar(projeto, log=print, forcar=False) -> Path | None:
 # ---------------------------------------------------------------- efeitos
 
 VOLUME_EFEITOS = {"passagem": -17, "impacto": -13, "subida": -19, "toque": -24}  # depois do pico levado a -1 dB
-DURACAO_EFEITOS = {"passagem": 1.3, "impacto": 2.6, "subida": 2.2, "toque": 0.3}
+# pop, risco, baque e contagem são os sons de interface dos clipes do Motion IA (motion_ia.sons_do_clipe): entram no
+# tempo de cada movimento do clipe, bem baixos, por baixo da voz
+DURACAO_EFEITOS = {"passagem": 1.3, "impacto": 2.6, "subida": 2.2, "toque": 0.3,
+                   "pop": 0.25, "risco": 0.5, "baque": 0.7, "contagem": 0.95}
+_COM_ECO = ("passagem", "impacto", "subida")
 
 
 def _efeito(nome) -> Path:
@@ -477,6 +481,40 @@ def _efeito(nome) -> Path:
             ar += np.sin(fase_base * fator + sorteio.uniform(0, 6.28)) / 12
         som = (som + ar) * x ** 2.2 * np.clip((1 - x) / 0.03, 0, 1)
         esquerda = direita = som
+    elif nome == "pop":
+        # um card ou um texto entrando: uma bolha curta que sobe de tom, sem estalo
+        f = 520 + 300 * np.clip(t / 0.06, 0, 1)
+        fase = 2 * np.pi * np.cumsum(f) / TAXA_EFEITOS
+        som = (np.sin(fase) + 0.25 * np.sin(2 * fase)) * np.exp(-t * 38) * np.clip(t / 0.004, 0, 1)
+        esquerda = direita = som
+    elif nome == "risco":
+        # uma linha se desenhando: um ar curto e agudo, da esquerda para a direita
+        centro = 1400 + 2600 * np.sin(np.pi * x) ** 2
+        fase_base = 2 * np.pi * np.cumsum(centro) / TAXA_EFEITOS
+        som = np.zeros(n, np.float32)
+        for fator in sorteio.uniform(0.6, 1.5, 60):
+            som += np.sin(fase_base * fator + sorteio.uniform(0, 6.28))
+        som *= np.sin(np.pi * x) ** 2
+        esquerda, direita = som * (1 - x * 0.7), som * (0.3 + x * 0.7)
+    elif nome == "baque":
+        # um peso caindo: grave curto que desce de tom, com um pouco de corpo
+        fase = 2 * np.pi * (70 * t - 25 * t ** 2)
+        grave = np.sin(fase) * np.exp(-t * 9)
+        corpo = np.zeros(n, np.float32)
+        for f in sorteio.uniform(110, 320, 24):
+            corpo += np.sin(2 * np.pi * f * t + sorteio.uniform(0, 6.28))
+        corpo *= np.exp(-t * 35) / 8
+        som = (grave + corpo) * np.clip(t / 0.003, 0, 1)
+        esquerda = direita = som
+    elif nome == "contagem":
+        # um número contando com a mola do GSAP (power3.out): tiques juntos no começo e espaçados no fim
+        som = np.zeros(n, np.float32)
+        total = 14
+        for k in range(total):
+            inicio = 0.85 * (1 - (1 - k / total) ** (1 / 3))
+            dt = t - inicio
+            som += np.where(dt >= 0, np.sin(2 * np.pi * 2300 * dt) * np.exp(-np.clip(dt, 0, None) * 260), 0) * (1 - 0.4 * k / total)
+        esquerda = direita = som
     else:  # toque: um estalo de madeira, curto e baixo
         f = 880 * (1 - 0.25 * np.clip(t / 0.05, 0, 1))
         fase = 2 * np.pi * np.cumsum(f) / TAXA_EFEITOS
@@ -485,7 +523,7 @@ def _efeito(nome) -> Path:
     pasta.mkdir(parents=True, exist_ok=True)
     seco = destino.with_name(destino.stem + ".seco.wav")
     _gravar_wav(np, seco, np.asarray(esquerda, np.float32), np.asarray(direita, np.float32), TAXA_EFEITOS)
-    eco = "aecho=0.8:0.5:47|89|151:0.3|0.22|0.15," if nome != "toque" else ""
+    eco = "aecho=0.8:0.5:47|89|151:0.3|0.22|0.15," if nome in _COM_ECO else ""
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", seco, "-af", f"{eco}apad=pad_dur=0.4",
            "-c:a", "pcm_s16le", destino])
     seco.unlink(missing_ok=True)

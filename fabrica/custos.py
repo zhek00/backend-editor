@@ -34,7 +34,7 @@ def estimar(projeto) -> dict:
 
     # o edge-tts é a voz gratuita da Microsoft: só a GenAIPro cobra por caractere, pelo preço do pacote
     # a Fish Audio pelo OpenRouter também é grátis (a transcrição do tempo das palavras custa uns centavos por vídeo)
-    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "genaipro") in ("edge-tts", "fish")
+    gratuita = (projeto.perfil.get("voz") or {}).get("provedor", "genaipro") in ("edge-tts", "fish", "computador")
     voz = 0.0 if gratuita else caracteres * custos_reais.preco_por_caractere(projeto.config)[0]
     # sem as cenas prontas, conta um efeito de 3 segundos por minuto de vídeo, antes do reaproveitamento
     if not efeitos.ativo(projeto.perfil):
@@ -73,7 +73,14 @@ def estimar(projeto) -> dict:
 
     agente = roteirista.estimar(projeto, cenas)
     agente = 0.0 if projeto.existe("cenas.json") else agente["cenas"] + (0.0 if projeto.existe("roteiro_mapa.json") else agente["mapa"])
+    from . import cliente
+
+    pelo_cliente = cliente.ativo(projeto)
+    if pelo_cliente:
+        # projeto do MCP: o roteiro, a escolha das fotos e o julgamento saem da assinatura do Claude do cliente
+        agente = correcao = claude = escolha = 0.0
     return {
+        "pelo_cliente": pelo_cliente,
         "duracao": duracao,
         "cenas": cenas,
         "roteirista": agente,
@@ -136,7 +143,9 @@ def formatar(e: dict) -> str:
         f"Estimativa para {mmss(e['duracao'])} de vídeo com cerca de {e['cenas']} cenas",
         f"  narração        {dinheiro(e['voz'])}",
     ]
-    if e["via_api"]:
+    if e.get("pelo_cliente"):
+        linhas.append("  decisões        pela assinatura do seu Claude (roteiro, fotos, julgamento), sem custo na fábrica")
+    elif e["via_api"]:
         linhas.append(f"  cenas           {dinheiro(e['claude'])}")
         if e["reais"]:
             linhas.append(f"  material real   {dinheiro(e['escolha'])}  ({e['reais']} cenas, fotos e vídeos grátis)")

@@ -675,11 +675,12 @@ def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados):
     return "\n".join(linhas)
 
 
-def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log):
+def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_iniciais=()):
     """O modelo de linguagem escolhe a demonstração (motion_modelos) e preenche os dados; a fábrica desenha.
-    Devolve as partes aprovadas, com o modelo e os dados, ou levanta RuntimeError."""
+    Devolve as partes aprovadas, com o modelo e os dados, ou levanta RuntimeError.
+    erros_iniciais: o que a crítica visual apontou no clipe anterior (vai no primeiro pedido)."""
     fala = " ".join([vizinhas[0], cena.get("texto") or "", vizinhas[1]])
-    erros = []
+    erros = list(erros_iniciais)
     for tentativa in range(int(config(projeto).get("tentativas_modelo", 3))):
         resposta = _perguntar(projeto, "motion IA: modelo", INSTRUCOES_MODELO,
                               _pedido_modelo(cena, dur, vizinhas, erros, bool(nome_foto), usados), ESQUEMA_MODELO, log,
@@ -704,30 +705,159 @@ def _pasta(projeto, n) -> Path:
     return projeto.pasta / "motion_ia" / f"{n:04d}"
 
 
-def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
-    """Faz o clipe de uma cena. Devolve o caminho relativo do MP4, ou levanta RuntimeError com o motivo.
+# --------------------------------------------------------------------- a crítica visual, antes de gravar
 
-    Primeiro um modelo pronto de demonstração (motion_modelos: velocímetro, balança, régua...), escolhido e preenchido
-    pelo modelo de linguagem; se nenhum servir, o HTML livre do modelo, de reserva.
-    foto: a imagem da própria cena, opcional (o modelo foto_dado). usados: os modelos das cenas de motion vizinhas."""
-    if not animacoes.node_pronto():
-        raise RuntimeError("falta o Node.js 22 ou mais (o HyperFrames grava o clipe)")
-    dur = max(float(cena["fim"]) - float(cena["ini"]), 1.0)
-    pasta = _pasta(projeto, cena["n"])
-    pasta.mkdir(parents=True, exist_ok=True)
-    animacoes._preparar_pasta(pasta)
-    nome_foto = None
-    if foto is not None:
-        nome_foto = f"foto{Path(foto).suffix.lower()}"
-        shutil.copy2(foto, pasta / "assets" / nome_foto)
-    aprovado = None
+# Do vídeo "Como Criar Motion Graphics INSANOS com Opus 5.5" (Felipe Borges), estudado a pedido do usuário em
+# 2026-10-06: antes de gravar, tirar uns quadros do clipe numa folha de contato, OLHAR, dar nota de 1 a 10 e corrigir
+# os piores problemas até tudo passar de 8; só então gravar. Até aqui ninguém olhava o clipe: o código conferia o HTML
+# e o HyperFrames, texto sobreposto ou fora da tela. Quem olha é a cadeia de visão, só com os gratuitos (custo zero),
+# e os quadros saem do `hyperframes snapshot` (uns 8 s, sem gravar o MP4).
+CRITERIOS = {
+    "legibilidade": "cada quadro da folha tem o tamanho de uma tela de celular: dá para ler TODO texto sem esforço?",
+    "composicao": "o conjunto está equilibrado e ocupa bem a área útil? Nada cortado, sobreposto, encostado, nem "
+                  "espremido num canto com o resto da tela vazio",
+    "clareza": "olhando o último quadro por 1 segundo, a pessoa entende o dado ou a ideia da fala?",
+    "fidelidade": "o que está escrito e desenhado é o que a fala diz? Número certo, palavras da fala, sem erro de "
+                  "escrita, sem desenho que não combina com o dado (um velocímetro para um peso)",
+    "movimento": "comparando os quadros, a cena se monta ao longo do tempo, sem tela vazia ou parada demais, e o "
+                 "último quadro está completo?",
+    "acabamento": "parece motion graphics de um canal grande (Vox), e não um slide amador? Hierarquia clara, cores "
+                  "contidas, uma cor de destaque",
+}
+
+INSTRUCOES_CRITICA = """Você é o diretor de arte que aprova os clipes de motion graphics de um canal de documentários
+antes de eles serem gravados. Recebe a folha de contato de UM clipe (alguns quadros em ordem, com o segundo de cada um
+no alto) e a fala da cena. O clipe entra no vídeo no lugar de uma foto, enquanto o narrador diz a fala.
+
+O que é de propósito e NÃO é problema: o fundo creme com grade de pontos, a faixa que escurece a parte de baixo (é onde
+a legenda vai entrar, por isso nada importante fica ali), os cards brancos de cantos arredondados, a palavra de
+destaque em serifa itálica colorida, o primeiro quadro ainda incompleto (as coisas estão entrando).
+
+Dê uma nota de 1 a 10 a cada critério (10 é pronto para publicar, 8 é bom, 5 é fraco, 1 é inaceitável):
+""" + "\n".join(f"- {k}: {v}" for k, v in CRITERIOS.items()) + """
+
+Seja exigente e justo: não invente problema, e não dê 9 ou 10 por educação. Em problemas, os até 3 piores, do pior
+para o menos ruim, cada um com o critério, o que está errado (o que se vê, onde) e a correção concreta, em até 25
+palavras, escrita para quem faz o clipe. Tudo em português."""
+
+ESQUEMA_CRITICA = {
+    "type": "object",
+    "properties": {
+        "notas": {"type": "object", "properties": {k: {"type": "integer"} for k in CRITERIOS},
+                  "required": list(CRITERIOS)},
+        "problemas": {"type": "array", "items": {"type": "object", "properties": {
+            "criterio": {"type": "string"}, "problema": {"type": "string"}, "correcao": {"type": "string"}},
+            "required": ["criterio", "problema", "correcao"]}},
+    },
+    "required": ["notas", "problemas"],
+}
+
+
+def critica_config(projeto) -> dict:
+    """motion_ia.critica do config.yaml: ativa, nota (8), aceitavel (5) e rodadas (3)."""
+    return {"ativa": True, "nota": 8, "aceitavel": 5, "rodadas": 3, **(config(projeto).get("critica") or {})}
+
+
+def _folha_de_contato(projeto, pasta, dur):
+    """Os quadros do clipe numa folha só, pelo `hyperframes snapshot`, sem gravar o MP4. None se não saiu."""
+    destino = pasta / "quadros"
+    shutil.rmtree(destino, ignore_errors=True)
+    momentos = sorted({round(min(0.6, dur * 0.2), 2), round(dur * 0.45, 2), round(dur * 0.75, 2)})
+    # --describe=false: sem isso o HyperFrames manda os quadros para o Gemini, que a fábrica não usa
+    r = animacoes._hyperframes(projeto, ["snapshot", "--at", ",".join(f"{t:.2f}" for t in momentos),
+                                         "--describe=false", "-o", str(destino), "."], pasta, 240)
+    folha = destino / "contact-sheet.jpg"
+    return folha if r.returncode == 0 and folha.exists() else None
+
+
+def _pedido_critica(cena, dur, aprovado, vizinhas) -> str:
+    linhas = [f"Fala desta cena: \"{(cena.get('texto') or '').strip()}\"", f"Duração do clipe: {dur:.2f} s"]
+    if vizinhas[0]:
+        linhas.append(f"Fala anterior (contexto): \"{vizinhas[0]}\"")
+    if vizinhas[1]:
+        linhas.append(f"Fala seguinte (contexto): \"{vizinhas[1]}\"")
+    if aprovado.get("modelo") and aprovado["modelo"] != "livre":
+        linhas.append(f"O clipe usa o desenho pronto \"{aprovado['modelo']}\", com estes dados: "
+                      + json.dumps(aprovado.get("dados") or {}, ensure_ascii=False)
+                      + ". Quem corrige só pode trocar de desenho (" + ", ".join(motion_modelos.MODELOS)
+                      + ") ou mudar os dados e textos: escreva a correção nesses termos.")
+    else:
+        linhas.append("O clipe foi escrito em HTML: a correção pode mudar posição, tamanho, textos e a ordem das entradas.")
+    return "\n".join(linhas)
+
+
+def _ler_critica(resposta):
+    """As notas (1 a 10) e os até 3 piores problemas, do pior para o menos ruim. None se não veio nota nenhuma."""
+    bruto = (resposta or {}).get("notas") or {}
+    notas = {}
+    for k in CRITERIOS:
+        try:
+            notas[k] = max(1, min(10, int(round(float(bruto.get(k))))))
+        except (TypeError, ValueError):
+            continue
+    if not notas:
+        return None
+    problemas = []
+    for p in (resposta or {}).get("problemas") or []:
+        # o Qwen do Groq repetiu o mesmo problema duas vezes na primeira revisão de verdade (cena 76 do nunca-deve...)
+        if isinstance(p, dict) and str(p.get("problema") or "").strip() and not any(
+                " ".join(str(p["problema"]).split())[:240] == q["problema"] for q in problemas):
+            criterio = str(p.get("criterio") or "").strip().lower()
+            problemas.append({"criterio": criterio if criterio in notas else "",
+                              "problema": " ".join(str(p["problema"]).split())[:240],
+                              "correcao": " ".join(str(p.get("correcao") or "").split())[:240]})
+    problemas.sort(key=lambda p: notas.get(p["criterio"], 10))
+    return {"notas": notas, "menor": min(notas.values()), "media": round(sum(notas.values()) / len(notas), 1),
+            "problemas": problemas[:3]}
+
+
+def criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log=print):
+    """A nota do clipe que está em pasta/index.html, olhando a folha de contato. None quando não deu para olhar (o
+    snapshot falhou, nenhum modelo de visão gratuito atendeu): o clipe segue sem a crítica, nunca para o vídeo."""
+    from . import openrouter_local
+    folha = _folha_de_contato(projeto, pasta, dur)
+    if folha is None:
+        log(f"  motion IA: cena {cena['n']}, os quadros para a revisão visual não saíram; segue sem ela")
+        return None
     try:
-        aprovado = _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log)
-        log(f"  motion IA: cena {cena['n']}, modelo {aprovado['modelo']}")
+        resposta = openrouter_local.VISAO.perguntar(projeto, "motion IA: revisão visual", INSTRUCOES_CRITICA,
+                                                    _pedido_critica(cena, dur, aprovado, vizinhas), ESQUEMA_CRITICA,
+                                                    log=log, imagens=[folha], temperatura=0, so_gratuitos=True)
     except (RuntimeError, SystemExit) as e:
-        log(f"  motion IA: cena {cena['n']}, nenhum modelo pronto serviu ({str(e)[:120]}); vai o HTML livre")
+        log(f"  motion IA: cena {cena['n']}, nenhum modelo gratuito fez a revisão visual ({str(e)[:100]}); segue sem ela")
+        return None
+    critica = _ler_critica(resposta)
+    if critica is not None:
+        shutil.copy2(folha, pasta / "revisao.jpg")  # a folha da última revisão fica, para a pessoa ver o que foi julgado
+    return critica
+
+
+def erros_da_critica(critica, nota) -> list:
+    """O que volta para quem faz o clipe: os problemas apontados, com a nota de cada um."""
     erros = []
-    for tentativa in range(0 if aprovado else int(config(projeto).get("tentativas", 3))):
+    for p in critica["problemas"]:
+        rotulo = f"{p['criterio']} {critica['notas'][p['criterio']]}/10" if p["criterio"] else "revisão visual"
+        erros.append(f"revisão visual ({rotulo}): {p['problema']}" + (f" Correção: {p['correcao']}" if p["correcao"] else ""))
+    if not erros:
+        piores = [k for k, v in critica["notas"].items() if v < nota]
+        erros.append("a revisão visual deu nota baixa em " + ", ".join(piores) + ": " + "; ".join(CRITERIOS[k] for k in piores))
+    return erros
+
+
+def _chave(critica) -> tuple:
+    return critica["menor"], critica["media"]
+
+
+def _resumo(critica) -> str:
+    return " ".join(f"{k} {v}" for k, v in critica["notas"].items())
+
+
+# ------------------------------------------------------------------------------------------------ o clipe
+
+def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_iniciais=()):
+    """O HTML escrito pelo modelo dentro do esqueleto, de reserva. Devolve as partes aprovadas ou levanta RuntimeError."""
+    erros = list(erros_iniciais)
+    for tentativa in range(int(config(projeto).get("tentativas", 3))):
         resposta = _perguntar(projeto, "motion IA: html", INSTRUCOES_HTML, _pedido(cena, dur, vizinhas, erros, foto=bool(nome_foto)),
                               ESQUEMA_HTML, log, temperatura=0.5 if tentativa else 0.3)
         partes = {k: str(resposta.get(k) or "") for k in ("css", "html", "js")}
@@ -748,10 +878,79 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
                             ".m-card conta left e top a partir da borda do card, não da tela. Dentro do card, use "
                             "left e top pequenos (ou nenhum, em fluxo normal) e confira que tudo cabe no card")
         if not erros:
-            aprovado = {**partes, "modelo": "livre", "foto": nome_foto or ""}
+            return {**partes, "modelo": "livre", "foto": nome_foto or ""}
+    raise RuntimeError("reprovado na conferência: " + "; ".join(erros)[:300])
+
+
+def _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=()):
+    """Um clipe aprovado pelo código e pelo HyperFrames, ainda sem a revisão visual: primeiro um modelo pronto de
+    demonstração; se nenhum servir, o HTML livre."""
+    try:
+        aprovado = _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais)
+        log(f"  motion IA: cena {cena['n']}, modelo {aprovado['modelo']}")
+        return aprovado
+    except (RuntimeError, SystemExit) as e:
+        log(f"  motion IA: cena {cena['n']}, nenhum modelo pronto serviu ({str(e)[:120]}); vai o HTML livre")
+    return _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_visuais)
+
+
+def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log):
+    """O clipe que passou na revisão visual (todas as notas em critica.nota ou mais), em até critica.rodadas
+    revisões. Sem passar, fica o de melhor nota se a pior nota dele chegar a critica.aceitavel; senão RuntimeError,
+    e a cena segue o caminho de antes."""
+    cfg = critica_config(projeto)
+    aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log)
+    if not cfg["ativa"]:
+        return aprovado
+    melhor, historico = None, []
+    for rodada in range(max(1, int(cfg["rodadas"]))):
+        critica = criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log)
+        if critica is None:
             break
-    if aprovado is None:
-        raise RuntimeError("reprovado na conferência: " + "; ".join(erros)[:300])
+        historico.append({"rodada": rodada + 1, "modelo": aprovado.get("modelo"), **critica})
+        aprovado["critica"] = historico[-1]
+        if melhor is None or _chave(critica) > _chave(melhor["critica"]):
+            melhor = aprovado
+        passou = critica["menor"] >= float(cfg["nota"])
+        log(f"  motion IA: cena {cena['n']}, revisão visual {rodada + 1}: {_resumo(critica)}"
+            + (" (aprovado)" if passou else ""))
+        if passou or rodada == int(cfg["rodadas"]) - 1:
+            break
+        try:
+            aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log,
+                                 erros_da_critica(critica, float(cfg["nota"])))
+        except (RuntimeError, SystemExit) as e:
+            log(f"  motion IA: cena {cena['n']}, a correção não saiu ({str(e)[:120]}); fica o de melhor nota")
+            break
+    if melhor is None:
+        return aprovado
+    if melhor["critica"]["menor"] < float(cfg["aceitavel"]):
+        raise RuntimeError(f"reprovado na revisão visual ({_resumo(melhor['critica'])}): "
+                           + "; ".join(p["problema"] for p in melhor["critica"]["problemas"])[:240])
+    melhor["criticas"] = historico
+    return melhor
+
+
+def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
+    """Faz o clipe de uma cena. Devolve o caminho relativo do MP4, ou levanta RuntimeError com o motivo.
+
+    Primeiro um modelo pronto de demonstração (motion_modelos: velocímetro, balança, régua...), escolhido e preenchido
+    pelo modelo de linguagem; se nenhum servir, o HTML livre do modelo, de reserva. Antes de gravar, a revisão visual
+    olha os quadros e devolve o que tirou nota baixa (_revisado).
+    foto: a imagem da própria cena, opcional (o modelo foto_dado). usados: os modelos das cenas de motion vizinhas."""
+    if not animacoes.node_pronto():
+        raise RuntimeError("falta o Node.js 22 ou mais (o HyperFrames grava o clipe)")
+    dur = max(float(cena["fim"]) - float(cena["ini"]), 1.0)
+    pasta = _pasta(projeto, cena["n"])
+    pasta.mkdir(parents=True, exist_ok=True)
+    animacoes._preparar_pasta(pasta)
+    nome_foto = None
+    if foto is not None:
+        nome_foto = f"foto{Path(foto).suffix.lower()}"
+        shutil.copy2(foto, pasta / "assets" / nome_foto)
+    aprovado = _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log)
+    # a revisão pode ter ficado com um clipe de uma rodada anterior: a página gravada é sempre a dele
+    (pasta / "index.html").write_text(montar_html(aprovado, dur, foto=aprovado.get("foto") or None), encoding="utf-8")
     (pasta / "partes.json").write_text(json.dumps(aprovado, ensure_ascii=False, indent=1), encoding="utf-8")
     destino = projeto.pasta / "midia" / f"{cena['n']:04d}_motion.mp4"
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -768,6 +967,7 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
            "-frames:v", "1", "-q:v", "3", str(capa)])
     # o HTML é só um passo: fica o partes.json, para refazer ou conferir depois
     (pasta / "index.html").unlink(missing_ok=True)
+    shutil.rmtree(pasta / "quadros", ignore_errors=True)
     return destino, capa, dur
 
 
@@ -895,3 +1095,136 @@ def desfazer(projeto, n) -> bool:
                 c[campo] = valor
         projeto.salvar_json("cenas.json", dados)
     return True
+
+
+# ------------------------------------------------------------------- o som do clipe, no tempo do movimento
+
+# Do mesmo vídeo estudado em 2026-10-06: o que mais muda o nível de um motion é o som batendo junto com cada
+# movimento. Os clipes do Motion IA saíam mudos. Os momentos saem da própria linha do tempo do clipe (o js do
+# partes.json): card ou texto entrando é um pop, linha se desenhando é um risco, número contando é a contagem e peso
+# caindo é um baque. Os sons são tocados pelo código (trilha._efeito) e misturados num arquivo por clipe, que o render
+# põe no segundo da cena (sons_na_linha). Vale também para os clipes já gravados, sem gravar de novo.
+VERSAO_SONS = 1  # suba quando mudar a leitura dos momentos ou a mistura: os arquivos de som dos clipes são refeitos
+PRIORIDADE_SONS = ("baque", "contagem", "risco", "pop")  # quando dois caem juntos, fica o da frente
+NIVEL_SONS = {"pop": 0.0, "risco": -4.0, "baque": 3.0, "contagem": -3.0}  # dB entre eles, antes do volume do clipe
+_INICIO_CHAMADA = re.compile(r"\btl\.(fromTo|from|to)\(")
+
+
+def _chamadas(js):
+    """(método, argumentos) de cada tl.fromTo/tl.from/tl.to do js, contando os parênteses fora das aspas."""
+    saida = []
+    for achado in _INICIO_CHAMADA.finditer(js or ""):
+        k, nivel, aspa = achado.end(), 1, ""
+        while k < len(js) and nivel:
+            ch = js[k]
+            if aspa:
+                aspa = "" if ch == aspa and js[k - 1] != "\\" else aspa
+            elif ch in "\"'`":
+                aspa = ch
+            elif ch == "(":
+                nivel += 1
+            elif ch == ")":
+                nivel -= 1
+            k += 1
+        if not nivel:
+            saida.append((achado.group(1), js[achado.end():k - 1]))
+    return saida
+
+
+def _som_da_chamada(metodo, args):
+    """(segundos depois da posição, som) que a chamada pede, ou None (movimento contínuo, saída, ajuste)."""
+    if re.search(r"\brepeat\s*:|\byoyo\b|sine\.inOut", args):
+        return None  # flutuação, pulsar, respiração: movimento de fundo não tem som
+    if "strokeDashoffset" in args:
+        return 0.0, "risco"
+    if "onUpdate" in args and re.search(r"\bv\s*:", args):
+        return 0.0, "contagem"
+    if "bounce" in args:
+        duracao = re.search(r"duration\s*:\s*([\d.]+)", args)
+        return round(float(duracao.group(1)) * 0.36, 3) if duracao else 0.25, "baque"  # o primeiro toque no chão
+    de = args[args.find("{"):args.find("}") + 1] if "{" in args else ""
+    if metodo == "from" or (metodo == "fromTo" and re.search(r"opacity\s*:\s*0(?:\.0+)?\s*[,}]|scale[XY]?\s*:\s*0(?:\.[0-5]\d*)?\s*[,}]", de)):
+        return 0.0, "pop"
+    return None
+
+
+def eventos_de_som(js, dur, maximo=6):
+    """(segundo do clipe, som) de cada movimento que merece som, no máximo `maximo`, com 0,3 s entre eles."""
+    brutos = []
+    for metodo, args in _chamadas(js):
+        posicao = re.search(r",\s*([\d.]+)\s*$", args.strip())
+        som = _som_da_chamada(metodo, args)
+        if posicao and som:
+            momento = round(float(posicao.group(1)) + som[0], 3)
+            if 0 <= momento <= dur - 0.25:
+                brutos.append((momento, som[1]))
+    escolhidos = []
+    for momento, nome in sorted(brutos):
+        if escolhidos and momento - escolhidos[-1][0] < 0.3:
+            if PRIORIDADE_SONS.index(nome) < PRIORIDADE_SONS.index(escolhidos[-1][1]):
+                escolhidos[-1] = (momento, nome)
+            continue
+        escolhidos.append((momento, nome))
+    if len(escolhidos) > maximo:
+        # os mais importantes ficam, na ordem do tempo
+        escolhidos = sorted(sorted(escolhidos, key=lambda e: (PRIORIDADE_SONS.index(e[1]), e[0]))[:maximo])
+    return escolhidos
+
+
+def sons_do_clipe(projeto, cena):
+    """O arquivo com os sons do clipe de motion da cena, misturados no tempo de cada movimento (feito uma vez e
+    guardado na pasta do clipe), ou None se o clipe não tem movimento com som."""
+    from . import trilha
+
+    pasta = _pasta(projeto, cena["n"])
+    try:
+        partes = json.loads((pasta / "partes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    dur = float((cena.get("midia") or {}).get("duracao") or (float(cena["fim"]) - float(cena["ini"])))
+    eventos = eventos_de_som(partes.get("js") or "", dur)
+    if not eventos:
+        return None
+    assinatura = hashlib.sha1(json.dumps([VERSAO_SONS, trilha.VERSAO, eventos]).encode()).hexdigest()[:10]
+    destino = pasta / f"sons-{assinatura}.wav"
+    if destino.exists():
+        return destino
+    for velho in pasta.glob("sons-*.wav"):
+        velho.unlink(missing_ok=True)
+    entradas, grafo = [], []
+    for k, (momento, nome) in enumerate(eventos):
+        entradas += ["-i", str(trilha._efeito(nome))]
+        atraso = round(momento * 1000)
+        # 6 dB de folga: dois sons juntos somados não estouram (o render leva o pico a -1 dB depois)
+        grafo.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={NIVEL_SONS[nome] - 6}dB,"
+                     f"adelay={atraso}|{atraso}[s{k}]")
+    grafo.append("".join(f"[s{k}]" for k in range(len(eventos)))
+                 + f"amix=inputs={len(eventos)}:duration=longest:normalize=0[a]")
+    temporario = destino.with_name(destino.stem + ".tmp.wav")
+    rodar(["ffmpeg", "-y", "-loglevel", "error", *entradas, "-filter_complex", ";".join(grafo), "-map", "[a]",
+           "-t", f"{dur + 1.0:.3f}", "-c:a", "pcm_s16le", str(temporario)])
+    temporario.replace(destino)
+    return destino
+
+
+def sons_na_linha(projeto, cenas, log=print) -> list:
+    """(segundo da narração, arquivo, volume em dB) dos sons de cada clipe de motion, para o render (_trilha).
+    motion_ia.sons: false desliga; motion_ia.volume_sons_db acerta o volume (o pico do clipe vai a -1 dB antes)."""
+    cfg = config(projeto)
+    if not cfg.get("sons", True):
+        return []
+    volume = float(cfg.get("volume_sons_db", -20))
+    saida = []
+    for c in cenas:
+        if not e_motion(c):
+            continue
+        try:
+            arquivo = sons_do_clipe(projeto, c)
+        except Exception as erro:  # noqa: BLE001 - um clipe sem som não derruba o render
+            log(f"  motion IA: cena {c['n']} ficou sem som ({str(erro)[:100]})")
+            continue
+        if arquivo is not None:
+            saida.append((round(float(c["ini"]), 3), arquivo, volume))
+    if saida:
+        log(f"  motion IA: som no tempo do movimento em {len(saida)} clipe(s)")
+    return saida

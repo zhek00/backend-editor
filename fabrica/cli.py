@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
-from . import custos_reais, pago, qualidade
+from . import custos_reais, pacote, pago, qualidade
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
 from .projeto import PROJETOS, Projeto
@@ -377,11 +377,17 @@ def etapa_corrigir(p, a, aprovado=False):
         valor = custos.dinheiro(total * p.config["precos"].get("correcao_por_cena", 0.0005))
         if not confirmar(f"Conferir {total} cena(s) custa cerca de {valor}.{_aviso_ia(p)} Continuar?", a.sim):
             raise SystemExit("Cancelado.")
-    log("Conferindo se as cenas combinam com a narração")
+    # como na criação pelo site: a cena aprovada pelo juiz antes do download não é conferida de novo
+    duvida = corrigir.na_duvida(p)
+    if not duvida:
+        log(f"Conferência: as {total} cena(s) de acervo foram aprovadas na escolha, nada a conferir de novo")
+        return
+    log(f"Conferindo se as cenas combinam com a narração: {len(duvida)} de {total} ficaram na dúvida na escolha")
     # regra fixa, igual à da criação pelo site: abaixo da nota mínima a cena é trocada sozinha, de graça no acervo
     minima = midia.nota_minima_da_conferencia(p)
     resumo = corrigir.corrigir(
-        p, rodadas=cfg.get("rodadas", corrigir.RODADAS), nota_minima=minima, nota_para_trocar=minima, log=log)
+        p, numeros=duvida, rodadas=cfg.get("rodadas", corrigir.RODADAS), nota_minima=minima, nota_para_trocar=minima,
+        log=log)
     log(corrigir.formatar(resumo))
     qualidade.registrar(p, "conferência", log)
 
@@ -766,6 +772,56 @@ def cmd_vozes(a):
     log("Qualquer uma serve direto: cole o código em voz.voice_id no perfil do canal.")
 
 
+def cmd_pacote(a):
+    p = Projeto(a.nome)
+    if a.medir:
+        r = pacote.medir(p)
+        log(f"Pacote de {a.nome}: {r['arquivos']} arquivos, {r['tamanho_mb']} MB antes de compactar "
+            f"(o projeto tem {r['projeto_mb']} MB; {r['fica_de_fora_mb']} MB a fábrica refaz de graça)")
+        return
+    pacote.exportar(p, Path(a.destino or ".") / f"{a.nome}.zip", log)
+
+
+def cmd_importar(a):
+    pacote.importar(Path(a.arquivo), nome=a.nome, substituir=a.substituir, log=log)
+
+
+def cmd_entregar(a):
+    r = pacote.entregar(Projeto(a.nome), Path(a.cliente), log)
+    log(f"Pacote do cliente: {r['pacote']} ({r['pacote_mb']} MB). Vídeo guardado: {r['video']}")
+
+
+def cmd_mcp(a):
+    from . import mcp_servidor
+
+    if a.url_publica:
+        log(f"MCP da fábrica em {a.url_publica.rstrip('/')}/mcp, com senha por cliente (fabrica mcp-cliente criar NOME). "
+            f"Ouvindo em http://{a.host}:{a.porta}")
+    else:
+        log(f"MCP da fábrica em http://{a.host}:{a.porta}/mcp, sem senha, só nesta máquina (no Claude Code: claude mcp "
+            f"add --transport http fabrica http://{a.host}:{a.porta}/mcp)")
+    mcp_servidor.rodar(a.host, a.porta, a.url_publica or "")
+
+
+def cmd_mcp_cliente(a):
+    from . import clientes_mcp
+
+    if a.acao == "criar":
+        if not a.nome:
+            raise SystemExit("Diga o nome do cliente: fabrica mcp-cliente criar NOME")
+        token = clientes_mcp.criar(a.nome, a.por_dia)
+        url = (a.url or "https://SEU-MCP").rstrip("/")
+        log(f"Cliente {a.nome} criado ({a.por_dia} vídeo(s) por dia). O token aparece só agora; guarde e mande ao "
+            f"cliente:\n\n  {token}\n\nNo Claude Code dele:\n  claude mcp add --transport http fabrica {url}/mcp "
+            f"--header \"Authorization: Bearer {token}\"")
+    elif a.acao == "revogar":
+        log("revogado" if clientes_mcp.revogar(a.nome) else f"não achei o cliente {a.nome}")
+    else:
+        for c in clientes_mcp.listar():
+            log(f"{c['nome']:20} {'ativo' if c['ativo'] else 'revogado':8} hoje {c['hoje']}/{c['por_dia']}  "
+                f"total {c['total']}  desde {c['criado'][:10]}")
+
+
 def cmd_creditos(a):
     c = genaipro.conta()
     numero = lambda n: f"{n:,}".replace(",", ".")
@@ -1010,6 +1066,37 @@ def main():
     s.add_argument("termo")
     s.add_argument("--idioma", help="código do idioma, por exemplo pt")
     s.set_defaults(funcao=cmd_vozes)
+
+    s = sub.add_parser("pacote", help="exporta o pacote do projeto (o que custa refazer) num .zip, sem o resto")
+    s.add_argument("nome")
+    s.add_argument("--destino", help="pasta onde o .zip é salvo (padrão: a pasta atual)")
+    s.add_argument("--medir", action="store_true", help="só mostra quanto o pacote pesaria")
+    s.set_defaults(funcao=cmd_pacote)
+
+    s = sub.add_parser("importar", help="remonta um projeto a partir do pacote .zip, sem gastar")
+    s.add_argument("arquivo")
+    s.add_argument("--nome", help="outro nome para o projeto no servidor")
+    s.add_argument("--substituir", action="store_true", help="troca o projeto de mesmo nome que já está no servidor")
+    s.set_defaults(funcao=cmd_importar)
+
+    s = sub.add_parser("mcp", help="sobe o MCP da fábrica: o Claude Code do cliente manda o roteiro e pensa o vídeo")
+    s.add_argument("--porta", type=int, default=8092)
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--url-publica", default="", help="a URL da internet (https://mcp.exemplo.com): liga a senha por "
+                   "cliente e os links de download")
+    s.set_defaults(funcao=cmd_mcp)
+
+    s = sub.add_parser("mcp-cliente", help="contas do MCP: criar (gera o token), listar, revogar")
+    s.add_argument("acao", choices=["criar", "listar", "revogar"])
+    s.add_argument("nome", nargs="?", default="")
+    s.add_argument("--por-dia", type=int, default=2, help="vídeos que a conta começa por dia")
+    s.add_argument("--url", default="", help="a URL pública do MCP, para montar o comando de instalação")
+    s.set_defaults(funcao=cmd_mcp_cliente)
+
+    s = sub.add_parser("entregar", help="manda o pacote para o cliente, guarda só o MP4 e apaga a pasta de trabalho")
+    s.add_argument("nome")
+    s.add_argument("--cliente", required=True, help="pasta do cliente que recebe o pacote")
+    s.set_defaults(funcao=cmd_entregar)
 
     s = sub.add_parser("creditos", help="mostra os créditos da GenAIPro e quando vencem, sem gastar")
     s.set_defaults(funcao=cmd_creditos)

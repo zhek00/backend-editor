@@ -25,6 +25,11 @@ class Projeto:
             if override:
                 self.perfil[secao] = {**(self.perfil.get(secao) or {}), **override}
         self.config = config_geral()
+        # ajustes do config.yaml que valem só neste projeto (o MCP cria projeto sem imagem de IA, por exemplo):
+        # cada seção do config_override se mistura por cima da do config.yaml
+        for secao, valores in (self.dados.get("config_override") or {}).items():
+            atual = self.config.get(secao)
+            self.config[secao] = {**atual, **valores} if isinstance(atual, dict) and isinstance(valores, dict) else valores
 
     @classmethod
     def criar(cls, nome: str, roteiro: str, perfil: str, offline: bool) -> "Projeto":

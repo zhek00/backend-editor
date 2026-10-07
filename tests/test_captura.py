@@ -187,6 +187,37 @@ def test_nao_existe_e_tentado_uma_vez(tmp_path, monkeypatch):
     assert projeto.dados["cenas.json"]["cenas"][0]["banco_tentado"]
 
 
+def test_exato_dentro_da_busca_tambem_e_buscado_sozinho():
+    # mcp-cafe-5min, cena 35: "New York stock exchange screen" não achava nada na Wikimedia, e o exato sozinho nunca
+    # era buscado. Os candidatos caíam todos no filtro do exato e entrou um túnel de trem
+    buscadas = []
+
+    def das_fontes(tipo, busca, preferida=None, acervo=False):
+        buscadas.append(busca)
+        if busca == "New York Stock Exchange":
+            return [{"fonte": "wikimedia", "id": str(i), "descricao": f"New York Stock Exchange trading floor {i}"}
+                    for i in range(3)]
+        return [{"fonte": "pexels", "id": busca, "descricao": "stock market screen chart"}]
+
+    b = object.__new__(midia.Buscador)
+    b.blocos, b.nomes, b.quantidade, b.log = {}, set(), 24, lambda *a: None
+    b._das_fontes = das_fontes
+    cena = {"n": 35, "tipo": "foto_real", "busca": "New York stock exchange screen", "exato": "New York Stock Exchange",
+            "busca_alternativa": "stock market screen", "sujeito": "stock exchange screen"}
+    achados = b.candidatos(cena)
+    assert "New York Stock Exchange" in buscadas
+    assert achados[0]["fonte"] == "wikimedia"
+
+
+def test_assunto_do_video_nao_tapa_cena_que_exige_outra_coisa():
+    # mcp-cafe-5min, cena 35: o túnel da Mantiqueira cita o assunto do vídeo, mas a cena exige a bolsa de Nova York
+    cena = {"n": 35, "exato": "New York Stock Exchange", "busca": "stock exchange trading screen"}
+    tunel = {"descricao": "Túnel da Mantiqueira boca mineira railway tunnel"}
+    exigido = midia.exigido_da_cena({}, cena, set())
+    assert not midia._serve_pelo_assunto_do_video(cena, tunel, "Mantiqueira", set(), exigido)
+    assert midia._serve_pelo_assunto_do_video({"n": 1}, tunel, "Mantiqueira", set())
+
+
 # ---------------------------------------------------------------- banco que cai: tenta de novo, e cai seguido sai um tempo
 
 def _buscador(tmp_path, funcao):

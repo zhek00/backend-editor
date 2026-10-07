@@ -36,7 +36,9 @@ TEXTO_TESTE_VOZ = (
 )
 
 
-def narrar(projeto, log=print) -> float:
+def narrar(projeto, log=print, sem_gastar=False) -> float:
+    """sem_gastar: só remonta a narração com os blocos já gravados (o pacote importado, pacote.importar); se algum
+    bloco tivesse de ser gravado de novo (o texto ou a voz mudou), para antes de chamar a voz paga."""
     roteiro = tx.normalizar(projeto.roteiro())
     if not roteiro:
         raise SystemExit("O roteiro está vazio.")
@@ -63,13 +65,17 @@ def narrar(projeto, log=print) -> float:
         elif not _mesma_voz(projeto, arquivo_alinhamento, assinatura, i, len(blocos)):
             pendentes.append(i)
             por_voz += 1
+    if pendentes and sem_gastar:
+        raise SystemExit(f"{len(pendentes)} bloco(s) da narração teriam de ser gravados de novo (o texto ou a voz "
+                         f"mudou desde o pacote). Nada foi gasto.")
     if por_voz:
         log(f"  a voz mudou: {por_voz} bloco(s) com o mesmo texto vão ser gravados de novo com a voz nova")
 
     def gravar(i):
         bloco = blocos[i]
         bruto, arquivo_alinhamento = arquivos(i)
-        if projeto.offline:
+        if projeto.offline or voz.get("provedor") == "computador":
+            # "computador": a voz do sistema também fora do modo offline (teste do MCP sem gastar)
             alinhamento = _voz_do_mac(bloco.texto, voz, bruto)
         elif voz.get("provedor") == "edge-tts":
             alinhamento = _edge_tts(bloco.texto, voz, bruto)
@@ -92,7 +98,7 @@ def narrar(projeto, log=print) -> float:
         # O valor sai do saldo da GenAIPro, medido no fim (_registrar_gasto_da_narracao)
         narrados.append(i)
 
-    pago = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish")
+    pago = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish", "computador")
     saldo_antes = _saldo_genaipro() if pago and pendentes else None
     com_fish = not projeto.offline and voz.get("provedor") == "fish"
     if (pago or com_fish) and len(pendentes) > 1:
@@ -239,7 +245,7 @@ def assinatura_da_voz(projeto, voz) -> dict:
     """O que muda o som gravado de um bloco: a voz e os ajustes que vão para quem grava.
 
     Ritmo e pausa ficam de fora de propósito: são aplicados depois, no áudio guardado, e mudar não custa nada."""
-    if projeto.offline:
+    if projeto.offline or voz.get("provedor") == "computador":
         return {"provedor": "mac", "voz": voz.get("voz_offline", "Luciana")}
     if voz.get("provedor") == "fish":
         return {"provedor": "fish", "voz": str(voz.get("voice_id") or "").strip(), "modelo": fish.modelo(voz),

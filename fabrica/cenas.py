@@ -191,6 +191,26 @@ def _itens_enumerados(texto):
     return itens if len(itens) >= ENUMERACAO_MINIMA_DE_ITENS and len(itens) >= len(pedacos) - 1 else []
 
 
+def _itens_por_fatia(cortes, fim, inicios, quem):
+    """O item que cada fatia mostra: o primeiro que COMEÇA a ser falado nela; sem nenhum, o que ainda está sendo dito.
+
+    Lista falada depressa não cabe inteira com o mínimo de cada fatia. Em "chocolate, caramelo e flores" (2 s, mínimo de
+    1 s) o corte empurrado do caramelo tirava o lugar das flores, e a fatia que fala "e flores" ficava com o pedido do
+    caramelo (mcp-cafe-5min): os pedidos andavam uma casa. Agora sai o item espremido no meio, e cada fatia mostra o que
+    se fala nela."""
+    escolhidos, ultimo = [], -1
+    for i, ini in enumerate(cortes):
+        ate = cortes[i + 1] if i + 1 < len(cortes) else fim
+        livres = [(t, n) for t, n in zip(inicios, quem) if n > ultimo]
+        if not livres:
+            break
+        dentro = [n for t, n in livres if ini <= t < ate]
+        antes = [n for t, n in livres if t < ini]
+        escolhidos.append(dentro[0] if dentro else (antes[-1] if antes else livres[0][1]))
+        ultimo = escolhidos[-1]
+    return escolhidos
+
+
 def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, log=print):
     """Quebra em várias cenas os trechos em que a narração enumera coisas, uma imagem por item.
 
@@ -237,6 +257,8 @@ def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, lo
         if len(cortes) < 2:
             resultado.append(cena)
             continue
+        de_quem = _itens_por_fatia(cortes, cena["fim"], inicios, quem)
+        cortes = cortes[:len(de_quem)]  # sem item para a última fatia, a anterior vai até o fim da cena
         quebradas += 1
         for i, ini in enumerate(cortes):
             fim = cortes[i + 1] if i + 1 < len(cortes) else cena["fim"]

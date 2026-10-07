@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 projetos/
+entregas/
 personagens/candidatos/
 vozes_criadas/
 vozes*.html
@@ -17,3 +18,4 @@ fabrica.log.erros
 aprendizados/
 efeitos/gerados/
 genaipro_medido.json
+clientes_mcp.json

@@ -15,7 +15,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import abertura, animacoes, avatar, efeitos, rostos, textos, trilha
+from . import abertura, animacoes, avatar, efeitos, motion_ia, rostos, textos, trilha
 from .config import caminho_relativo
 from .util import duracao_audio, rodar
 
@@ -166,6 +166,11 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
         except (Exception, SystemExit) as erro:
             log(f"  efeitos gerados ficaram de fora: {str(erro)[:160]}")
             sons = []
+    # os clipes do Motion IA ganham o som de cada movimento (pop, risco, contagem, baque), com qualquer perfil
+    try:
+        sons = list(sons) + motion_ia.sons_na_linha(projeto, cenas, log)
+    except (Exception, SystemExit) as erro:
+        log(f"  sons dos clipes de motion ficaram de fora: {str(erro)[:160]}")
     legenda = _legendas_finais(projeto, trechos, fecho, duracao, atraso, base)
 
     validos = {t["destino"].name for t in tarefas}

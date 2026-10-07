@@ -82,15 +82,39 @@ def problemas_da_cena(projeto, n, revisao=None) -> list:
     return (revisao.get("cenas") or {}).get(str(n), [])
 
 
+def cenas_que_o_cliente_ainda_nao_viu(projeto, cenas) -> set:
+    """Projeto do MCP: as cenas cuja imagem final o Claude do cliente ainda não viu.
+
+    Ele já viu e julgou cada foto na escolha e na conferência; o que só nasce no render é a animação por cima, o clipe
+    do Motion IA e a cena tapada sem ele aprovar. No mcp-cafe-5min a revisão olhou as 88 cenas (88 imagens, uns 39 mil
+    tokens) e o que ela achou de novo estava nas cenas com animação (84 e 85); o resto repetia a conferência."""
+    from . import animacoes
+
+    debaixo = animacoes.cenas_cobertas(projeto, cenas)
+    alvo = set()
+    for c in cenas:
+        captura, conferencia = c.get("captura") or {}, c.get("conferencia") or {}
+        if (c["n"] in debaixo or (c.get("midia") or {}).get("fonte") == "motion_ia" or captura.get("suspeita")
+                or captura.get("preenchida") or (conferencia and (conferencia.get("nota") or 0) < 40)
+                or (c.get("midia") and not captura.get("conferida") and not conferencia)):
+            alvo.add(c["n"])
+    return alvo
+
+
 def revisar(projeto, log=print, numeros=None) -> dict:
     """Revisa o final.mp4 e grava revisao_video.json. Devolve o resumo."""
-    from . import openrouter_local
+    from . import cliente, openrouter_local
 
     final = projeto.caminho("final.mp4")
     if not final.exists():
         raise SystemExit(f"Ainda não há vídeo pronto. Rode uv run fabrica render {projeto.nome}")
     assinatura = _assinatura_final(projeto)
-    cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if numeros is None or c["n"] in numeros]
+    todas = projeto.ler_json("cenas.json")["cenas"]
+    if numeros is None and cliente.ativo(projeto):
+        numeros = cenas_que_o_cliente_ainda_nao_viu(projeto, todas)
+        log(f"  revisão só das {len(numeros)} cena(s) que o Claude do cliente ainda não viu prontas (animação, "
+            "Motion IA, tapadas ou reprovadas); as outras ele já julgou")
+    cenas = [c for c in todas if numeros is None or c["n"] in numeros]
     atraso = _atraso(projeto)
     pasta = projeto.caminho("revisao_video", "_").parent
     pasta.mkdir(parents=True, exist_ok=True)

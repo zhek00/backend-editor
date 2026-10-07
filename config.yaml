@@ -237,6 +237,16 @@ motion_ia:
   paralelo: 2                 # clipes gravados ao mesmo tempo (cada um abre um Chrome escondido)
   max_por_minuto: 15          # pedidos por minuto aos modelos gratuitos
   fps: 30                     # MOTION_RENDER_FPS no .env vale por cima
+  # revisão visual antes de gravar: a cadeia de visão (só os gratuitos) olha os quadros e dá nota de 1 a 10 em
+  # legibilidade, composição, clareza, fidelidade, movimento e acabamento; abaixo de `nota`, o problema volta para
+  # quem fez o clipe, até `rodadas` revisões. Sem passar, fica o de melhor nota se a pior nota dele chegar a `aceitavel`
+  critica:
+    ativa: true
+    nota: 8
+    aceitavel: 5
+    rodadas: 3
+  sons: true                  # pop, risco, contagem e baque no tempo de cada movimento do clipe (feitos em código)
+  volume_sons_db: -20         # depois do pico de cada clipe levado a -1 dB; a voz fica em -16 LUFS
   # só gratuitos: o pago da lista é ignorado; vazia, valem os gratuitos de openrouter.principais; OPENROUTER_FREE_MODELS
   # no .env vale por cima. O Nemotron Super só lê texto, e aqui basta: fez a cena 11 do natureza-teste-1min de primeira
   modelos:

@@ -235,3 +235,110 @@ def test_texto_fora_da_tela_reprova_o_clipe(monkeypatch, tmp_path):
     assert animacoes._conferir(None, tmp_path) == []  # a camada transparente segue como antes
     erros = animacoes._conferir(None, tmp_path, clipe=True)
     assert len(erros) == 1 and erros[0].startswith("canvas_overflow")
+
+
+# ------------------------------------------------- revisão visual antes de gravar (vídeo estudado em 2026-10-06)
+
+def _critica(menor, problema="o número ficou espremido no canto"):
+    notas = {k: 9 for k in motion_ia.CRITERIOS}
+    notas["composicao"] = menor
+    return motion_ia._ler_critica({"notas": notas, "problemas": [
+        {"criterio": "composicao", "problema": problema, "correcao": "centralize o card"}]})
+
+
+def _revisar(monkeypatch, criticas, cfg=None):
+    """Roda _revisado com o clipe e a crítica trocados por respostas prontas. Devolve (resultado, pedidos de clipe)."""
+    pedidos, fila = [], list(criticas)
+
+    def um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=()):
+        pedidos.append(list(erros_visuais))
+        return {"css": "", "html": "", "js": "", "modelo": "contador", "versao": len(pedidos)}
+    monkeypatch.setattr(motion_ia, "_um_clipe", um_clipe)
+    monkeypatch.setattr(motion_ia, "criticar", lambda *a, **k: fila.pop(0))
+    projeto = SimpleNamespace(config={"motion_ia": {"critica": cfg or {}}})
+    resultado = motion_ia._revisado(projeto, {"n": 7}, 4.0, ("", ""), None, None, (), lambda *a: None)
+    return resultado, pedidos
+
+
+def test_clipe_com_nota_baixa_volta_com_o_problema_ate_passar(monkeypatch):
+    resultado, pedidos = _revisar(monkeypatch, [_critica(5), _critica(9)])
+    assert resultado["versao"] == 2 and resultado["critica"]["menor"] == 9
+    assert pedidos[0] == [] and "espremido no canto" in pedidos[1][0] and "composicao 5/10" in pedidos[1][0]
+    assert [c["menor"] for c in resultado["criticas"]] == [5, 9]
+
+
+def test_sem_passar_fica_o_de_melhor_nota_se_for_aceitavel(monkeypatch):
+    resultado, pedidos = _revisar(monkeypatch, [_critica(6), _critica(5), _critica(4)])
+    assert resultado["versao"] == 1 and len(pedidos) == 3
+
+
+def test_reprovado_na_revisao_visual_segue_o_caminho_de_antes(monkeypatch):
+    import pytest
+    with pytest.raises(RuntimeError, match="revisão visual"):
+        _revisar(monkeypatch, [_critica(2), _critica(3), _critica(2)])
+
+
+def test_sem_quem_olhe_o_clipe_segue_sem_a_revisao(monkeypatch):
+    # nunca para o vídeo: snapshot falhou ou nenhum modelo de visão gratuito atendeu
+    resultado, pedidos = _revisar(monkeypatch, [None])
+    assert resultado["versao"] == 1 and "critica" not in resultado
+
+
+def test_revisao_desligada_nao_olha(monkeypatch):
+    resultado, pedidos = _revisar(monkeypatch, [], cfg={"ativa": False})
+    assert resultado["versao"] == 1 and len(pedidos) == 1
+
+
+def test_notas_da_revisao_ficam_de_1_a_10_e_o_pior_problema_primeiro():
+    critica = motion_ia._ler_critica({"notas": {"legibilidade": 14, "composicao": 3, "clareza": "7"},
+                                      "problemas": [{"criterio": "clareza", "problema": "a", "correcao": ""},
+                                                    {"criterio": "composicao", "problema": "b", "correcao": ""}]})
+    assert critica["notas"] == {"legibilidade": 10, "composicao": 3, "clareza": 7} and critica["menor"] == 3
+    assert [p["problema"] for p in critica["problemas"]] == ["b", "a"]
+    assert motion_ia._ler_critica({"notas": {}}) is None
+
+
+def test_revisao_visual_so_pelos_gratuitos(monkeypatch):
+    from fabrica import openrouter_local
+    usadas = []
+    monkeypatch.setattr(openrouter_local, "perguntar", lambda *a, **k: usadas.append(k["cadeia_de"]) or {})
+    projeto = SimpleNamespace(config={"midia": {"modelos_visao": ["groq:qwen/qwen3.8-27b", "dots/x:free", "qwen/qwen3.8-flash"]},
+                                      "openrouter": {"so_texto": ["groq:openai/gpt-oss"]}})
+    openrouter_local.VISAO.perguntar(projeto, "e", "i", "p", {}, imagens=["a.jpg"], so_gratuitos=True)
+    assert usadas == [["groq:qwen/qwen3.8-27b", "dots/x:free"]]
+
+
+# --------------------------------------------------------- o som do clipe, no tempo do movimento
+
+def test_som_no_tempo_de_cada_movimento_do_clipe():
+    from fabrica import motion_modelos
+    balanca = motion_modelos.partes("balanca", {"valor": 1, "unidade": "tonelada", "abreviacao": "1 t"}, 4.0)
+    assert "baque" in [s for _, s in motion_ia.eventos_de_som(balanca["js"], 4.0)]
+    velocimetro = motion_modelos.partes("velocimetro", {"valor": 50, "unidade": "km/h"}, 4.0)
+    sons = motion_ia.eventos_de_som(velocimetro["js"], 4.0)
+    assert sons[0][1] == "pop" and "contagem" in [s for _, s in sons]
+    # nunca dois sons a menos de 0,3 s, nem som perto do corte
+    assert all(b[0] - a[0] >= 0.3 for a, b in zip(sons, sons[1:])) and all(t <= 3.75 for t, _ in sons)
+
+
+def test_movimento_continuo_e_saida_nao_tem_som():
+    js = ('tl.to("#m-b1", { x: 40, duration: 4, ease: "sine.inOut" }, 0);'
+          'tl.fromTo(".m-x", {opacity: 1}, {opacity: 0, duration: 0.3}, 1.0);'
+          'tl.fromTo("#m-pulso", {scale: 1}, {scale: 1.2, duration: 0.4, yoyo: true, repeat: 3}, 2.0);')
+    assert motion_ia.eventos_de_som(js, 4.0) == []
+
+
+def test_contagem_com_parenteses_dentro_da_chamada():
+    js = ('(function () { const el = document.querySelector("#v"); const o = { v: 0 }; tl.to(o, { v: 35, duration: 0.9,'
+          ' ease: "power3.out", onUpdate: function () { el.textContent = (Math.round(o.v * 1) / 1).toLocaleString("pt-BR"); } }, 1.2); })();'
+          'tl.fromTo("#c", {opacity: 0, y: 40}, {opacity: 1, y: 0, duration: 0.6, ease: "back.out(1.7)"}, 0.1);')
+    assert motion_ia.eventos_de_som(js, 4.0) == [(0.1, "pop"), (1.2, "contagem")]
+
+
+def test_som_so_nos_clipes_de_motion(monkeypatch):
+    monkeypatch.setattr(motion_ia, "sons_do_clipe", lambda projeto, c: f"sons-{c['n']}.wav")
+    projeto = SimpleNamespace(config={"motion_ia": {"volume_sons_db": -18}})
+    cenas = [{"n": 3, "ini": 9.5, "midia": {"fonte": "motion_ia"}}, {"n": 4, "ini": 12.0, "midia": {"fonte": "pexels"}}]
+    assert motion_ia.sons_na_linha(projeto, cenas, log=lambda *a: None) == [(9.5, "sons-3.wav", -18.0)]
+    projeto.config["motion_ia"]["sons"] = False
+    assert motion_ia.sons_na_linha(projeto, cenas, log=lambda *a: None) == []

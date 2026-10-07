@@ -306,6 +306,49 @@ def _perguntas(estado) -> dict:
     return perguntas
 
 
+def aprovada_na_captura(cena, minima) -> bool:
+    """O juiz aprovou a foto antes do download, sem suspeita: a conferência depois do download não olha de novo."""
+    cap = cena.get("captura") or {}
+    return bool(cap.get("conferida")) and not cap.get("suspeita") and (cap.get("nota") or 0) >= minima
+
+
+def na_duvida(projeto) -> set:
+    """As cenas de acervo que a conferência depois do download precisa olhar: as que não foram aprovadas na escolha.
+
+    Regra da criação pelo site (api._esteira); o `tudo` conferia todas as cenas, mesmo as aprovadas, e no teste do MCP
+    (mcp-pangolim) as 3 cenas foram descritas e julgadas de novo depois de aprovadas na escolha."""
+    minima = midia.nota_minima_da_conferencia(projeto)
+    return {c["n"] for c in conferiveis(projeto) if not aprovada_na_captura(c, minima)}
+
+
+def veredito(legenda, nota, sujeito=None, epoca=None, quem="o Jev") -> dict:
+    """A avaliação no formato que a conferência guarda, a partir das notas do juiz (de 0 a 100)."""
+    nota = max(0, min(100, round(nota)))
+    motivo = f"{quem} deu {nota}% de chance de combinar com a narração"
+    if sujeito is not None:
+        motivo += f", {sujeito}% de mostrar o sujeito certo"
+    if epoca is not None:
+        motivo += f" e {epoca}% de ser da época"
+    return {"legenda": legenda, "veredito": "combina" if nota >= 80 else "em_parte" if nota >= 50 else "nao_combina",
+            "nota": nota, "sujeito": sujeito, "epoca": epoca, "motivo": motivo, "busca_nova": "", "prompt_novo": ""}
+
+
+def instrucoes_do_juizo() -> str:
+    """As perguntas do Jev escritas para quem VÊ a imagem (o Claude do cliente, no MCP): a mesma régua, numa tarefa só."""
+    c, s, e = PERGUNTAS_JEV["combina"], PERGUNTA_SUJEITO, PERGUNTA_EPOCA
+
+    def regra(nome, p):
+        return (f"- {nome}: {p['instructions']} Nota alta quando {p['criteria']['true']}. Nota baixa quando "
+                f"{p['criteria']['false']}.")
+    return ("\n\nJULGAMENTO: para cada imagem dê também as notas do juiz da fábrica, de 0 a 100 (a chance de ser "
+            "verdade). Nas regras abaixo, 'o estado' são as linhas do pedido da cena (narração, o que deveria mostrar, "
+            "o mínimo, tem que ser, época, pessoa citada, item da lista, assunto do bloco e como o autor descreveu o "
+            "arquivo), e 'a imagem descrita' é o que você vê.\n"
+            + "\n".join((regra("combina", c), regra("sujeito", s), regra("epoca (só nas cenas com Época)", e)))
+            + "\nJulgue com o rigor de um juiz que não escolheu a foto: nota alta para uma foto de outra coisa faz o "
+            "vídeo mostrar outra coisa.")
+
+
 def errada(avaliacao, nota_para_trocar=NOTA_PARA_TROCAR) -> bool:
     """A cena mostra outra coisa (sujeito errado), é de outra época, ou não combina de jeito nenhum. Só essa troca
     sozinha, e com a IA ligada vai para a IA. Sujeito certo com nota baixa é cena genérica e fica."""
@@ -605,6 +648,110 @@ def _avaliar_com_jev(projeto, cenas, vizinhas, log, nota_minima):
     return resultados
 
 
+INSTRUCOES_DO_CLIENTE = """Você confere as cenas de um vídeo já com a foto ou o vídeo baixado. Cada cena traz a narração,
+o que deveria mostrar e as imagens dela (um quadro, ou alguns quadros do mesmo vídeo), na ordem indicada no pedido:
+conte as imagens para não trocar uma cena pela outra.
+
+Para cada cena, primeiro diga o que VOCÊ VÊ, campo a campo, e só depois julgue. """ + midia.INSTRUCOES_SEM_PEDIDO + """
+Quando a nota de combina ficar abaixo de {minima}, escreva também onde procurar um material melhor:
+busca_nova, de 2 a 4 palavras em inglês com substantivos concretos, como alguém digitaria num banco de imagens para
+achar o que a narração cita (diferente do termo de busca atual, que já falhou); e prompt_novo, a descrição em inglês de
+uma fotografia (sujeito, ação, enquadramento e ambiente, sem texto escrito na imagem). Comparação e metáfora não são o
+assunto: mostre a coisa de que o trecho fala de verdade. Com a nota de {minima} ou mais, deixe os dois vazios.
+Devolva um item por cena pedida, com o mesmo n, na mesma ordem."""
+
+
+def _esquema_do_cliente():
+    campos = {"n": {"type": "integer"}, **midia.CAMPOS_SEM_PEDIDO,
+              "combina": {"type": "integer"}, "sujeito": {"type": "integer"}, "epoca": {"type": "integer"},
+              "busca_nova": {"type": "string"}, "prompt_novo": {"type": "string"}}
+    obrigatorios = [k for k in campos if k != "epoca"]
+    return {"type": "object", "required": ["cenas"], "additionalProperties": False, "properties": {"cenas": {
+        "type": "array", "items": {"type": "object", "properties": campos, "required": obrigatorios,
+                                   "additionalProperties": False}}}}
+
+
+def linhas_do_estado(projeto, cena, vizinhas=None) -> str:
+    """O que o juiz precisa saber da cena além da narração, nas palavras do pedido (o mesmo estado do Jev)."""
+    linhas = []
+    antes, depois = (vizinhas or {}).get(cena["n"] - 1), (vizinhas or {}).get(cena["n"] + 1)
+    if antes:
+        linhas.append(f"Trecho anterior, só de contexto: \"{antes}\"")
+    if depois:
+        linhas.append(f"Trecho seguinte, só de contexto: \"{depois}\"")
+    bloco = _bloco_da_cena_no_mapa(projeto, cena)
+    if bloco:
+        linhas.append(f"Assunto do bloco: {bloco}")
+    if cena.get("mostrar"):
+        linhas.append(f"O que deveria mostrar: {cena['mostrar']}")
+    if (cena.get("aceitavel") or "").strip():
+        linhas.append(f"O mínimo para estar certa: {cena['aceitavel'].strip()}")
+    if cena.get("exato"):
+        linhas.append(f"Tem que ser: {cena['exato']}")
+    if midia.e_de_epoca(cena):
+        linhas.append(f"Época: {cena['epoca']}")
+    pessoa = _pessoa_da_cena(projeto, cena)
+    if pessoa:
+        linhas.append(f"Pessoa citada: {pessoa}")
+    if cena.get("item_citado"):
+        linhas.append(f"Item da lista nesta cena: {cena['item_citado']}")
+    if cena.get("tipo") == "ia" and not cena.get("midia"):
+        linhas.append("A imagem foi gerada por IA: não pese contra por isso; julgue se mostra o certo")
+    return "\n".join(linhas)
+
+
+def _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima):
+    """Projeto do MCP: o Claude do cliente vê a imagem baixada e julga direto, várias cenas por tarefa.
+
+    No caminho do Jev são duas chamadas por cena (o modelo de visão descreve, o Jev julga a descrição) e mais uma para
+    a busca nova das reprovadas; aqui é uma tarefa para até cliente.cenas_por_tarefa cenas."""
+    from . import cliente
+
+    por_tarefa = max(1, int((projeto.config.get("cliente") or {}).get("cenas_por_tarefa", 6)))
+    com_quadros = [(c, q) for c in cenas for q in [_quadros(projeto, c)] if q]
+    lotes = [com_quadros[i:i + por_tarefa] for i in range(0, len(com_quadros), por_tarefa)]
+    instrucoes = INSTRUCOES_DO_CLIENTE.format(minima=nota_minima) + instrucoes_do_juizo()
+
+    def conferir(lote):
+        blocos, imagens = [], []
+        for cena, quadros in lote:
+            primeira = len(imagens) + 1
+            imagens.extend(quadros)
+            marcas = f"[imagem {primeira}]" if len(quadros) == 1 else f"[imagem {primeira}] a [imagem {len(imagens)}]"
+            fonte = _texto_da_fonte(cena)
+            blocos.append(f"{_bloco_da_cena(cena, quadros, {})}\n{linhas_do_estado(projeto, cena, vizinhas)}"
+                          + (f"\nComo o autor descreveu o arquivo: {fonte}" if fonte else "")
+                          + f"\nImagens desta cena: {marcas}")
+        pedido = f"Devolva {len(lote)} itens, um por cena.\n\n" + "\n\n".join(blocos)
+        try:
+            resposta = cliente.pedir(projeto, "conferir cenas (ver e julgar)", instrucoes, pedido, _esquema_do_cliente(),
+                                     imagens, log=log)
+        except cliente.Cancelada:
+            raise
+        except (RuntimeError, SystemExit) as e:
+            log(f"  o Claude do cliente não conferiu as cenas {lote[0][0]['n']} a {lote[-1][0]['n']} ({e})")
+            return {}
+        numeros = {c["n"] for c, _ in lote}
+        saida = {}
+        for item in resposta.get("cenas", []):
+            if not isinstance(item, dict) or item.get("n") not in numeros:
+                continue
+            legenda = midia.compor_o_que_se_ve(item)
+            epoca = item.get("epoca") if midia.e_de_epoca(next(c for c, _ in lote if c["n"] == item["n"])) else None
+            a = veredito(legenda, item.get("combina", 0), item.get("sujeito"), epoca, quem="o Claude do cliente")
+            a.update(busca_nova=(item.get("busca_nova") or "").strip(), prompt_novo=(item.get("prompt_novo") or "").strip())
+            saida[item["n"]] = a
+        return saida
+
+    resultados = {}
+    with ThreadPoolExecutor(max(1, len(lotes))) as executor:
+        for parcial in executor.map(conferir, lotes):
+            resultados.update(parcial)
+    _guardar_legendas(projeto, {n: a["legenda"] for n, a in resultados.items() if a["legenda"]})
+    log(f"  {len(resultados)} cena(s) vistas e julgadas pelo Claude do cliente, em {len(lotes)} tarefa(s)")
+    return resultados
+
+
 def _avaliar_cena(projeto, cena, log, vizinhas=None):
     quadros = _quadros(projeto, cena)
     if not quadros:
@@ -667,6 +814,10 @@ def _avaliar(projeto, numeros, log, nota_minima=NOTA_MINIMA):
         # a imagem de IA também é conferida quando a cena é pedida pelo número (conferir_ia)
         cenas += [c for c in todas if c["n"] in numeros and c.get("tipo") == "ia" and not c.get("midia")
                   and projeto.imagem(c["n"]).exists() and (c.get("texto") or "").strip()]
+    from . import cliente
+
+    if cliente.ativo(projeto):
+        return _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima)
     if provedor(projeto) == "jev":
         return _avaliar_com_jev(projeto, cenas, vizinhas, log, nota_minima)
     por_chamada = max(1, (projeto.config.get("corrigir") or {}).get("cenas_por_chamada", 1))
