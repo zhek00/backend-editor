@@ -344,7 +344,7 @@ próprio Claude Code, e as decisões saem da assinatura dele. `fabrica mcp --por
     certo entra e não vê o projeto de outro dono, código de download inventado 404.
   - **No ar em https://mcp.bbnews.cc** (2026-10-07): subdomínio no túnel da Cloudflare que já serve o editor, apontando para localhost:8092, com uma Regra de Configuração para o host mcp.bbnews.cc que desliga o "Estou Sob Ataque" e a verificação de integridade do navegador (o domínio está em modo Sob Ataque, e o desafio barrava o Claude Code com 403). Testado por fora: 401 sem token, 200 com token, o vídeo de 209 MB baixado em 26 s.
   - **Sobe junto com a fábrica** pelo LIGAR-TIPLABS (porta 8092, `mcp.log`), e o DESLIGAR-TIPLABS desliga os dois.
-    Desde 2026-10-07 o MCP roda desta pasta: a cópia `E:\BACKUUUUUUUUUUUUUUUUUUP	este-MCP-fabrica-para-amigo`, onde ele
+    Desde 2026-10-07 o MCP roda desta pasta: a cópia `E:\BACKUUUUUUUUUUUUUUUUUUP\teste-MCP-fabrica-para-amigo`, onde ele
     foi testado, ficou só como backup.
   - **Falta:** apagar os pacotes de `entregas/` depois de baixados ou vencidos.
 
