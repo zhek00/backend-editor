@@ -13,6 +13,7 @@ vozes_candidatas*.json
 # registros da fábrica
 fabrica.log
 fabrica.log.erros
+mcp.log.erros
 *.log
 *.pyc
 aprendizados/

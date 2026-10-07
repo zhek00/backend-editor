@@ -9,6 +9,14 @@ Write-Host ''
 Write-Host '  TipLabs - desligando a fabrica' -ForegroundColor Cyan
 Write-Host ''
 
+# o MCP (porta 8092) desliga junto
+$mcp = Get-NetTCPConnection -LocalPort 8092 -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique
+if ($mcp) {
+    $mcp | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    Write-Host '  MCP desligado.' -ForegroundColor Green
+}
+
 $processos = Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique
 
