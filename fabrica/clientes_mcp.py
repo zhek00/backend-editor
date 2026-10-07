@@ -21,7 +21,7 @@ from .config import RAIZ
 
 ARQUIVO = RAIZ / "clientes_mcp.json"  # fora do Git
 LINKS = RAIZ / "entregas" / "links.json"
-POR_DIA = 2  # vídeos que cada conta começa por dia (o produto de R$ 1.000)
+POR_DIA = 1  # vídeos que cada conta começa por dia (o produto de R$ 1.000; era 2 até 2026-10-07)
 VALIDADE_DO_LINK = 7 * 24 * 3600
 
 _TRAVA = threading.Lock()

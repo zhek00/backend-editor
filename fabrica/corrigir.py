@@ -733,6 +733,9 @@ def _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima):
         try:
             resposta = cliente.pedir(projeto, "conferir cenas (ver e julgar)", instrucoes, pedido, _esquema_do_cliente(),
                                      imagens, log=log)
+        except cliente.Reserva:
+            faltam.extend(c for c, _ in lote)  # o Claude do cliente parou: o caminho de sempre confere estas
+            return {}
         except cliente.Cancelada:
             raise
         except (RuntimeError, SystemExit) as e:
@@ -750,13 +753,13 @@ def _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima):
             saida[item["n"]] = a
         return saida
 
-    resultados = {}
+    resultados, faltam = {}, []
     with ThreadPoolExecutor(max(1, len(lotes))) as executor:
         for parcial in executor.map(conferir, lotes):
             resultados.update(parcial)
     _guardar_legendas(projeto, {n: a["legenda"] for n, a in resultados.items() if a["legenda"]})
     log(f"  {len(resultados)} cena(s) vistas e julgadas pelo Claude do cliente, em {len(lotes)} tarefa(s)")
-    return resultados
+    return resultados, faltam
 
 
 def _avaliar_cena(projeto, cena, log, vizinhas=None):
@@ -823,8 +826,16 @@ def _avaliar(projeto, numeros, log, nota_minima=NOTA_MINIMA):
                   and projeto.imagem(c["n"]).exists() and (c.get("texto") or "").strip()]
     from . import cliente
 
-    if cliente.ativo(projeto):
-        return _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima)
+    resultados = {}
+    if cliente.atende(projeto, "conferir cenas"):
+        resultados, cenas = _avaliar_pelo_cliente(projeto, cenas, vizinhas, log, nota_minima)
+        if not cenas:
+            return resultados
+        log(f"  {len(cenas)} cena(s) conferidas pelo caminho de sempre: o Claude do cliente parou")
+    return {**resultados, **_avaliar_pelo_modelo(projeto, cenas, vizinhas, log, nota_minima)}
+
+
+def _avaliar_pelo_modelo(projeto, cenas, vizinhas, log, nota_minima):
     if provedor(projeto) == "jev":
         return _avaliar_com_jev(projeto, cenas, vizinhas, log, nota_minima)
     por_chamada = max(1, (projeto.config.get("corrigir") or {}).get("cenas_por_chamada", 1))

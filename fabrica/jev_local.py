@@ -90,7 +90,7 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
     from . import cliente
 
     cfg = projeto.config.get("jev") or {}
-    if cliente.ativo(projeto) or \
+    if cliente.atende(projeto, etapa) or \
             (os.environ.get("FABRICA_JULGAR_COM") or cfg.get("julgar_com") or "jev").strip().lower() == "principal":
         # no projeto do MCP o Claude do cliente julga, com as mesmas perguntas do Jev (pela fila de cliente.py)
         try:

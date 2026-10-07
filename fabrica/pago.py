@@ -87,7 +87,11 @@ def autorizar(projeto, rota, etapa, fora, log=print) -> bool:
     """Antes do primeiro modelo pago da cadeia. True: pode pagar. False: um gratuito voltou, tente a cadeia de novo.
 
     fora: {rota gratuita: segundo em que ela volta} das que estão de lado agora."""
-    if not confirmar(projeto) or liberado(projeto):
+    from . import cliente
+
+    # projeto do MCP: a cadeia só chega aqui quando o Claude do cliente parou depois da metade do vídeo, e a reserva
+    # paga é a regra combinada (cliente.Reserva); ninguém está no editor para confirmar
+    if not confirmar(projeto) or liberado(projeto) or cliente.ativo(projeto):
         return True
     if not responde_o_editor:
         return _no_terminal(projeto, rota, etapa)

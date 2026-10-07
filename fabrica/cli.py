@@ -1089,7 +1089,7 @@ def main():
     s = sub.add_parser("mcp-cliente", help="contas do MCP: criar (gera o token), listar, revogar")
     s.add_argument("acao", choices=["criar", "listar", "revogar"])
     s.add_argument("nome", nargs="?", default="")
-    s.add_argument("--por-dia", type=int, default=2, help="vídeos que a conta começa por dia")
+    s.add_argument("--por-dia", type=int, default=1, help="vídeos que a conta começa por dia")
     s.add_argument("--url", default="", help="a URL pública do MCP, para montar o comando de instalação")
     s.set_defaults(funcao=cmd_mcp_cliente)
 

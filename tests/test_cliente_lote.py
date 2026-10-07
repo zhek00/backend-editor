@@ -87,7 +87,7 @@ def test_conferencia_depois_do_download_ve_e_julga_numa_tarefa(projeto, tmp_path
     cenas = [_cena(1, "o pangolim"), _cena(2, "ele se enrola")]
     saida = {}
     fio = threading.Thread(target=lambda: saida.update(r=corrigir._avaliar_pelo_cliente(
-        projeto, cenas, {1: "o pangolim", 2: "ele se enrola"}, print, 40)), daemon=True)
+        projeto, cenas, {1: "o pangolim", 2: "ele se enrola"}, print, 40)[0]), daemon=True)
     fio.start()
     vista = {"o_que_e": "pangolim", "certeza": "alta", "detalhes": "escamas", "cenario": "museu", "acao": "parado",
              "tipo_imagem": "foto real", "texto_visivel": "nenhum", "epoca_aparente": "indefinida"}

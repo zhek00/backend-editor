@@ -231,8 +231,14 @@ def andamento(nome: str) -> str:
     estado = prod["estado"]
     if estado == "produzindo" and m["esperando_agora"]:
         estado = f"esperando você há {_minutos(m['esperando_agora'])} ({cliente.pendentes(nome)} tarefa(s) na fila)"
+        if m.get("pausado"):
+            estado += (f". PAUSADO: você parou com {m['pausado']['feito']:.0%} do vídeo feito (a fábrica só segue "
+                       "sozinha a partir de 60%). Quando o limite do seu Claude voltar, rode /tiplabs de novo com o "
+                       "mesmo nome")
     elif estado == "produzindo":
         estado = "a fábrica está trabalhando (narração, downloads ou render)"
+    if m.get("reserva"):
+        estado += ". A fábrica está terminando sozinha as tarefas visuais (você parou depois de 60% do vídeo)"
     texto = [f"{nome}: {estado}",
              f"Tempo desde o início: {_minutos(total)}; a fábrica trabalhou {_minutos(total - m['espera'])} e esperou "
              f"você {_minutos(m['espera'])}.",

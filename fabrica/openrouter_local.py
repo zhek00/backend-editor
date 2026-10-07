@@ -183,9 +183,13 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     (nunca esperar). raciocinio: a tabela de esforço por modelo no lugar de openrouter.raciocinio_por_modelo."""
     from . import cliente, pago
 
-    if cliente.ativo(projeto):
-        # projeto do MCP: quem responde é o Claude de quem usa o MCP, pela fila (cliente.py)
-        return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
+    if cliente.atende(projeto, etapa):
+        # projeto do MCP: quem responde é o Claude de quem usa o MCP, pela fila (cliente.py). Se ele parou depois da
+        # metade do vídeo (cliente.Reserva), a cadeia de sempre responde: os gratuitos e o pago de reserva
+        try:
+            return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
+        except cliente.Reserva:
+            pass
     cfg = projeto.config.get("openrouter") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     cadeia = cadeia_de or principais(projeto)
@@ -250,9 +254,12 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
     """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
     from . import cliente
 
-    if cliente.ativo(projeto):
+    if cliente.atende(projeto, etapa):
         # o Motion IA chama a rota direto, sem passar por perguntar
-        return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
+        try:
+            return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
+        except cliente.Reserva:
+            pass
     if not rota.startswith("groq:"):
         return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
                                cadeia=cadeia, raciocinio=raciocinio)

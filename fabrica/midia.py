@@ -1631,7 +1631,7 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
 
     resultado, pendentes = {}, []
     com_descricao = descricoes is not None
-    pelo_cliente = cliente.ativo(projeto)
+    pelo_cliente = cliente.atende(projeto, "escolha das fotos")
     for cena in lote:
         cache = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}{sufixo}.json")
         assinatura = hashlib.sha1(
@@ -1685,6 +1685,10 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
     if pelo_cliente:
         respostas = _escolher_pelo_cliente(projeto, pendentes, candidatos, folhas, instrucoes, com_descricao, vejos,
                                            juizos)
+        if respostas is None:
+            # o Claude do cliente parou depois da metade do vídeo: a cadeia de visão escolhe estas cenas
+            respostas = _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes,
+                                              _esquema_escolha(com_descricao), vejos)
     elif (projeto.config.get("midia") or {}).get("escolha") not in (None, "", "claude"):
         respostas = _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes,
                                           _esquema_escolha(com_descricao), vejos)
@@ -1820,6 +1824,8 @@ def _escolher_pelo_cliente(projeto, pendentes, candidatos, folhas, instrucoes, c
         instrucoes += corrigir.instrucoes_do_juizo()
     try:
         dados = cliente.pedir(projeto, "escolha das fotos (escolher e julgar)", instrucoes, pedido, esquema, imagens)
+    except cliente.Reserva:
+        return None
     except cliente.Cancelada:
         raise
     except (RuntimeError, SystemExit):

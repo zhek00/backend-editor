@@ -319,6 +319,15 @@ próprio Claude Code, e as decisões saem da assinatura dele. `fabrica mcp --por
   ligado em https://mcp.bbnews.cc): 8 tarefas, 14 min, US$ 0,005 na fábrica (voz da Fish com `criar_video(voz="fish")`).
   O Claude do cliente gastou o equivalente a US$ 2,22 em API: Opus US$ 0,83 (o coordenador) e Sonnet US$ 1,39 (39 mil
   tokens de raciocínio). Por isso o `/tiplabs` roda com `model: sonnet` e o subagente é pedido a decidir direto.
+- **Reserva pelo OpenRouter quando o cliente para** (`cliente._esperar`, `cliente.Reserva`, `cliente.atende`, pedido do
+  usuário em 2026-10-07: a maioria dos clientes terá o Claude Pro, e um vídeo de 20 min não cabe numa janela de uso).
+  O Claude do cliente faz tudo o que conseguir. Tarefa **visual** parada há `cliente.espera_reserva` (600 s), sem o
+  cliente responder nada do projeto: com **60% ou mais do vídeo feito** (`cliente.progresso`: cenas com a escolha, a
+  mídia ou a conferência prontas; `cliente.minimo_para_reserva`), a fábrica segue sozinha pela própria cadeia (os
+  gratuitos e o Qwen 3.7 Flash, sem pedir confirmação de pago: `pago.autorizar` libera projeto do MCP); abaixo disso
+  a produção **pausa** e o `andamento` pede para rodar o `/tiplabs` de novo quando o limite voltar. Tarefa de roteiro
+  nunca vai para a reserva. Quando o cliente volta a responder, as tarefas visuais são dele de novo. Contas novas
+  começam com **1 vídeo por dia** (`clientes_mcp.POR_DIA`).
 - **Instruções uma vez por chamada** (`proximas_tarefas(..., tipo, instrucoes_que_ja_tenho)`): antes o "já entregue"
   era global, e o segundo subagente ficaria sem as regras. Agora cada chamada manda as instruções inteiras uma vez,
   menos as das marcas que quem pede diz que já tem.

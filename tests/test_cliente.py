@@ -164,3 +164,59 @@ def test_comando_tiplabs():
     assert "{" not in arquivo.split("=====")[1].replace("{nome}", "")  # nenhum campo sem preencher
     pronto = mcp_servidor.comando_tiplabs("roteiro.txt", "cafe-1")
     assert "Nome do vídeo: cafe-1" in pronto and '"sonnet"' in pronto and "$ARGUMENTS" not in pronto
+
+
+# ---------------------------------------------------------------- reserva: o cliente parou no meio do vídeo
+
+def _projeto_com_cenas(tmp_path, feitas, total=10):
+    import json
+    (tmp_path / "midia" / "escolha").mkdir(parents=True)
+    for n in range(1, feitas + 1):
+        (tmp_path / "midia" / "escolha" / f"cena_{n:04d}.json").write_text("{}", encoding="utf-8")
+    cenas = {"cenas": [{"n": n} for n in range(1, total + 1)]}
+    return SimpleNamespace(nome=f"video-{feitas}", dados={"modelo": "cliente"}, pasta=tmp_path,
+                           config={"cliente": {"espera_reserva": 0.2}},
+                           existe=lambda nome: nome == "cenas.json", ler_json=lambda nome: cenas)
+
+
+def test_cliente_parou_antes_da_metade_a_producao_pausa(tmp_path):
+    p = _projeto_com_cenas(tmp_path, feitas=5)  # 50% do vídeo: abaixo dos 60%
+    fio, saida = _em_paralelo(lambda: cliente.pedir(p, "escolha das fotos", "regras", "pedido", ESQUEMA,
+                                                    log=lambda *a: None))
+    time.sleep(0.8)
+    assert fio.is_alive() and cliente.medidas(p.nome)["pausado"]  # segue esperando o cliente
+    [t] = cliente.proximas(p.nome)
+    assert cliente.responder(t["id"], {"escolhas": [1]})["ok"]
+    fio.join(2)
+    assert saida["r"] == {"escolhas": [1]} and not cliente.medidas(p.nome)["pausado"]
+
+
+def test_cliente_parou_depois_da_metade_a_fabrica_segue_e_ele_retoma_quando_volta(tmp_path):
+    p = _projeto_com_cenas(tmp_path, feitas=6)  # 60% do vídeo: o mínimo
+    erro = {}
+
+    def pedir():
+        try:
+            cliente.pedir(p, "escolha das fotos", "regras", "pedido", ESQUEMA, log=lambda *a: None)
+        except cliente.Reserva as e:
+            erro["reserva"] = e
+
+    fio = threading.Thread(target=pedir, daemon=True)
+    fio.start()
+    fio.join(3)
+    assert "reserva" in erro and not cliente.atende(p, "escolha das fotos")  # visual vai para a cadeia
+    assert cliente.atende(p, "roteirista: cenas")  # roteiro sempre espera o cliente
+    fio, _ = _em_paralelo(lambda: cliente.pedir(p, "roteirista: cenas", "r", "p", ESQUEMA, log=lambda *a: None))
+    [t] = cliente.proximas(p.nome)
+    cliente.responder(t["id"], {"escolhas": []})  # o cliente voltou
+    fio.join(2)
+    assert cliente.atende(p, "escolha das fotos")
+
+
+def test_tarefa_de_roteiro_nunca_vai_para_a_reserva(tmp_path):
+    p = _projeto_com_cenas(tmp_path, feitas=10)
+    fio, _ = _em_paralelo(lambda: cliente.pedir(p, "roteirista: mapa", "r", "p", ESQUEMA, log=lambda *a: None))
+    time.sleep(0.8)
+    assert fio.is_alive()
+    cliente.cancelar(p.nome)
+    fio.join(2)

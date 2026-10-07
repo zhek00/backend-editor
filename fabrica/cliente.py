@@ -19,6 +19,13 @@ from pathlib import Path
 
 ENTREGA_VENCE = 900  # segundos: tarefa entregue e não respondida volta para a fila (o cliente fechou a sessão)
 
+# Reserva pelo OpenRouter (pedido do usuário em 2026-10-07): o Claude do cliente faz tudo o que conseguir. Se ele parar
+# (limite da assinatura, terminal fechado) numa tarefa visual, a fábrica só continua sozinha, pelos modelos da própria
+# cadeia (o Qwen 3.7 Flash de reserva), quando o cliente já fez pelo menos 60% do vídeo; abaixo disso ela pausa e
+# espera ele voltar. A maioria dos clientes tem o Claude Pro, e um vídeo de 20 min não cabe numa janela de uso
+ESPERA_RESERVA = 600     # cliente.espera_reserva: segundos parado até a tarefa visual ir para a reserva
+MINIMO_RESERVA = 0.6     # cliente.minimo_para_reserva: parte do vídeo feita pelo cliente (60%, pedido do usuário)
+
 _TRAVA = threading.Lock()
 _TAREFAS: dict = {}
 # por projeto: tarefas e imagens por etapa, e o tempo em que a produção ficou parada esperando o cliente (algum pedido
@@ -42,6 +49,44 @@ def grupo(etapa) -> str:
 
 class Cancelada(RuntimeError):
     """A produção desse projeto foi cancelada enquanto esperava a resposta."""
+
+
+class Reserva(Exception):
+    """O Claude do cliente parou depois da metade do vídeo: quem pediu responde esta tarefa pela própria cadeia.
+
+    Não é RuntimeError de propósito: os `except RuntimeError` que tratam uma falha do cliente não a engolem."""
+
+
+def _cfg(projeto) -> dict:
+    return (getattr(projeto, "config", None) or {}).get("cliente") or {}
+
+
+def progresso(projeto) -> float:
+    """A parte do vídeo cuja parte visual já foi feita: as cenas com a escolha das fotos, a mídia ou a imagem prontas.
+
+    No roteiro é zero (as cenas nem existem); na escolha sobe cena a cena; da conferência em diante é perto de 1."""
+    try:
+        cenas = projeto.ler_json("cenas.json")["cenas"] if projeto.existe("cenas.json") else []
+    except (OSError, ValueError, KeyError):
+        return 0.0
+    if not cenas:
+        return 0.0
+    numeros = {c["n"] for c in cenas}
+    pasta = Path(projeto.pasta) / "midia" / "escolha"
+    feitas = {int(p.stem[5:9]) for p in pasta.glob("cena_*.json") if p.stem[5:9].isdigit()} if pasta.is_dir() else set()
+    feitas |= {c["n"] for c in cenas if c.get("midia") or c.get("conferencia")}
+    return len(feitas & numeros) / len(numeros)
+
+
+def em_reserva(projeto) -> bool:
+    with _TRAVA:
+        return bool(_medidas(projeto.nome).get("reserva"))
+
+
+def atende(projeto, etapa) -> bool:
+    """Esta etapa vai para o Claude do cliente? Projeto do MCP, menos as etapas visuais enquanto a reserva está ligada
+    (ela desliga quando o cliente volta a responder)."""
+    return ativo(projeto) and not (grupo(etapa) == VISUAL and em_reserva(projeto))
 
 
 def ativo(projeto) -> bool:
@@ -87,16 +132,56 @@ def pedir(projeto, etapa, instrucoes, pedido, esquema, imagens=(), log=print) ->
         por_etapa["tarefas"] += 1
         por_etapa["imagens"] += len(figuras)
     log(f"  esperando o Claude do cliente: {etapa} ({tarefa['id']})")
-    tarefa["evento"].wait()
+    reserva = _esperar(projeto, tarefa, etapa, log)
     with _TRAVA:
         _TAREFAS.pop(tarefa["id"], None)
         m = _medidas(projeto.nome)
         if m["esperando_desde"] and not any(t["projeto"] == projeto.nome for t in _TAREFAS.values()):
             m["espera"] += time.time() - m["esperando_desde"]
             m["esperando_desde"] = None
+    if reserva:
+        raise Reserva(f"o Claude do cliente parou em {etapa}; a fábrica segue pela própria cadeia")
     if tarefa["cancelada"]:
         raise Cancelada(f"a produção de {projeto.nome} foi cancelada")
     return tarefa["resposta"]
+
+
+def _esperar(projeto, tarefa, etapa, log) -> bool:
+    """Espera a resposta. True quando a tarefa vai para a reserva: é visual, ninguém mexe nela nem responde nada do
+    projeto há espera_reserva segundos, e o cliente já fez a metade do vídeo. Abaixo da metade, avisa uma vez que a
+    produção está pausada e segue esperando."""
+    cfg = _cfg(projeto)
+    espera = float(cfg.get("espera_reserva", ESPERA_RESERVA))
+    minimo = float(cfg.get("minimo_para_reserva", MINIMO_RESERVA))
+    visual = grupo(etapa) == VISUAL
+    avisou = False
+    while not tarefa["evento"].wait(max(0.05, min(15.0, espera / 4))):
+        if not visual:
+            continue
+        with _TRAVA:
+            m = _medidas(projeto.nome)
+            parado = time.time() - max(tarefa["criada"], tarefa["entregue"], m.get("ultima_resposta") or 0)
+        if parado < espera:
+            continue
+        feito = progresso(projeto)
+        if feito < minimo:
+            if not avisou:
+                log(f"  o Claude do cliente parou com {feito:.0%} do vídeo feito: a produção fica pausada até ele "
+                    f"voltar (a fábrica só segue sozinha a partir de {minimo:.0%})")
+                with _TRAVA:
+                    _medidas(projeto.nome)["pausado"] = {"desde": time.time(), "feito": feito}
+                avisou = True
+            continue
+        with _TRAVA:
+            if tarefa["evento"].is_set():
+                return False  # a resposta chegou agora
+            m = _medidas(projeto.nome)
+            m["reserva"] = True
+            m["pausado"] = None
+            m["reservas"] = m.get("reservas", 0) + 1
+        log(f"  o Claude do cliente parou com {feito:.0%} do vídeo feito: a fábrica segue sozinha nas tarefas visuais")
+        return True
+    return False
 
 
 def proximas(projeto=None, limite=3, tipo=None) -> list:
@@ -136,11 +221,17 @@ def responder(tarefa_id, resposta) -> dict:
             return {"ok": False, "erro": f"faltam as chaves obrigatórias {', '.join(faltam)} do esquema"}
         tarefa["resposta"] = resposta
         tarefa["evento"].set()
+        # o cliente voltou: as próximas tarefas visuais são dele de novo
+        m = _medidas(tarefa["projeto"])
+        m["ultima_resposta"] = time.time()
+        m["reserva"] = False
+        m["pausado"] = None
     return {"ok": True}
 
 
 def _medidas(nome) -> dict:
-    return _MEDIDAS.setdefault(nome, {"por_etapa": {}, "espera": 0.0, "esperando_desde": None})
+    return _MEDIDAS.setdefault(nome, {"por_etapa": {}, "espera": 0.0, "esperando_desde": None, "ultima_resposta": 0.0,
+                                      "reserva": False, "reservas": 0, "pausado": None})
 
 
 def medidas(nome) -> dict:
@@ -150,6 +241,7 @@ def medidas(nome) -> dict:
         agora = time.time() - m["esperando_desde"] if m["esperando_desde"] else 0.0
         return {"por_etapa": {k: dict(v) for k, v in m["por_etapa"].items()}, "espera": m["espera"] + agora,
                 "esperando_agora": agora,
+                "reserva": bool(m.get("reserva")), "reservas": m.get("reservas", 0), "pausado": m.get("pausado"),
                 "tarefas": sum(v["tarefas"] for v in m["por_etapa"].values()),
                 "imagens": sum(v["imagens"] for v in m["por_etapa"].values())}
 
