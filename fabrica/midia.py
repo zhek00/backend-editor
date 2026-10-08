@@ -1338,7 +1338,10 @@ class Buscador:
         codigo = hashlib.sha1(f"{fonte}|{tipo}|{busca}".encode()).hexdigest()[:16]
         cache = self.projeto.caminho("midia", "buscas", f"{codigo}.json")
         if cache.exists():
-            return json.loads(cache.read_text(encoding="utf-8"))
+            try:
+                return json.loads(cache.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass  # gravação pela metade de outra busca igual: busca de novo, sem derrubar a produção
         for tentativa in range(3):
             if not self._aguardar(fonte):
                 # a fonte está no limite por mais tempo que vale esperar: esta busca segue com os outros bancos,
@@ -1377,7 +1380,15 @@ class Buscador:
                 return []
         with self.trava:
             self.quedas.pop(fonte, None)
-        cache.write_text(json.dumps(achados, ensure_ascii=False), encoding="utf-8")
+        # grava num arquivo à parte e troca de uma vez: duas cenas com a mesma busca, ao mesmo tempo, liam o cache
+        # vazio no meio da gravação da outra ("Expecting value: line 1 column 1"), e a produção inteira do
+        # 11-animais-do-brasil parou pelo MCP
+        provisorio = cache.with_name(f"{cache.stem}.{threading.get_ident()}.tmp")
+        provisorio.write_text(json.dumps(achados, ensure_ascii=False), encoding="utf-8")
+        try:
+            os.replace(provisorio, cache)
+        except OSError:
+            provisorio.unlink(missing_ok=True)  # outra busca igual gravou primeiro; o resultado é o mesmo
         return achados
 
     def _caiu(self, fonte):
@@ -2165,11 +2176,14 @@ def escrever_creditos(projeto):
     linhas = []
     for c in projeto.ler_json("cenas.json")["cenas"]:
         m = c.get("midia")
-        if not m or m.get("fonte") == "motion_ia":
+        if m and m.get("fonte") == "motion_ia":
+            m = c.get("motion_foto")  # a foto de banco que o clipe de motion usa (o bicho na balança)
+        if not m or not m.get("fonte"):
             continue
         autor = f" por {m['autor']}" if m.get("autor") else ""
         tipo = "Vídeo" if m["tipo"] == "video" else "Foto"
-        linhas.append(f"{mmss(c['ini'])} {tipo} do {m['fonte'].capitalize()}{autor}, {m['licenca']}. {m['pagina']}")
+        linhas.append(f"{mmss(c['ini'])} {tipo} do {m['fonte'].capitalize()}{autor}, {m.get('licenca') or ''}. "
+                      f"{m.get('pagina') or ''}")
     destino = projeto.caminho("creditos.txt")
     destino.write_text("Créditos de fotos e vídeos\n\n" + "\n".join(linhas) + "\n", encoding="utf-8")
     return destino

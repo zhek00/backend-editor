@@ -231,6 +231,18 @@ def _buscador(tmp_path, funcao):
     return b
 
 
+def test_cache_de_busca_pela_metade_nao_derruba_a_producao(tmp_path, monkeypatch):
+    # 11-animais-do-brasil pelo MCP: duas cenas com a mesma busca, e uma leu o cache vazio no meio da gravação da outra
+    import hashlib
+    b = _buscador(tmp_path, lambda tipo, busca: [{"fonte": "pexels", "id": "9"}])
+    b._aguardar = lambda fonte: True
+    codigo = hashlib.sha1("pexels|foto|maned wolf".encode()).hexdigest()[:16]
+    (tmp_path / "midia" / "buscas" / f"{codigo}.json").write_text("", encoding="utf-8")
+    assert b._buscar("pexels", "foto", "maned wolf") == [{"fonte": "pexels", "id": "9"}]
+    assert b._buscar("pexels", "foto", "maned wolf") == [{"fonte": "pexels", "id": "9"}]  # agora vem do cache
+    assert not list((tmp_path / "midia" / "buscas").glob("*.tmp"))
+
+
 def test_queda_passageira_tenta_de_novo(tmp_path, monkeypatch):
     import httpx
     monkeypatch.setattr(midia.time, "sleep", lambda s: None)
