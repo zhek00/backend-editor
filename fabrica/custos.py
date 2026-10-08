@@ -57,6 +57,9 @@ def estimar(projeto) -> dict:
     # a conferência olha cada cena de material real uma vez, com um modelo de visão barato mais o Jev
     cfg_corr = projeto.config.get("corrigir") or {}
     correcao = reais * precos.get("correcao_por_cena", 0.0005) if cfg_corr.get("automatico", True) else 0.0
+    # o Jev diz onde o motion ajuda o roteiro: uma chamada por cena com dado na fala (uma em cada 4 ou 5, uns US$ 0,00005)
+    if (projeto.config.get("motion_ia") or {}).get("ativo", True):
+        correcao += cenas * 0.25 * 0.00005
 
     via_api = (projeto.config.get("claude") or {}).get("via", "assinatura") == "api"
     claude = escolha = 0.0

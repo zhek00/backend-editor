@@ -250,7 +250,7 @@ def _revisar(monkeypatch, criticas, cfg=None):
     """Roda _revisado com o clipe e a crítica trocados por respostas prontas. Devolve (resultado, pedidos de clipe)."""
     pedidos, fila = [], list(criticas)
 
-    def um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=()):
+    def um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=(), direcao=None):
         pedidos.append(list(erros_visuais))
         return {"css": "", "html": "", "js": "", "modelo": "contador", "versao": len(pedidos)}
     monkeypatch.setattr(motion_ia, "_um_clipe", um_clipe)
@@ -342,3 +342,121 @@ def test_som_so_nos_clipes_de_motion(monkeypatch):
     assert motion_ia.sons_na_linha(projeto, cenas, log=lambda *a: None) == [(9.5, "sons-3.wav", -18.0)]
     projeto.config["motion_ia"]["sons"] = False
     assert motion_ia.sons_na_linha(projeto, cenas, log=lambda *a: None) == []
+
+
+# ------------------------------------- direção de arte antes do desenho (PRD Motion AI 2.0, 2026-10-07)
+
+MICO = "O mico-leão-dourado pesa pouco mais de meio quilo."
+
+
+def test_diretor_que_escolhe_a_balanca_para_o_mico_e_corrigido(monkeypatch, tmp_path):
+    # a regra do código vale por cima do diretor: coisa leve nunca vai para a balança
+    from fabrica import corrigir
+    monkeypatch.setattr(corrigir, "_bloco_da_cena_no_mapa", lambda projeto, cena: "o mico-leão-dourado")
+    pedidos = []
+    monkeypatch.setattr(motion_ia, "_perguntar", lambda projeto, etapa, instr, pedido, esquema, log, temperatura=0.4:
+                        pedidos.append(pedido) or {"leitura": "é pesado", "tom": "pesado", "desenho": "balanca",
+                                                   "nao_mostrar": ["haltere"]})
+    projeto = _Projeto(tmp_path, [])
+    cena = {"n": 3, "texto": MICO, "animal": "golden lion tamarin"}
+    direcao = motion_ia.dirigir(projeto, cena, ("", ""), log=lambda *a: None)
+    assert direcao["desenho"] == "tipografia" and "balanca" in direcao["desenhos_proibidos"]
+    assert "meio quilo" in pedidos[0] and "o mico-leão-dourado" in pedidos[0]
+    # guardada na pasta da cena: não pergunta de novo
+    assert motion_ia.dirigir(projeto, cena, ("", ""), log=lambda *a: None) == direcao and len(pedidos) == 1
+    # a fala mudou: pergunta de novo
+    motion_ia.dirigir(projeto, {**cena, "texto": "Pesa uma tonelada."}, ("", ""), log=lambda *a: None)
+    assert len(pedidos) == 2
+
+
+def test_sem_diretor_vale_a_direcao_do_codigo(monkeypatch, tmp_path):
+    from fabrica import corrigir
+    monkeypatch.setattr(corrigir, "_bloco_da_cena_no_mapa", lambda projeto, cena: "")
+
+    def fora(*a, **k):
+        raise RuntimeError("nenhum modelo gratuito atendeu")
+    monkeypatch.setattr(motion_ia, "_perguntar", fora)
+    direcao = motion_ia.dirigir(_Projeto(tmp_path, []), {"n": 3, "texto": MICO}, ("", ""), log=lambda *a: None)
+    assert direcao["desenho"] == "tipografia" and direcao["tom"] == "leve"
+    assert direcao["desenhos_proibidos"] == ["balanca"]
+
+
+def test_foto_dado_sem_foto_nao_vale_como_direcao():
+    direcao = motion_ia._limpar_direcao({"desenho": "foto_dado", "tom": "neutro", "leitura": "x"},
+                                        {"texto": "Pode passar dos 50 quilômetros por hora"}, foto=False)
+    assert direcao["desenho"] == "velocimetro"
+
+
+def test_a_direcao_vai_no_pedido_do_desenho_e_da_revisao():
+    direcao = motion_ia.direcao_pelo_codigo({"texto": MICO})
+    cena = {"n": 3, "texto": MICO}
+    pedido = motion_ia._pedido_modelo(cena, 3.0, ("", ""), [], False, [], direcao)
+    assert "desenhos proibidos: balanca" in pedido and "tom do movimento: leve" in pedido
+    revisao = motion_ia._pedido_critica(cena, 3.0, {"modelo": "tipografia", "dados": {}}, ("", ""), direcao)
+    assert "nunca mostrar: peso de ferro" in revisao
+
+
+def test_com_a_foto_o_peso_do_bicho_vai_para_a_balanca_e_o_tom_segue_o_peso():
+    mico = motion_ia.direcao_pelo_codigo({"texto": MICO}, foto=True)
+    assert mico["desenho"] == "colagem_balanca" and mico["tom"] == "leve" and "balanca" in mico["desenhos_proibidos"]
+    onca = motion_ia.direcao_pelo_codigo({"texto": "Um macho adulto pode passar de cem quilos de puro músculo."},
+                                         foto=True)
+    assert onca["desenho"] == "colagem_balanca" and onca["tom"] == "pesado"
+    # sem foto, a colagem não vale
+    assert motion_ia._limpar_direcao({"desenho": "colagem_balanca", "tom": "leve", "leitura": "x"},
+                                     {"texto": MICO}, foto=False)["desenho"] == "tipografia"
+
+
+def test_recorte_recusado_pela_visao_vai_para_a_moldura_e_fica_guardado(monkeypatch, tmp_path):
+    from fabrica import openrouter_local, recorte
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "foto.jpg").write_bytes(b"foto")
+    opcao = tmp_path / "r1.png"
+    opcao.write_bytes(b"png")
+    monkeypatch.setattr(recorte, "variantes", lambda foto, pasta: [opcao])
+    monkeypatch.setattr(recorte, "folha", lambda opcoes, destino: destino)
+    perguntas = []
+    monkeypatch.setattr(openrouter_local.VISAO, "perguntar", lambda *a, **k: perguntas.append(k) or {"melhor": 0})
+    cena = {"n": 15, "animal": "golden lion tamarin"}
+    assert motion_ia._recorte_da_cena(None, tmp_path, "foto.jpg", cena, log=lambda *a: None) is None
+    assert perguntas[0]["so_gratuitos"] is True
+    assert motion_ia._recorte_da_cena(None, tmp_path, "foto.jpg", cena, log=lambda *a: None) is None
+    assert len(perguntas) == 1  # guardado: não pergunta de novo
+    (tmp_path / "recorte.json").unlink()
+    monkeypatch.setattr(openrouter_local.VISAO, "perguntar", lambda *a, **k: {"melhor": 1})
+    assert motion_ia._recorte_da_cena(None, tmp_path, "foto.jpg", cena, log=lambda *a: None) == "recorte.png"
+    assert (tmp_path / "assets" / "recorte.png").read_bytes() == b"png"
+
+
+# ------------------------------- motion onde ajuda o roteiro, mesmo com a foto aprovada (pedido de 2026-10-07)
+
+def test_cena_com_dado_e_foto_aprovada_e_candidata(tmp_path):
+    cenas = [
+        {"n": 14, "texto": "que cabe na palma da mão e parece carregar uma pequena chama.", "midia": {"arquivo": "midia/0014.jpg"},
+         "conferencia": {"nota": 90}},
+        {"n": 15, "texto": "O mico-leão-dourado pesa pouco mais de meio", "midia": {"arquivo": "midia/0015.jpg"},
+         "conferencia": {"nota": 95}},
+        {"n": 16, "texto": "quilo, tem uma juba alaranjada que brilha ao sol", "midia": {"arquivo": "midia/0016.jpg"},
+         "conferencia": {"nota": 97}},
+        {"n": 17, "texto": "Restavam apenas cerca de duzentos micos na natureza.", "midia": {"arquivo": "midia/0017.jpg"}},
+        {"n": 18, "texto": "Hoje 80 por cento deles vivem em reservas.", "midia": {"arquivo": "midia/0018.jpg"},
+         "motion_reserva": {"midia": None}},  # já foi motion e a pessoa trocou pela foto
+    ]
+    projeto = _Projeto(tmp_path, cenas)
+    # a frase cortada no meio: o clipe fica na cena em que o dado começa, e a seguinte não repete
+    assert [c["n"] for c in motion_ia.uteis(projeto)] == [15, 17]
+    assert motion_ia.pode_ajudar(cenas[1], cenas[2]) == "mais de meio quilo"
+    assert motion_ia.pode_ajudar({"texto": "a caça ilegal levou a espécie à beira da extinção"}) != ""
+    assert motion_ia.pode_ajudar({"texto": "tem uma juba alaranjada que brilha ao sol"}) == ""
+    assert motion_ia.pode_ajudar({"texto": "Em 1898 foi construída a ponte"}) == ""  # ano não é dado
+
+
+def test_motion_desfeito_nao_volta(tmp_path):
+    cena = {"n": 15, "texto": "O mico-leão-dourado pesa pouco mais de meio quilo.",
+            "midia": {"fonte": "motion_ia", "arquivo": "midia/0015_motion.mp4"},
+            "motion_reserva": {"midia": {"arquivo": "midia/0015.jpg"}, "tipo": "foto_real"}}
+    projeto = _Projeto(tmp_path, [cena])
+    assert motion_ia.desfazer(projeto, 15)
+    voltou = projeto.ler_json("cenas.json")["cenas"]
+    assert voltou[0]["midia"]["arquivo"] == "midia/0015.jpg"
+    assert motion_ia.candidatas(projeto, voltou) == []

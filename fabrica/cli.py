@@ -251,6 +251,19 @@ def etapa_imagens(p, a, aprovado=False):
     log(f"  revisão em {imagens.gerar(p, log=log, direto=getattr(a, 'direto', False))}")
 
 
+def etapa_motion(p, a, aprovado=False):
+    """Onde a fala traz um dado e o Jev diz que o motion ajuda o roteiro, a cena vira clipe de motion, mesmo com a
+    foto aprovada (pedido do usuário em 2026-10-07). Gratuito e sem bloquear: falhou, a cena fica com a foto."""
+    from . import motion_ia
+    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json") or not motion_ia.ligado(p):
+        return
+    log("Motion onde ajuda o roteiro")
+    try:
+        motion_ia.nas_uteis(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro}")
+
+
 def etapa_animacoes(p, a, aprovado=False):
     """Diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames). Gratuito e sem bloquear:
     a cena que não der para animar fica com a foto."""
@@ -414,7 +427,8 @@ def cmd_tudo(a):
         a._dentro_do_tudo = True  # no tudo, as etapas seguintes já completam as cenas
         etapa_narrar(p, a, aprovado=True)
         pronto.result()
-    for etapa in (etapa_cenas, etapa_midia, etapa_corrigir, etapa_imagens, etapa_efeitos, etapa_animacoes, etapa_trilha):
+    for etapa in (etapa_cenas, etapa_midia, etapa_corrigir, etapa_imagens, etapa_motion, etapa_efeitos,
+                  etapa_animacoes, etapa_trilha):
         etapa(p, a, aprovado=True)
     if render.com_avatar(p, a.sem_avatar):
         faltando = avatar.faltando(p) if avatar.modo(p.perfil) == "trechos" else avatar.partes_faltando(p)
@@ -472,7 +486,7 @@ def cmd_motion(a):
         raise SystemExit("O motion IA está desligado (motion_ia.ativo no config.yaml, ou o projeto é offline).")
     cands = motion_ia.candidatas_do_projeto(p, set(a.cenas) if a.cenas else None)
     if not cands:
-        log("Nenhuma cena candidata: nenhuma está abaixo da nota mínima nem esperando imagem de IA.")
+        log("Nenhuma cena candidata: nenhuma tem dado na fala, está abaixo da nota mínima ou espera imagem de IA.")
         return
     julgar = [c for c in motion_ia.a_julgar(cands) if not c.get("personagem")]
     log(f"{len(cands)} cena(s) candidatas: {', '.join(str(c['n']) for c in cands)}")

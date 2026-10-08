@@ -459,6 +459,16 @@ def _esteira(nome: str, task_id: str) -> None:
             f"Os bancos de imagens não têm nenhuma foto destes assuntos: {lista}. Suba uma foto dessas cenas no editor "
             "(ou ligue a IA no config.yaml) e clique em Retomar.")
 
+    # PASSO 6b: onde a fala traz um dado e o Jev diz que o motion ajuda o roteiro, a cena vira clipe de motion mesmo
+    # com a foto aprovada (pedido do usuário em 2026-10-07). Gratuito e sem bloquear: falhou, a cena fica com a foto
+    from . import motion_ia
+    if motion_ia.ligado(p):
+        _atualizar(task_id, etapa="motion", progresso_pct=96, mensagem="Procurando onde o motion ajuda o roteiro...")
+        try:
+            motion_ia.nas_uteis(p, log=log_w)
+        except (Exception, SystemExit) as erro_motion:
+            log_w(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro_motion}")
+
     # PASSO 7: diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames, gratuito). É uma
     # melhoria: a cena que não der para animar continua com a foto, e uma falha aqui nunca para o vídeo
     if animacoes.ligada(p):

@@ -16,7 +16,7 @@ import math
 import re
 import unicodedata
 
-VERSAO = 1  # suba quando mudar o desenho de algum modelo
+VERSAO = 2  # suba quando mudar o desenho de algum modelo
 
 CINZA = "#E4E1D8"
 TINTA = "#1A1A1A"
@@ -618,14 +618,201 @@ def foto_dado(d, dur, foto=None):
     return {"css": css, "html": html, "js": js}
 
 
+# o papel recortado da tipografia: a borda rasgada é fixa (o vídeo sai igual sempre), em porcentagem da caixa
+_RASGO_CIMA = (0, 2.2, 0.6, 3.1, 1.2, 0.3, 2.6, 1.0, 3.4, 0.8, 1.9, 0.2, 2.8, 1.4, 0.5, 2.4, 3.2, 0.9, 1.7, 0.4, 2.1)
+_RASGO_BAIXO = (99.2, 97.1, 98.6, 96.8, 99.5, 97.9, 96.6, 98.9, 97.4, 99.7, 96.9, 98.3, 97.6, 99.1, 96.7, 98.5,
+                97.2, 99.4, 97.8, 96.5, 98.8)
+TONS = ("leve", "pesado", "neutro")
+
+# o grão de papel por cima do fundo creme: o filtro é fixo (seed), o vídeo sai igual sempre
+_TEXTURA_CSS = "#m-textura { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: 0.08; }"
+_TEXTURA_HTML = """
+<svg id="m-textura" viewBox="0 0 1920 1080"><filter id="m-grao"><feTurbulence type="fractalNoise" baseFrequency="0.85"
+  numOctaves="2" seed="7"/><feColorMatrix type="saturate" values="0"/></filter>
+  <rect width="1920" height="1080" filter="url(#m-grao)"/></svg>"""
+
+
+def _papel_rasgado() -> str:
+    passo = 100 / (len(_RASGO_CIMA) - 1)
+    cima = [f"{i * passo:.1f}% {y}%" for i, y in enumerate(_RASGO_CIMA)]
+    baixo = [f"{100 - i * passo:.1f}% {y}%" for i, y in enumerate(_RASGO_BAIXO)]
+    return "polygon(" + ", ".join(cima + baixo) + ")"
+
+
+def tipografia(d, dur, foto=None):
+    """Tipografia cinética editorial: o dado escrito grande em serifa, letra por letra, num recorte de papel sobre uma
+    textura de papel. O movimento diz o tom que a direção de arte escolheu: "leve" pousa e flutua (o meio quilo de um
+    mico-leão), "pesado" despenca e assenta, "neutro" entra com a mola. Nenhum objeto desenhado: é para o dado que um
+    desenho literal estragaria (a balança com o peso de ferro para um bicho de meio quilo, PRD Motion AI 2.0)."""
+    t = _tempos(dur)
+    tom = d.get("tom") if d.get("tom") in TONS else "neutro"
+    texto = d["texto"].strip()
+    css_topo, html_topo = _topo(d)
+    px = _tam(texto, [(8, 230), (12, 190), (18, 150), (26, 112), (999, 92)])
+    destaque = (d.get("destaque") or "").strip().lower()
+    palavras = []
+    for palavra in texto.split():
+        limpa = re.sub(r"[^\w-]", "", palavra.lower())
+        cor = ' style="color: var(--laranja)"' if destaque and limpa == destaque else ""
+        letras = "".join(f'<span class="m-l">{esc(letra)}</span>' for letra in palavra)
+        palavras.append(f'<span class="m-pal"{cor}>{letras}</span>')
+    prefixo = (d.get("prefixo") or "").strip()
+    css = css_topo + f"""
+{_TEXTURA_CSS}
+#m-centro {{ position: absolute; left: 140px; top: {200 if html_topo else 140}px; width: 1640px;
+            height: {620 if html_topo else 680}px; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: 28px; }}
+#m-prefixo {{ font-size: 44px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: #6B6860; }}
+#m-sombra {{ filter: drop-shadow(0 14px 22px rgba(60, 50, 30, 0.14)); }}
+#m-papel {{ background: #FFFDF7; clip-path: {_papel_rasgado()}; padding: 56px 96px 92px; max-width: 1640px;
+           text-align: center; }}
+#m-valor {{ position: relative; display: inline-block; font-family: "Titulo", Georgia, serif; font-style: italic;
+           font-weight: 700; font-size: {px}px; line-height: 1.05; color: {TINTA}; }}
+#m-valor .m-pal {{ display: inline-block; white-space: nowrap; margin: 0 0.12em; }}
+#m-valor .m-l {{ display: inline-block; }}
+#m-sub {{ position: absolute; left: 4%; bottom: -0.34em; width: 92%; height: 0.2em; overflow: visible; }}"""
+    html = html_topo + _TEXTURA_HTML + f"""
+<div id="m-centro">
+  {f'<div id="m-prefixo">{esc(prefixo)}</div>' if prefixo else ""}
+  <div id="m-sombra"><div id="m-papel"><span id="m-valor">{"".join(palavras)}<svg id="m-sub" viewBox="0 0 400 24"
+    preserveAspectRatio="none"><path id="m-traco" d="M 4 15 C 90 5, 260 5, 396 13" fill="none" stroke="var(--laranja)"
+    stroke-width="6" stroke-linecap="round"/></svg></span></div></div>
+</div>"""
+    js = [_js_topo(t(0.0)) if html_topo else "",
+          'const m_t = document.querySelector("#m-traco");',
+          'if (m_t) { const L = m_t.getTotalLength(); m_t.style.strokeDasharray = L + " " + L; m_t.style.strokeDashoffset = L; }']
+    if prefixo:
+        js.append(_entra("#m-prefixo", t(0.04), de="{opacity: 0, y: 20}", para="{opacity: 1, y: 0}", dur=0.6,
+                         ease="power2.out"))
+    letras = max(1, len(texto.replace(" ", "")))
+    if tom == "leve":
+        # pousa como uma folha: o papel desce girando pouco, as letras sobem devagar e o conjunto segue flutuando
+        js += [_entra("#m-papel", t(0.08), de="{opacity: 0, y: -50, rotation: 5}",
+                      para="{opacity: 1, y: 0, rotation: -1.5}", dur=1.1, ease="power2.out"),
+               _entra("#m-valor .m-l", t(0.2), de="{opacity: 0, y: 34}", para="{opacity: 1, y: 0}", dur=0.8,
+                      ease="power2.out", extra=f", stagger: {min(0.05, 0.6 / letras):.3f}"),
+               f'tl.to("#m-sombra", {{ y: -16, duration: {max(dur - t(0.1), 0.5):.2f}, ease: "sine.inOut" }}, {t(0.1)});']
+    elif tom == "pesado":
+        # despenca e assenta: cada letra cai (de dentro do papel, que recorta o que sai dele), o papel dá um tranco
+        js += [_entra("#m-papel", t(0.06), de="{opacity: 0, scale: 1.08, rotation: 0}",
+                      para="{opacity: 1, scale: 1, rotation: -1.5}", dur=0.45, ease="power3.out"),
+               _entra("#m-valor .m-l", t(0.16), de="{opacity: 0, y: -44}", para="{opacity: 1, y: 0}", dur=0.4,
+                      ease="power4.in", extra=f", stagger: {min(0.05, 0.5 / letras):.3f}"),
+               f'tl.fromTo("#m-sombra", {{ y: 0 }}, {{ y: 8, duration: 0.12, ease: "power2.out", yoyo: true, '
+               f'repeat: 1 }}, {t(0.62)});']
+    else:
+        js += [_entra("#m-papel", t(0.06), de="{opacity: 0, y: 40, scale: 0.94, rotation: 2}",
+                      para="{opacity: 1, y: 0, scale: 1, rotation: -1.5}", dur=0.7),
+               _entra("#m-valor .m-l", t(0.18), de="{opacity: 0, y: 40}", para="{opacity: 1, y: 0}", dur=0.55,
+                      extra=f", stagger: {min(0.04, 0.5 / letras):.3f}")]
+    js.append(f'if (m_t) tl.to("#m-traco", {{ strokeDashoffset: 0, duration: 0.7, ease: "power3.out" }}, {t(0.7)});')
+    return {"css": css, "html": html, "js": "\n".join(x for x in js if x)}
+
+
+def colagem_balanca(d, dur, foto=None):
+    """Peso com a foto do animal, em colagem estilo Vox: o próprio bicho recortado (figurinha de borda branca) pousa
+    numa balança de cozinha, o prato afunda, o ponteiro gira até o valor e uma etiqueta presa por um fio mostra o
+    número contando. Pedido do usuário em 2026-10-07 ("ele em cima de uma balança mostrando 0,5 kg"). foto: o
+    recorte aprovado (recorte.png) ou, com dados["moldura"], a foto inteira numa moldura de papel rasgado. O tom muda
+    a chegada: "leve" pousa devagar, "pesado" despenca e o prato afunda fundo, "neutro" entra com a mola."""
+    tom = d.get("tom") if d.get("tom") in TONS else "neutro"
+    valor = d["valor"]
+    css_topo, html_topo = _topo(d)
+    cx, cy = 760, 704
+    angulo = round(-135 + 270 * min(valor / teto(valor), 1.0), 1)
+    marcas = []
+    for i in range(11):
+        a = math.radians(-135 + 27 * i)
+        r1 = 50 if i % 5 == 0 else 56
+        marcas.append(f'<line x1="{cx + r1 * math.sin(a):.1f}" y1="{cy - r1 * math.cos(a):.1f}" '
+                      f'x2="{cx + 64 * math.sin(a):.1f}" y2="{cy - 64 * math.cos(a):.1f}" stroke="{TINTA}" '
+                      f'stroke-width="{5 if i % 5 == 0 else 3}" stroke-linecap="round"/>')
+    topo_bicho = 210 if html_topo else 130
+    if d.get("moldura"):
+        figura = (f"width: 470px; height: 340px; background: url(\"assets/{foto}\") center / cover no-repeat; "
+                  f"border: 14px solid #FFFDF7; clip-path: {_papel_rasgado()};")
+    else:
+        figura = f"width: 100%; height: 100%; background: url(\"assets/{foto}\") center bottom / contain no-repeat;"
+    casas = 0 if abs(valor - round(valor)) < 1e-9 else 1
+    prefixo = (d.get("prefixo") or "").strip()
+    css = css_topo + f"""
+{_TEXTURA_CSS}
+#m-balanca {{ position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }}
+#m-bicho-caixa {{ position: absolute; left: 440px; top: {topo_bicho}px; width: 640px; height: {558 - topo_bicho}px;
+                 display: flex; align-items: flex-end; justify-content: center; }}
+#m-bicho {{ {figura} filter: drop-shadow(0 16px 18px rgba(40, 30, 20, 0.22)); }}
+#m-dado {{ position: absolute; left: 1190px; top: 300px; width: 500px; height: 360px; }}
+#m-dado em {{ font-style: normal; font-size: 40px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+             color: #6B6860; }}
+#m-dado .m-num {{ font-size: {_tam(fmt(valor), [(3, 190), (5, 160), (99, 130)])}px; }}
+#m-dado .m-rot {{ font-size: 56px; }}
+#m-fio-linha {{ stroke: {TINTA}; stroke-width: 3; }}"""
+    html = html_topo + _TEXTURA_HTML + f"""
+<svg id="m-balanca" viewBox="0 0 1920 1080">
+  <ellipse id="m-chao" cx="{cx}" cy="812" rx="270" ry="18" fill="rgba(26,26,26,0.10)"/>
+  <path class="m-linha" id="m-fio-linha" d="M 1190 480 C 1110 480, 1070 700, 992 706"/>
+  <g id="m-corpo">
+    <path d="M 590 606 L 930 606 Q 948 606 952 624 L 990 784 Q 994 802 976 802 L 544 802 Q 526 802 530 784 L 568 624
+             Q 572 606 590 606 Z" fill="var(--laranja)" stroke="{TINTA}" stroke-width="6" stroke-linejoin="round"/>
+    <circle cx="{cx}" cy="{cy}" r="74" fill="#FFFDF7" stroke="{TINTA}" stroke-width="6"/>
+    {"".join(marcas)}
+    <g id="m-ponteiro"><line x1="{cx}" y1="{cy + 10}" x2="{cx}" y2="{cy - 58}" stroke="var(--azul)" stroke-width="6"
+       stroke-linecap="round"/></g>
+    <circle cx="{cx}" cy="{cy}" r="10" fill="{TINTA}"/>
+  </g>
+  <g id="m-bandeja">
+    <rect x="742" y="576" width="36" height="32" fill="{TINTA}"/>
+    <rect x="500" y="554" width="520" height="26" rx="13" fill="#2B2B2B"/>
+  </g>
+</svg>
+<div id="m-bicho-caixa"><div id="m-bicho"></div></div>
+<div id="m-dado" class="m-card">{f"<em>{esc(prefixo)}</em>" if prefixo else ""}<div class="m-num"><span id="m-valor">0</span></div><div class="m-rot">{esc(d["unidade"])}</div></div>"""
+    k = min(1.0, max(0.55, (dur - 0.6) / 2.6))  # cena curta: tudo mais depressa, nada fica para depois do corte
+    inicio = round(0.15 * k, 3)
+    if tom == "leve":
+        queda = ('{opacity: 0, y: -170, rotation: 6}', '{opacity: 1, y: 0, rotation: -3', 0.95, "power2.out", 0.8)
+        afunda, mola = 6, "back.out(1.4)"
+    elif tom == "pesado":
+        queda = ('{opacity: 0, y: -560, rotation: 0}', '{opacity: 1, y: 0, rotation: -2', 0.75, "bounce.out", 0.27)
+        afunda, mola = 18, "back.out(2.6)"
+    else:
+        queda = ('{opacity: 0, y: -220, rotation: 4}', '{opacity: 1, y: 0, rotation: -3', 0.7, "back.out(1.7)", 0.5)
+        afunda, mola = 10, "back.out(1.7)"
+    de, para, duracao, curva, toque = queda
+    pousa = round(inicio + toque * k, 3)
+    js = [_js_topo(0.0) if html_topo else "",
+          _entra("#m-corpo, #m-bandeja", 0.0, de="{opacity: 0, y: 30}", para="{opacity: 1, y: 0}", dur=0.5,
+                 ease="power2.out"),
+          f'tl.fromTo("#m-chao", {{ scaleX: 0.4, opacity: 0, svgOrigin: "{cx} 812" }}, {{ scaleX: 1, opacity: 1, '
+          f'svgOrigin: "{cx} 812", duration: 0.5, ease: "power2.out" }}, 0);',
+          f'tl.fromTo("#m-bicho", {de}, {para}, duration: {round(duracao * k, 3)}, ease: "{curva}" }}, {inicio});',
+          f'tl.fromTo("#m-bandeja, #m-bicho-caixa", {{ y: 0 }}, {{ y: {afunda}, duration: 0.16, ease: "power2.out", '
+          f'yoyo: true, repeat: 1 }}, {pousa});',
+          f'tl.fromTo("#m-ponteiro", {{ rotation: -135, svgOrigin: "{cx} {cy}" }}, {{ rotation: {angulo}, '
+          f'svgOrigin: "{cx} {cy}", duration: {round(0.8 * k, 3)}, ease: "{mola}" }}, {pousa});',
+          f'tl.to("#m-fio-linha", {{ strokeDashoffset: 0, duration: {round(0.5 * k, 3)}, ease: "power3.out" }}, '
+          f'{round(pousa + 0.1 * k, 3)});',
+          _entra("#m-dado", round(pousa + 0.25 * k, 3), dur=round(0.6 * k, 3)),
+          _conta("#m-valor", valor, round(pousa + 0.3 * k, 3), round(0.9 * k, 3), casas)]
+    return {"css": css, "html": html, "js": "\n".join(x for x in js if x)}
+
+
 MODELOS = {"velocimetro": velocimetro, "balanca": balanca, "regua": regua, "contador": contador,
            "porcentagem": porcentagem, "comparacao": comparacao, "tendencia": tendencia, "fluxo": fluxo,
-           "ranking": ranking, "frase": frase, "foto_dado": foto_dado}
+           "ranking": ranking, "frase": frase, "foto_dado": foto_dado, "tipografia": tipografia,
+           "colagem_balanca": colagem_balanca}
+COM_FOTO = ("foto_dado", "colagem_balanca")  # os desenhos que só existem com a foto da cena
 
 CATALOGO = """MODELOS (escolha o que DEMONSTRA o dado da fala; cada um tem um desenho próprio):
 - velocimetro: velocidade ("50 quilômetros por hora"). Campos: valor, unidade ("km/h"), prefixo ("mais de", ou vazio).
-- balanca: peso ("mais de uma tonelada"). Um peso de ferro cai na balança. Campos: valor, unidade ("tonelada"),
-  prefixo, abreviacao (o que vai escrito no peso, curto: "1 t", "200 kg").
+- balanca: peso GRANDE de coisa pesada ("mais de uma tonelada", um elefante). Um peso de ferro cai na balança.
+  Campos: valor, unidade ("tonelada"), prefixo, abreviacao (o que vai escrito no peso, curto: "1 t", "200 kg").
+  NUNCA para coisa pequena ou leve (um mico de meio quilo, um beija-flor de gramas). Com a foto da cena, use
+  colagem_balanca.
+- colagem_balanca: peso de um ANIMAL (ou coisa) quando a cena TEM FOTO dele. O próprio bicho, recortado como
+  figurinha, pousa numa balança de cozinha; o ponteiro gira e uma etiqueta mostra o número. Serve para leve e para
+  pesado (o tom muda a chegada). Campos: valor (meio quilo = 0.5), unidade curta ("kg", "t", "g"), prefixo
+  ("pouco mais de", "até"), tom ("leve", "pesado" ou "neutro"), topo, destaque.
 - regua: comprimento, altura ou tamanho ("um chifre de mais de um metro"). A coisa cresce numa régua. Campos: valor,
   unidade ("metro"), prefixo, forma: "cone" para chifre, presa, dente, garra ou bico; "barra" para o resto.
 - contador: quantidade de pessoas, animais ou coisas ("135 pessoas", "cerca de 35 pessoas"). Um ícone por unidade
@@ -640,6 +827,11 @@ CATALOGO = """MODELOS (escolha o que DEMONSTRA o dado da fala; cada um tem um de
   posição, da fala).
 - frase: uma ideia, conclusão ou virada sem número. Campos: frase (até 12 palavras da fala), destaque (uma palavra
   dela, a mais forte).
+- tipografia: o dado escrito grande em serifa, letra por letra, num recorte de papel, sem nenhum objeto desenhado.
+  Para quando um desenho literal contradiz a cena (peso de ferro para um bicho leve) ou quando o que importa é a
+  qualidade do dado (leveza, pequenez, raridade). Campos: texto (o dado com as palavras da fala, até 6 palavras:
+  "meio quilo", "três gramas"), prefixo ("pouco mais de", "só", "menos de"), tom ("leve", "pesado" ou "neutro": o
+  movimento das letras), topo, destaque (uma palavra do texto). Sem foto, é o desenho do peso de coisa leve.
 - foto_dado: SÓ se o pedido disser que a cena tem foto e nenhum desenho acima servir. A foto da cena ao lado do dado.
   Campos: valor, unidade, prefixo (ou frase).
 Todos aceitam topo: uma frase curta da fala que vai no alto da tela (até 7 palavras), e destaque: uma palavra do topo.
@@ -683,20 +875,51 @@ _INDICADO = [(r"por hora|km/h|por segundo", "velocimetro"), (r"tonelada|quilo|k
              (r"pessoas|v[íi]timas|mortes|habitantes|trabalhadores|indiv[íi]duos|animais|filhotes", "contador")]
 
 
-def indicado(dado) -> str:
-    """O modelo que o dado da fala pede ("50 quilômetros por hora" pede o velocímetro), ou "" se nenhum."""
+# coisa leve ou pequena: a balança com o peso de ferro estraga a cena (PRD Motion AI 2.0, "pesa pouco mais de meio
+# quilo", o mico-leão-dourado). Antes a unidade dizia "peso" e o código obrigava a balança.
+_LEVE = re.compile(r"\b(?:leve|levinh|lev[íi]ssim|pouco mais de|apenas|s[óo]\b|pequen|min[úu]scul|mi[úu]d|cabem? na|"
+                   r"palma da m[ãa]o|pena\b|meio quilo|gramas?\b|mil[íi]gramas?)", re.I)
+_KG = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:quilos?|kg)\b", re.I)
+
+
+def leve(dado, fala="") -> bool:
+    """O peso da fala é de coisa leve ou pequena (gramas, meio quilo, menos de 10 kg, "só", "pouco mais de")."""
+    if re.search(r"tonelada", dado or "", re.I):
+        return False
+    texto = f"{dado or ''} {fala or ''}"
+    kg = _KG.search(texto)
+    if kg:
+        return float(kg.group(1).replace(",", ".")) < 10
+    return bool(_LEVE.search(texto))
+
+
+def pesado(dado, fala="") -> bool:
+    """O peso da fala é de coisa pesada (tonelada, cem quilos ou mais): a chegada na balança despenca."""
+    texto = f"{dado or ''} {fala or ''}"
+    kg = _KG.search(texto)
+    return bool(re.search(r"tonelada|\bcem\b|\bcentenas?\b|\bduzent|\btrezent|\bquinhent|\bmil\b", dado or "", re.I)
+                or (kg and float(kg.group(1).replace(",", ".")) >= 100))
+
+
+def indicado(dado, fala="", tem_foto=False) -> str:
+    """O modelo que o dado da fala pede ("50 quilômetros por hora" pede o velocímetro), ou "" se nenhum. Peso com a
+    foto da cena pede a colagem do bicho na balança; sem foto, coisa leve pede a tipografia, nunca o peso de ferro."""
     for padrao, modelo in _INDICADO:
         if re.search(padrao, dado or "", re.I):
-            return modelo
+            if modelo == "balanca" and tem_foto:
+                return "colagem_balanca"
+            return "tipografia" if modelo == "balanca" and leve(dado, fala) else modelo
     return ""
 
 
 _QUANTIFICADOR = re.compile(r"^(mais de|menos de|cerca de|quase|até|ate|aproximadamente|perto de|acima de|abaixo de|"
-                            r"uns|umas|em torno de|por volta de)$")
+                            r"uns|umas|em torno de|por volta de|pouco mais de|pouco menos de|só|so|apenas)$")
 
 
-def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None, sugerido=""):
+def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None, sugerido="", proibidos=()):
     """Os dados limpos para o modelo, e a lista do que está errado (vazia quando está tudo certo).
+
+    sugerido: o desenho que a direção de arte (ou o dado da fala) indica; proibidos: os desenhos que ela proíbe.
 
     fala: o texto de onde as palavras podem sair (a cena e as vizinhas). fala_da_cena: só a desta cena, de onde sai o
     número (na cena 12 do natureza-teste-1min, o "50" da vizinha fazia o "1 metro" do chifre ser recusado)."""
@@ -704,17 +927,20 @@ def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None, sugerido=""
     erros = []
     if modelo not in MODELOS:
         return None, [f"modelo desconhecido: {modelo}. Use um destes: {', '.join(MODELOS)}"]
-    if sugerido and modelo in ("foto_dado", "frase"):
+    if modelo in proibidos:
+        return None, [f"a direção de arte proibiu o desenho {modelo} nesta cena: use "
+                      + (sugerido if sugerido and sugerido not in proibidos else "outro")]
+    if sugerido and modelo != sugerido and modelo in ("foto_dado", "frase"):
         return None, [f"a fala traz um dado que o modelo {sugerido} demonstra: use o modelo {sugerido}"]
     d = {k: v for k, v in (dados or {}).items() if v not in (None, "", [])}
-    for campo in ("topo", "destaque", "prefixo", "unidade", "abreviacao", "nome", "frase", "inicio", "fim"):
+    for campo in ("topo", "destaque", "prefixo", "unidade", "abreviacao", "nome", "frase", "inicio", "fim", "texto"):
         if campo in d:
             d[campo] = " ".join(str(d[campo]).split())[:80]
     if d.get("prefixo") and not _QUANTIFICADOR.match(d["prefixo"].lower()):
         d.pop("prefixo")  # só "mais de", "cerca de", "quase"...: no velocímetro, "passar dos" repetia o topo
     if d.get("topo") and len(d["topo"].split()) > 8:
         d["topo"] = " ".join(d["topo"].split()[:8])
-    precisa_valor = modelo in ("velocimetro", "balanca", "regua", "contador", "porcentagem")
+    precisa_valor = modelo in ("velocimetro", "balanca", "regua", "contador", "porcentagem", "colagem_balanca")
     if precisa_valor or (modelo == "foto_dado" and "valor" in d):
         d["valor"] = _numero(d.get("valor"))
         if d["valor"] is None or d["valor"] <= 0:
@@ -750,15 +976,25 @@ def conferir(modelo, dados, fala, tem_foto=False, fala_da_cena=None, sugerido=""
             erros.append("frase precisa do campo frase")
         elif len(d["frase"].split()) > 14:
             erros.append("a frase passou de 14 palavras: encurte, com as palavras da fala")
+    if modelo == "tipografia":
+        if not d.get("texto"):
+            erros.append('tipografia precisa do campo texto (o dado com as palavras da fala: "meio quilo")')
+        elif len(d["texto"].split()) > 6:
+            erros.append("o texto da tipografia passou de 6 palavras: só o dado, com as palavras da fala")
+        elif any(n not in numeros for n in _numeros_da_fala(d["texto"])):
+            erros.append("o texto da tipografia tem um número que a fala não diz")
+    if modelo in ("tipografia", "colagem_balanca"):
+        tom = str(d.get("tom") or "").lower()
+        d["tom"] = tom if tom in TONS else "neutro"
     if modelo == "tendencia":
         d["direcao"] = "sobe" if str(d.get("direcao", "")).lower().startswith("s") else "desce"
-    if modelo == "foto_dado" and not tem_foto:
-        erros.append("foto_dado só vale quando a cena tem foto: escolha um desenho")
+    if modelo in COM_FOTO and not tem_foto:
+        erros.append(f"{modelo} só vale quando a cena tem foto: escolha um desenho")
     if modelo in ("regua",):
         d["forma"] = "cone" if d.get("forma") == "cone" else "barra"
     if modelo == "contador":
         d["forma"] = "pessoa" if d.get("forma") == "pessoa" else "ponto"
-    textos = [d.get(k) or "" for k in ("topo", "nome", "frase", "inicio", "fim")]
+    textos = [d.get(k) or "" for k in ("topo", "nome", "frase", "inicio", "fim", "texto")]
     textos += [d.get("unidade") or ""] if modelo not in ("velocimetro",) else []
     textos += d.get("etapas") or []
     textos += [i["rotulo"] for i in d.get("itens") or []]

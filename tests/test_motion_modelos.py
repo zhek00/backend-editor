@@ -22,6 +22,8 @@ EXEMPLOS = {
     "fluxo": ("a caça ilegal levou a espécie à beira da extinção.", {"etapas": ["caça ilegal", "beira da extinção"]}),
     "ranking": ("Em oitavo lugar está o rinoceronte-negro.", {"posicao": 8, "total": 8, "nome": "rinoceronte-negro"}),
     "frase": ("A ironia é que ele mesmo vive em perigo,", {"frase": "ele mesmo vive em perigo", "destaque": "perigo"}),
+    "tipografia": ("O mico-leão-dourado pesa pouco mais de meio quilo.",
+                   {"texto": "meio quilo", "prefixo": "pouco mais de", "tom": "leve"}),
 }
 
 
@@ -90,3 +92,65 @@ def test_o_dado_indica_o_desenho():
     _, erros = motion_modelos.conferir("foto_dado", {"valor": 50, "unidade": "km/h"}, FALA_50, tem_foto=True,
                                        sugerido="velocimetro")
     assert erros and "velocimetro" in erros[0]
+
+
+# ------------------------------------------- PRD Motion AI 2.0 (2026-10-07): o sentido manda, não a unidade
+
+MICO = "O mico-leão-dourado pesa pouco mais de meio quilo."
+
+
+def test_peso_de_coisa_leve_nunca_vai_para_a_balanca():
+    # "pesa pouco mais de meio quilo" achava "quilo" e o código obrigava a balança com o peso de ferro
+    assert motion_ia.dado_na_fala(MICO) == "mais de meio quilo"
+    assert motion_modelos.indicado("meio quilo", MICO) == "tipografia"
+    assert motion_modelos.indicado("300 gramas", "o beija-flor pesa 300 gramas") == "tipografia"
+    assert motion_modelos.indicado("3 quilos", "pesa 3 quilos") == "tipografia"
+    assert motion_modelos.indicado("200 quilos", "um leão pode pesar 200 quilos") == "balanca"
+    assert motion_modelos.indicado("mais de uma tonelada", "mais de uma tonelada e enxerga muito mal.") == "balanca"
+
+
+def test_desenho_proibido_pela_direcao_volta():
+    _, erros = motion_modelos.conferir("balanca", {"valor": 1, "unidade": "quilo"}, MICO,
+                                       sugerido="tipografia", proibidos=("balanca",))
+    assert erros and "proibiu" in erros[0] and "tipografia" in erros[0]
+
+
+def test_frase_vale_quando_a_direcao_indica_frase():
+    fala, dados = EXEMPLOS["frase"]
+    _, erros = motion_modelos.conferir("frase", dados, fala, sugerido="frase")
+    assert erros == []
+
+
+def test_tipografia_so_com_palavras_e_numeros_da_fala():
+    _, erros = motion_modelos.conferir("tipografia", {"texto": "levíssimo"}, MICO)
+    assert any("levissimo" in e for e in erros)
+    _, erros = motion_modelos.conferir("tipografia", {"texto": "600 gramas"}, MICO)
+    assert erros
+    d, erros = motion_modelos.conferir("tipografia", {"texto": "meio quilo", "tom": "flutuante"}, MICO)
+    assert erros == [] and d["tom"] == "neutro"
+
+
+def test_o_tom_muda_o_movimento_da_tipografia():
+    d = motion_modelos.conferir("tipografia", {"texto": "meio quilo"}, MICO)[0]
+    leve = motion_modelos.tipografia({**d, "tom": "leve"}, 3.4)["js"]
+    pesado = motion_modelos.tipografia({**d, "tom": "pesado"}, 3.4)["js"]
+    assert "power4.in" in pesado and "power4.in" not in leve
+    assert "sine.inOut" in leve  # flutua depois de pousar
+    assert "back.out" not in leve  # nada de mola para coisa leve
+
+
+def test_peso_com_a_foto_do_bicho_vira_a_colagem_na_balanca():
+    # pedido do usuário em 2026-10-07: "ele em cima de uma balança mostrando 0,5 kg, estilo colagem Vox"
+    assert motion_modelos.indicado("mais de meio quilo", MICO, tem_foto=True) == "colagem_balanca"
+    assert motion_modelos.indicado("mais de meio quilo", MICO, tem_foto=False) == "tipografia"
+    _, erros = motion_modelos.conferir("colagem_balanca", {"valor": 0.5, "unidade": "kg"}, MICO, tem_foto=False)
+    assert erros and "foto" in erros[0]
+    d, erros = motion_modelos.conferir("colagem_balanca", {"valor": 0.5, "unidade": "kg", "prefixo": "pouco mais de",
+                                                           "tom": "leve"}, MICO, tem_foto=True)
+    assert erros == [] and d["prefixo"] == "pouco mais de"
+    partes = motion_modelos.partes("colagem_balanca", d, 3.6, "recorte.png")
+    assert 'url("assets/recorte.png")' in partes["html"] + partes["css"] and "bounce" not in partes["js"]
+    pesado = motion_modelos.partes("colagem_balanca", {**d, "valor": 100, "tom": "pesado"}, 3.6, "recorte.png")
+    assert "bounce.out" in pesado["js"]
+    moldura = motion_modelos.partes("colagem_balanca", {**d, "moldura": True}, 3.6, "foto.jpg")
+    assert "clip-path" in moldura["css"] and "cover" in moldura["css"]

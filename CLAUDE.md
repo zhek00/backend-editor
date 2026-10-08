@@ -163,14 +163,25 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   criação, a conferência, o diretor e o refazer; a nota baixa entra pelo fim do `corrigir` (`_motion_com_nota_baixa`,
   marca `motion_so`). No terminal, `fabrica motion NOME [--cenas N...] [--aplicar] [--sim]` mostra a nota do Jev de
   cada candidata (com o custo antes, uns US$ 0,00007 por cena) e, com `--aplicar`, faz os clipes.
+- **Também onde ajuda o roteiro, com a foto aprovada** (`motion_ia.nas_uteis`, pedido do usuário em 2026-10-07: "o
+  motion deve entrar onde ele realmente vai ser útil para o roteiro, independente se a cena foi reprovada ou não").
+  Antes a cena com foto boa nunca virava motion, e a balança com o mico, que precisa da foto boa, nunca seria usada.
+  Agora a cena cuja fala traz um dado (`pode_ajudar`: número com o que mede, quantidade de qualquer coisa, porcentagem,
+  ranking, comparação, causa e consequência; ano e código de estrada não contam) também é candidata, e o mesmo Jev
+  decide pela nota de utilidade. A frase cortada no meio ("pesa pouco mais de meio" | "quilo, tem uma juba") é lida
+  com o começo da cena seguinte, e o clipe fica na cena em que o dado começa. No 11-animais-do-brasil, 24 de 390
+  cenas foram para o Jev. Roda depois das imagens de IA e antes das animações (passo 6b da criação no site,
+  `etapa_motion` no `tudo`, e o `fabrica motion`). A foto fica em `motion_reserva`; a cena que já foi motion e a
+  pessoa trocou pela foto, ou que foi desfeita (`desfazer` marca `motion_ia_falhou`), não volta a ser motion.
 - **Quem faz:** só os modelos gratuitos (`OPENROUTER_FREE_MODELS` do `.env`, `motion_ia.modelos`, ou os `:free` e
   `stealth/` da cadeia de principais; modelo pago numa dessas listas é ignorado), em cascata, com no máximo 15 pedidos
   por minuto. Sem Groq (saiu da fábrica).
 - **Modelos de demonstração** (`fabrica/motion_modelos.py`, pedido do usuário em 2026-10-05: os clipes saíam todos
   iguais, a foto num card e o número noutro, porque o modelo copiava o único exemplo do pedido). A fábrica desenha a
   demonstração de cada tipo de dado e o modelo de linguagem só escolhe e preenche os dados da fala (`_pelo_modelo_pronto`,
-  `INSTRUCOES_MODELO`, `CATALOGO`): `velocimetro` (velocidade, o ponteiro sobe), `balanca` (peso, um peso de ferro cai
-  na balança), `regua` (tamanho, a coisa cresce na régua; `forma: cone` desenha chifre, presa ou dente), `contador`
+  `INSTRUCOES_MODELO`, `CATALOGO`): `velocimetro` (velocidade, o ponteiro sobe), `balanca` (peso de coisa pesada, um peso de
+  ferro cai na balança), `tipografia` (o dado em serifa, letra por letra, num recorte de papel, sem objeto; o `tom`
+  leve, pesado ou neutro muda o movimento), `regua` (tamanho, a coisa cresce na régua; `forma: cone` desenha chifre, presa ou dente), `contador`
   (quantidade, um boneco ou ponto por unidade), `porcentagem` (anel), `comparacao` (barras), `tendencia` (queda ou
   subida até o marcador: "à beira da extinção"), `fluxo` (causa e consequência), `ranking` (posição acesa na lista),
   `frase` (ideia, palavra-chave em serifa sublinhada) e `foto_dado` (só com foto). O pedido diz os modelos das cenas de
@@ -181,6 +192,24 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   `frase` são recusados (na cena 11 do natureza-teste-1min o modelo escolheu a foto no lugar do velocímetro). O que reprovar volta ao modelo (`motion_ia.tentativas_modelo`, 3); se
   nenhum modelo servir, vai o **HTML livre de reserva**: o modelo escreve css, html e js dentro do esqueleto
   (`montar_html`). O `partes.json` guarda `modelo` e `dados`. Mudou o desenho, suba `motion_modelos.VERSAO`.
+- **Direção de arte antes do desenho** (`motion_ia.dirigir`, PRD Motion AI 2.0, pedido do usuário em 2026-10-07): o
+  desenho saía da UNIDADE do dado, e "pesa pouco mais de meio quilo" (o mico-leão-dourado) virava a balança com o peso
+  de ferro. Agora um pedido a mais por cena, só nos gratuitos, lê a fala, as vizinhas, o assunto do bloco e o que a
+  cena cita, e devolve a leitura (o que o espectador sente), o `tom`, o `desenho`, os `desenhos_proibidos` e o que
+  nunca mostrar. Fica em `motion_ia/NNNN/direcao.json` (pedida de novo só se a fala mudar; mudou as instruções, suba
+  `VERSAO_DIRECAO`) e vai no pedido do desenho, do HTML livre e da revisão visual (objeto proibido aparecendo é
+  problema de fidelidade). **A unidade é só sugestão, mas uma regra do código vale por cima do diretor**
+  (`motion_modelos.leve`): peso de coisa leve ou pequena (gramas, meio quilo, menos de 10 kg, "só", "pouco mais de")
+  indica a `tipografia` e proíbe a `balanca`. Sem resposta do diretor, vale essa direção do código (`direcao_pelo_codigo`).
+- **O bicho na balança, em colagem** (`motion_modelos.colagem_balanca`, pedido do usuário em 2026-10-07: "ele em cima
+  de uma balança mostrando 0,5 kg, estilo colagem Vox"). Peso com a foto da cena (`foto_da_cena`, sujeito 60 ou mais)
+  indica este desenho, leve ou pesado: o próprio animal recortado como figurinha de borda branca pousa numa balança de
+  cozinha, o prato afunda, o ponteiro gira e uma etiqueta presa por um fio conta o número. O tom vem do peso
+  (`motion_modelos.leve` e `pesado`): o mico de meio quilo pousa devagar, a onça de cem quilos despenca. O recorte
+  (`fabrica/recorte.py`) sai do GrabCut do OpenCV, de graça e sem modelo baixado, em três margens; **quem aprova é a
+  cadeia de visão, só gratuitos** (`motion_ia._recorte_da_cena`, guardado em `recorte.json`): nas fotos do mico do
+  11-animais-do-brasil as contas aprovaram 8 de 8 e três ficaram com o fundo em volta. Sem recorte aprovado, a foto
+  inteira entra numa moldura de papel rasgado (`moldura` nos dados), que também é colagem.
 - **Estilo editorial Vox / SaaS** (PRD de 2026-10-05, no lugar do "Apple Event" escuro): o esqueleto dá o fundo creme
   `#F7F6F2` com grade de pontos, as cores (`--verde`, `--azul`, `--laranja`, `--grafite`), as fontes Inter e Playfair,
   a linha do tempo `tl` do GSAP pausada, `window.seekToFrame` e as peças prontas: `.m-card` (branco, raio 20px, sombra
@@ -328,6 +357,13 @@ próprio Claude Code, e as decisões saem da assinatura dele. `fabrica mcp --por
   a produção **pausa** e o `andamento` pede para rodar o `/tiplabs` de novo quando o limite voltar. Tarefa de roteiro
   nunca vai para a reserva. Quando o cliente volta a responder, as tarefas visuais são dele de novo. Contas novas
   começam com **1 vídeo por dia** (`clientes_mcp.POR_DIA`).
+- **Instalação pelo próprio Claude do cliente** (pasta `tiplabs-cliente/`, fora do Git da fábrica: ela vira um
+  repositório à parte, sem nenhum código da fábrica, pedido do usuário em 2026-10-07). O cliente abre o Claude Code
+  nela e diz "instala o comando tiplabs"; o `CLAUDE.md` da pasta manda seguir `INSTALAR-TIPLABS.md`: o token vai
+  num `token.txt` (nunca no chat), é conferido no servidor (200 ou 401), o MCP entra com `--scope user` (com o
+  escopo local de antes ele só valia na pasta onde foi instalado), o `/tiplabs` vai para `~/.claude/commands`,
+  `mcp__fabrica` entra no `permissions.allow` e o `token.txt` é apagado. **Mudou o texto do comando
+  (`mcp_servidor.COMANDO`), copie `comandos/tiplabs.md` para `tiplabs-cliente/comando/tiplabs.md`.**
 - **Instruções uma vez por chamada** (`proximas_tarefas(..., tipo, instrucoes_que_ja_tenho)`): antes o "já entregue"
   era global, e o segundo subagente ficaria sem as regras. Agora cada chamada manda as instruções inteiras uma vez,
   menos as das marcas que quem pede diz que já tem.

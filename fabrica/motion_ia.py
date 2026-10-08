@@ -178,7 +178,7 @@ PERGUNTA_UTIL = {
 
 _NUMEROS = (r"\d+(?:[.,]\d+)?|uma?|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|quinze|vinte|"
             r"trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem|cento|duzent[oa]s|trezent[oa]s|"
-            r"quinhent[oa]s|mil|milh[aã]o|milh[õo]es|bilh[aã]o|bilh[õo]es|metade|dobro|triplo")
+            r"quinhent[oa]s|mil|milh[aã]o|milh[õo]es|bilh[aã]o|bilh[õo]es|metade|dobro|triplo|meio|meia")
 _UNIDADES = (r"quil[ôo]metros?|km|metros?|cent[íi]metros?|mil[íi]metros?|toneladas?|quilos?|kg|gramas?|litros?|"
              r"anos?|meses|dias?|horas?|minutos?|segundos?|por\s+cento|%|vezes|graus|pessoas|v[íi]timas|mortes|"
              r"esp[ée]cies|indiv[íi]duos|exemplares|animais|filhotes|ovos|dentes|hectares|d[óo]lares|reais|habitantes")
@@ -239,7 +239,11 @@ def foto_da_cena(projeto, cena):
     Procura na mídia de agora, na foto guardada para a imagem de IA (corrigir.mandar_para_ia move a foto para
     antigas/ antes do motion rodar, em ia_reserva) e na imagem de IA da cena."""
     if e_motion(cena):
-        return None
+        reserva = cena.get("motion_reserva") or {}
+        if not (reserva.get("midia") or {}).get("arquivo"):
+            return None
+        # refazer um motion: a foto que a cena tinha antes dele (com a conferência dela)
+        cena = {**cena, **{k: v for k, v in reserva.items() if k in ("midia", "conferencia", "ia_reserva")}}
     conf = cena.get("conferencia") or {}
     m = cena.get("midia") or {}
     if m.get("arquivo"):
@@ -351,18 +355,90 @@ def preco_do_jev(projeto) -> float:
 
 
 def candidatas_do_projeto(projeto, numeros=None) -> list:
-    """Onde o motion pode entrar: cena que iria para a imagem de IA sem ter imagem, ou com nota abaixo de
-    motion_ia.nota_minima no Jev. Com numeros, só essas cenas (qualquer nota)."""
+    """Onde o motion pode entrar: cena que iria para a imagem de IA sem ter imagem, com nota abaixo de
+    motion_ia.nota_minima no Jev, ou com um dado na fala mesmo com a foto aprovada (uteis). Com numeros, só essas
+    cenas (qualquer nota)."""
     from . import imagens
     cenas = projeto.ler_json("cenas.json")["cenas"]
     if numeros:
-        lista = [c for c in cenas if c["n"] in numeros]
-    else:
-        pendentes = {c["n"] for c in imagens.pendentes_ia(projeto, cenas)}
-        limiar = nota_minima(projeto)
-        lista = [c for c in cenas if c["n"] in pendentes or (
-            (c.get("conferencia") or {}).get("nota") is not None and c["conferencia"]["nota"] < limiar)]
-    return candidatas(projeto, lista)
+        return candidatas(projeto, [c for c in cenas if c["n"] in numeros], refazer=True)
+    pendentes = {c["n"] for c in imagens.pendentes_ia(projeto, cenas)}
+    limiar = nota_minima(projeto)
+    escolhidas = {c["n"] for c in cenas if c["n"] in pendentes or (
+        (c.get("conferencia") or {}).get("nota") is not None and c["conferencia"]["nota"] < limiar)}
+    escolhidas |= {c["n"] for c in uteis(projeto, cenas)}
+    return candidatas(projeto, [c for c in cenas if c["n"] in escolhidas])
+
+
+# Pedido do usuário em 2026-10-07: "o motion deve entrar onde ele realmente vai ser útil para o roteiro, independente
+# se a cena foi reprovada ou não". Antes ele só entrava na cena reprovada ou com nota abaixo de 40, e a cena com foto
+# boa do mico ("pesa pouco mais de meio quilo") nunca virava a balança com o bicho, que precisa justamente da foto
+# boa. Agora toda cena cuja fala traz um dado também é candidata, e o Jev decide pelo roteiro. O código separa antes
+# quem tem chance (pode_ajudar), para o Jev não julgar as cenas de pura narração.
+_PODE_AJUDAR = re.compile(
+    r"por\s+cento|%|\b(?:primeiro|segundo|terceiro|quarto|quinto|sexto|s[ée]timo|oitavo|nono|d[ée]cimo)\s+lugar|"
+    r"\bvezes\s+(?:mais|menos|maior|menor)|\b(?:dobro|triplo|metade)\b|\bmais\s+\w+\s+(?:que|do\s+que)\b|"
+    r"\b(?:levou|levaram|leva|causou|causa|provocou)\s+(?:a|à|ao)\b|\bpor\s+isso\b|\bresultado\b|\bconsequ[êe]ncia|"
+    # quantidade de qualquer coisa ("cerca de duzentos micos", "135 vítimas"), menos o ano ("em 1898 foi") e o código
+    # de estrada ("BR-101 chegaram")
+    r"(?<![-\w])(?:(?!1\d{3}\b|20\d{2}\b)\d{2,}[\d.,]*|dez|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|"
+    r"cem|cento|duzent[oa]s|trezent[oa]s|quatrocent[oa]s|quinhent[oa]s|milhares|milh[õo]es|mil)\s+(?:de\s+)?"
+    r"[a-zà-ú]{3,}",
+    re.I)
+
+
+def pode_ajudar(cena, seguinte=None) -> str:
+    """O dado da fala que um infográfico pode mostrar, ou "" (narração pura: o Jev nem é chamado). A fala é cortada
+    no meio da frase ("pesa pouco mais de meio" | "quilo, tem uma juba..."), então vale a fala junto com as primeiras
+    palavras da cena seguinte."""
+    texto = (cena.get("texto") or "").strip()
+    junto = " ".join([texto, " ".join(((seguinte or {}).get("texto") or "").split()[:4])])
+    dado = dado_na_fala(junto)
+    palavras = set(re.findall(r"\w+", texto.lower()))
+    if dado and any(p in palavras for p in dado.lower().split()[:2]):
+        return dado  # o dado começa NESTA cena: a seguinte, que só termina a frase, não repete o clipe
+    achado = _PODE_AJUDAR.search(texto)
+    return achado.group(0) if achado else ""
+
+
+def uteis(projeto, cenas=None) -> list:
+    """As cenas com foto (ou vídeo) que podem virar motion porque a fala traz um dado (pode_ajudar). Uma por dado:
+    duas cenas seguidas com o mesmo dado ficam só com a primeira."""
+    todas = cenas if cenas is not None else projeto.ler_json("cenas.json")["cenas"]
+    por_n = {c["n"]: c for c in todas}
+    saida, anterior = [], ("", -9)
+    for c in todas:
+        if not (c.get("midia") or {}).get("arquivo") and not projeto.imagem(c["n"]).exists():
+            continue  # sem imagem: é a porta de entrada de antes (imagens._motion_antes_da_ia)
+        if c.get("motion_reserva") and not e_motion(c):
+            continue  # já foi motion e a pessoa trocou pela foto: a escolha dela fica
+        dado = pode_ajudar(c, por_n.get(c["n"] + 1))
+        if not dado:
+            continue
+        if dado.lower() == anterior[0] and c["n"] - anterior[1] <= 1:
+            continue
+        anterior = (dado.lower(), c["n"])
+        saida.append(c)
+    return candidatas(projeto, saida)
+
+
+def nas_uteis(projeto, log=print) -> list:
+    """Faz o motion nas cenas com dado em que o Jev diz que ele vale a pena, mesmo com a foto aprovada. A foto fica
+    em motion_reserva (motion_ia.desfazer volta) e é ela que vira o bicho recortado na colagem. Devolve as feitas."""
+    if not ligado(projeto) or not modelos(projeto) or not animacoes.node_pronto():
+        return []
+    cands = uteis(projeto)
+    if not cands:
+        return []
+    log(f"  motion IA: {len(cands)} cena(s) com dado na fala, o Jev diz onde o motion ajuda o roteiro")
+    tipos = classificar(projeto, cands, log)
+    todas = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+    escolhidas = [todas.get(c["n"], c) for c in cands if tipos.get(c["n"])]
+    if not escolhidas:
+        return []
+    log(f"  motion IA: {len(escolhidas)} cena(s) viram clipe de motion, de graça: "
+        + ", ".join(str(c["n"]) for c in escolhidas))
+    return fazer(projeto, escolhidas, log)
 
 
 def _gravar_classificacao(projeto, notas) -> None:
@@ -601,7 +677,7 @@ def montar_html(partes, dur, largura=1920, altura=1080, foto=None) -> str:
 """
 
 
-def _pedido(cena, dur, vizinhas, erros, foto=False):
+def _pedido(cena, dur, vizinhas, erros, foto=False, direcao=None):
     linhas = [f"Fala desta cena: \"{(cena.get('texto') or '').strip()}\"",
               f"Duração: {dur:.2f} s (DUR)",
               f"Proporção: 16:9, 1920x1080"]
@@ -609,6 +685,9 @@ def _pedido(cena, dur, vizinhas, erros, foto=False):
         linhas.append(f"Fala anterior (só contexto): \"{vizinhas[0]}\"")
     if vizinhas[1]:
         linhas.append(f"Fala seguinte (só contexto): \"{vizinhas[1]}\"")
+    if direcao:
+        # o desenho indicado é dos modelos prontos, que não serviram: aqui valem a leitura, o tom e o que é proibido
+        linhas.append(texto_da_direcao({k: v for k, v in direcao.items() if k != "desenho"}))
     if (cena.get("mostrar") or "").strip():
         linhas.append(f"Ideia visual sugerida pelo diretor de arte (traduza num diagrama editorial, sem desenhar a coisa): {cena['mostrar'].strip()}")
     if foto:
@@ -629,9 +708,12 @@ campos dela. A fábrica desenha o clipe; você só escolhe o modelo e escreve os
 """ + motion_modelos.CATALOGO + """
 
 Regras:
-1. Escolha pelo TIPO do dado: velocidade é velocimetro, peso é balanca, tamanho é regua, quantidade de gente é
-   contador, queda ou extinção é tendencia, causa e consequência é fluxo, posição é ranking. frase só quando a fala não
-   tem número, comparação, causa nem posição.
+1. Siga a DIREÇÃO DE ARTE do pedido (desenho indicado, tom e o que é proibido). Sem ela, escolha pelo SENTIDO do dado,
+   não só pela unidade: velocidade é velocimetro; peso de um animal com foto é colagem_balanca (o próprio bicho na
+   balança); sem foto, peso de coisa pesada é balanca e de coisa leve ou pequena é tipografia (nunca um peso de ferro
+   para um bicho de meio quilo); tamanho é regua, quantidade de gente é contador,
+   queda ou extinção é tendencia, causa e consequência é fluxo, posição é ranking. frase só quando a fala não tem
+   número, comparação, causa nem posição.
 2. Nada inventado: valor, rótulos, etapas, nome e frase saem da fala desta cena (ou das vizinhas, para dar sentido).
 3. Variedade: quando a fala permitir mais de um modelo, não repita o que as cenas de motion vizinhas usaram.
 4. Textos curtos: topo com até 7 palavras; etapas e rótulos com até 4 palavras."""
@@ -644,7 +726,8 @@ ESQUEMA_MODELO = {
         "unidade": {"type": "string"}, "prefixo": {"type": "string"}, "abreviacao": {"type": "string"},
         "forma": {"type": "string"}, "direcao": {"type": "string"}, "inicio": {"type": "string"},
         "fim": {"type": "string"}, "posicao": {"type": "integer"}, "total": {"type": "integer"},
-        "nome": {"type": "string"}, "frase": {"type": "string"},
+        "nome": {"type": "string"}, "frase": {"type": "string"}, "texto": {"type": "string"},
+        "tom": {"type": "string", "enum": list(motion_modelos.TONS)},
         "etapas": {"type": "array", "items": {"type": "string"}},
         "itens": {"type": "array", "items": {"type": "object", "properties": {
             "rotulo": {"type": "string"}, "valor": {"type": "number"}}}},
@@ -653,21 +736,224 @@ ESQUEMA_MODELO = {
 }
 
 
-def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados):
-    linhas = [f"Fala desta cena: \"{(cena.get('texto') or '').strip()}\"", f"Duração: {dur:.2f} s"]
+# ------------------------------------------------------------------ a direção de arte, antes do desenho
+
+# PRD Motion AI 2.0 (2026-10-07, pedido do usuário): o desenho saía da UNIDADE do dado. "Pesa pouco mais de meio
+# quilo" achava "quilo", o código obrigava a balança e um peso de ferro despencava numa cena do mico-leão-dourado.
+# Agora um diretor de arte lê a fala com o contexto (o assunto do bloco, o que a cena cita, as vizinhas) e decide o
+# que o espectador tem de sentir, o tom do movimento, o desenho e o que fica proibido. A unidade virou só uma
+# sugestão do código (motion_modelos.indicado), que ainda vale por cima numa regra: coisa leve nunca vai para a
+# balança. Um pedido a mais por cena, só nos gratuitos; sem resposta, vale a direção do código (nunca para o vídeo).
+VERSAO_DIRECAO = 1  # suba quando mudar as instruções: a direção guardada na pasta da cena é pedida de novo
+
+INSTRUCOES_DIRECAO = """Você é o diretor de arte de um canal de documentários no estilo editorial da Vox. Uma cena
+vai virar um clipe curto de motion graphics enquanto o narrador diz a fala dela. Antes de alguém desenhar, você
+decide COMO mostrar, pelo sentido da fala no contexto do roteiro, e não pela unidade da medida.
+
+Você decide:
+- leitura: o que o espectador tem de sentir ou entender em 1 segundo (uma frase curta);
+- tom: o movimento do clipe. "leve" (delicado, pequeno, frágil: entra devagar e flutua), "pesado" (enorme, maciço,
+  brutal: despenca e assenta) ou "neutro" (o resto);
+- desenho: UM dos desenhos do catálogo abaixo, o que demonstra o dado sem contradizer o assunto;
+- desenhos_proibidos: os desenhos do catálogo que estragariam esta cena (vazio se nenhum);
+- nao_mostrar: até 3 objetos ou imagens literais que contradizem o tom e não podem aparecer;
+- motivo: por que, em até 20 palavras.
+
+O erro que você existe para evitar: escolher pela unidade. "O mico-leão-dourado pesa pouco mais de meio quilo" fala
+de peso, mas a ideia é a LEVEZA de um bicho pequeno: um peso de ferro caindo numa balança é o oposto disso. Aí vai
+tipografia, tom leve, balanca proibida, e nada de peso de ferro, bigorna ou haltere. Já "o rinoceronte pesa mais de
+uma tonelada" é a ideia de massa: balanca, tom pesado.
+Quando a cena TEM FOTO do animal citado, o peso dele vira colagem_balanca: o próprio bicho recortado pousando numa
+balança de cozinha, com o ponteiro e a etiqueta do valor (tom leve para o mico de meio quilo, pesado para a onça de
+cem quilos). É o mais intuitivo, e é o próprio animal, não um objeto no lugar dele.
+Sem foto, prefira tipografia quando o dado é uma qualidade (leveza, pequenez, raridade, fragilidade) e não uma medida
+para comparar. Nunca escolha foto_dado nem colagem_balanca se o pedido disser que a cena não tem foto.
+
+""" + motion_modelos.CATALOGO
+
+ESQUEMA_DIRECAO = {
+    "type": "object",
+    "properties": {
+        "leitura": {"type": "string"},
+        "tom": {"type": "string", "enum": list(motion_modelos.TONS)},
+        "desenho": {"type": "string", "enum": list(motion_modelos.MODELOS)},
+        "desenhos_proibidos": {"type": "array", "items": {"type": "string"}},
+        "nao_mostrar": {"type": "array", "items": {"type": "string"}},
+        "motivo": {"type": "string"},
+    },
+    "required": ["leitura", "tom", "desenho"],
+}
+
+
+def direcao_pelo_codigo(cena, foto=False) -> dict:
+    """A direção sem o diretor: o desenho que o dado da fala indica, com a regra de coisa leve (nunca a balança)."""
+    texto = cena.get("texto") or ""
+    dado = dado_na_fala(texto)
+    desenho = motion_modelos.indicado(dado, texto, foto)
+    direcao = {"desenho": desenho, "tom": "neutro", "desenhos_proibidos": [], "nao_mostrar": [], "origem": "codigo"}
+    if desenho in ("tipografia", "colagem_balanca") and motion_modelos.leve(dado, texto):
+        direcao.update(tom="leve", desenhos_proibidos=["balanca"], nao_mostrar=["peso de ferro", "bigorna"])
+    elif desenho == "colagem_balanca" and motion_modelos.pesado(dado, texto):
+        direcao["tom"] = "pesado"
+    return direcao
+
+
+def _limpar_direcao(resposta, cena, foto=False) -> dict:
+    """A resposta do diretor conferida: desenho e proibidos só do catálogo, e a regra do código por cima."""
+    base = direcao_pelo_codigo(cena, foto)
+    modelos_validos = set(motion_modelos.MODELOS) - (set() if foto else set(motion_modelos.COM_FOTO))
+    proibidos = [p for p in (resposta.get("desenhos_proibidos") or []) if p in motion_modelos.MODELOS]
+    proibidos = list(dict.fromkeys(proibidos + base["desenhos_proibidos"]))
+    desenho = str(resposta.get("desenho") or "").strip()
+    if desenho not in modelos_validos or desenho in proibidos:
+        desenho = base["desenho"] if base["desenho"] not in proibidos else ""
+    tom = str(resposta.get("tom") or "").strip().lower()
+    nao_mostrar = [" ".join(str(x).split())[:60] for x in resposta.get("nao_mostrar") or [] if str(x).strip()][:3]
+    return {"leitura": " ".join(str(resposta.get("leitura") or "").split())[:200],
+            "tom": tom if tom in motion_modelos.TONS else base["tom"], "desenho": desenho,
+            "desenhos_proibidos": [p for p in proibidos if p != desenho],
+            "nao_mostrar": nao_mostrar or base["nao_mostrar"],
+            "motivo": " ".join(str(resposta.get("motivo") or "").split())[:200], "origem": "diretor"}
+
+
+def _pedido_direcao(projeto, cena, vizinhas, foto) -> str:
+    from . import corrigir
+    texto = (cena.get("texto") or "").strip()
+    linhas = [f"Fala desta cena: \"{texto}\""]
     if vizinhas[0]:
         linhas.append(f"Fala anterior (contexto): \"{vizinhas[0]}\"")
     if vizinhas[1]:
         linhas.append(f"Fala seguinte (contexto): \"{vizinhas[1]}\"")
-    dado = dado_na_fala(cena.get("texto"))
+    bloco = corrigir._bloco_da_cena_no_mapa(projeto, cena)
+    if bloco:
+        linhas.append(f"Assunto deste trecho do roteiro: {bloco}")
+    citado = (cena.get("exato") or cena.get("animal") or cena.get("sujeito") or "").strip()
+    if citado:
+        linhas.append(f"A cena fala de: {citado}")
+    dado = dado_na_fala(texto)
     if dado:
         linhas.append(f"Dado que o código achou na fala: {dado}")
-        if motion_modelos.indicado(dado):
-            linhas.append(f"Modelo indicado para esse dado: {motion_modelos.indicado(dado)}")
+        if motion_modelos.indicado(dado, texto, foto):
+            linhas.append(f"Desenho que a unidade sugeriria (confira se combina com o sentido): "
+                          f"{motion_modelos.indicado(dado, texto, foto)}")
+    linhas.append("A cena TEM FOTO do assunto (foto_dado e colagem_balanca podem ser usados)." if foto else
+                  "A cena NÃO tem foto: não use foto_dado nem colagem_balanca.")
+    return "\n".join(linhas)
+
+
+def dirigir(projeto, cena, vizinhas, foto=False, log=print) -> dict:
+    """A direção de arte da cena, guardada na pasta do clipe (direcao.json) e só pedida de novo se a fala mudar.
+    Sem resposta de nenhum modelo gratuito, vale a direção do código."""
+    pasta = _pasta(projeto, cena["n"])
+    marca = f"{_assinatura_fala(cena)}-v{VERSAO_DIRECAO}-{'foto' if foto else 'sem'}"
+    arquivo = pasta / "direcao.json"
+    try:
+        guardada = json.loads(arquivo.read_text(encoding="utf-8"))
+        if guardada.get("marca") == marca:
+            return guardada["direcao"]
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        resposta = _perguntar(projeto, "motion IA: direção de arte", INSTRUCOES_DIRECAO,
+                              _pedido_direcao(projeto, cena, vizinhas, foto), ESQUEMA_DIRECAO, log, temperatura=0.2)
+        direcao = _limpar_direcao(resposta or {}, cena, foto)
+    except (RuntimeError, SystemExit) as e:
+        log(f"  motion IA: cena {cena['n']}, sem direção de arte ({str(e)[:100]}); vale a do código")
+        return direcao_pelo_codigo(cena, foto)
+    pasta.mkdir(parents=True, exist_ok=True)
+    arquivo.write_text(json.dumps({"marca": marca, "direcao": direcao}, ensure_ascii=False, indent=1), encoding="utf-8")
+    log(f"  motion IA: cena {cena['n']}, direção de arte: {direcao['desenho'] or 'livre'}, tom {direcao['tom']}"
+        + (f", sem {', '.join(direcao['desenhos_proibidos'])}" if direcao["desenhos_proibidos"] else ""))
+    return direcao
+
+
+# ------------------------------------------------------------- o recorte do bicho para a colagem
+
+INSTRUCOES_RECORTE = """Você aprova recortes para uma colagem de motion graphics no estilo da Vox. Cada número da
+folha é um recorte diferente da MESMA foto, com a borda branca de figurinha, sobre um fundo cinza-azulado liso.
+Um recorte serve quando mostra o assunto citado inteiro ou quase (cabeça e corpo), sem pedaços grandes do fundo da
+foto (céu, folhagem, água, parede, outro bicho). O galho, a pedra ou o chão em que ele está apoiado pode ficar, se for
+pouco. Responda o número do melhor recorte que serve, ou 0 se nenhum serve."""
+
+ESQUEMA_RECORTE = {"type": "object", "properties": {"melhor": {"type": "integer"}, "motivo": {"type": "string"}},
+                   "required": ["melhor"]}
+
+
+def _recorte_da_cena(projeto, pasta, nome_foto, cena, log=print):
+    """"recorte.png" (em assets/) se um recorte do bicho foi aprovado pela visão, ou None (o clipe usa a foto inteira
+    na moldura). As contas do recorte.py aprovam recorte com fundo sobrando entre os galhos; quem olha é a cadeia de
+    visão, só com os gratuitos. Guardado em recorte.json pela foto: não pergunta de novo."""
+    from . import openrouter_local, recorte
+    if not nome_foto:
+        return None
+    foto = pasta / "assets" / nome_foto
+    marca = hashlib.sha1(foto.read_bytes()).hexdigest()[:12] if foto.exists() else ""
+    arquivo = pasta / "recorte.json"
+    try:
+        guardado = json.loads(arquivo.read_text(encoding="utf-8"))
+        if guardado.get("marca") == marca and (not guardado.get("arquivo")
+                                               or (pasta / "assets" / guardado["arquivo"]).exists()):
+            return guardado.get("arquivo") or None
+    except (OSError, ValueError):
+        pass
+    escolhido, motivo = None, "nenhum recorte passou nas contas"
+    opcoes = recorte.variantes(foto, pasta / "recortes") if marca else []
+    if opcoes:
+        citado = (cena.get("animal") or cena.get("exato") or cena.get("sujeito") or "o assunto da cena").strip()
+        try:
+            resposta = openrouter_local.VISAO.perguntar(
+                projeto, "motion IA: recorte", INSTRUCOES_RECORTE,
+                f"O assunto citado: {citado}. Há {len(opcoes)} recorte(s) na folha.", ESQUEMA_RECORTE, log=log,
+                imagens=[recorte.folha(opcoes, pasta / "recortes" / "folha.jpg")], temperatura=0, so_gratuitos=True)
+            k = int((resposta or {}).get("melhor") or 0)
+            motivo = str((resposta or {}).get("motivo") or "")[:200]
+            if 1 <= k <= len(opcoes):
+                shutil.copy2(opcoes[k - 1], pasta / "assets" / "recorte.png")
+                escolhido = "recorte.png"
+        except (RuntimeError, SystemExit, ValueError, TypeError) as e:
+            motivo = f"nenhum modelo de visão gratuito julgou o recorte ({str(e)[:100]})"
+    log(f"  motion IA: cena {cena['n']}, " + ("bicho recortado para a colagem" if escolhido else
+                                              f"sem recorte ({motivo}); vai a foto na moldura"))
+    arquivo.write_text(json.dumps({"marca": marca, "arquivo": escolhido, "motivo": motivo}, ensure_ascii=False),
+                       encoding="utf-8")
+    return escolhido
+
+
+def texto_da_direcao(direcao) -> str:
+    """A direção de arte no pedido de quem desenha e de quem revisa."""
+    if not direcao:
+        return ""
+    linhas = ["DIREÇÃO DE ARTE (siga):"]
+    if direcao.get("leitura"):
+        linhas.append(f"- o espectador tem de sentir: {direcao['leitura']}")
+    linhas.append(f"- tom do movimento: {direcao.get('tom') or 'neutro'}")
+    if direcao.get("desenho"):
+        linhas.append(f"- desenho indicado: {direcao['desenho']}")
+    if direcao.get("desenhos_proibidos"):
+        linhas.append(f"- desenhos proibidos: {', '.join(direcao['desenhos_proibidos'])}")
+    if direcao.get("nao_mostrar"):
+        linhas.append(f"- nunca mostrar: {', '.join(direcao['nao_mostrar'])}")
+    return "\n".join(linhas)
+
+
+def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados, direcao=None):
+    texto = (cena.get("texto") or "").strip()
+    linhas = [f"Fala desta cena: \"{texto}\"", f"Duração: {dur:.2f} s"]
+    if vizinhas[0]:
+        linhas.append(f"Fala anterior (contexto): \"{vizinhas[0]}\"")
+    if vizinhas[1]:
+        linhas.append(f"Fala seguinte (contexto): \"{vizinhas[1]}\"")
+    dado = dado_na_fala(texto)
+    if dado:
+        linhas.append(f"Dado que o código achou na fala: {dado}")
+        if motion_modelos.indicado(dado, texto, foto) and not (direcao or {}).get("desenho"):
+            linhas.append(f"Modelo indicado para esse dado: {motion_modelos.indicado(dado, texto, foto)}")
+    if direcao:
+        linhas.append(texto_da_direcao(direcao))
     if (cena.get("mostrar") or "").strip():
-        linhas.append(f"O que o diretor de arte pediu para a cena: {cena['mostrar'].strip()}")
-    linhas.append("A cena TEM FOTO (o modelo foto_dado pode ser usado)." if foto else
-                  "A cena NÃO tem foto: não use foto_dado.")
+        linhas.append(f"O que o agente de roteiro pediu para a imagem da cena (só contexto): {cena['mostrar'].strip()}")
+    linhas.append("A cena TEM FOTO (os modelos foto_dado e colagem_balanca podem ser usados)." if foto else
+                  "A cena NÃO tem foto: não use foto_dado nem colagem_balanca.")
     if usados:
         linhas.append("Modelos das cenas de motion vizinhas: " + ", ".join(usados) + ". Evite repetir.")
     if erros:
@@ -675,29 +961,40 @@ def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados):
     return "\n".join(linhas)
 
 
-def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_iniciais=()):
+def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_iniciais=(),
+                        direcao=None):
     """O modelo de linguagem escolhe a demonstração (motion_modelos) e preenche os dados; a fábrica desenha.
     Devolve as partes aprovadas, com o modelo e os dados, ou levanta RuntimeError.
-    erros_iniciais: o que a crítica visual apontou no clipe anterior (vai no primeiro pedido)."""
-    fala = " ".join([vizinhas[0], cena.get("texto") or "", vizinhas[1]])
+    erros_iniciais: o que a crítica visual apontou no clipe anterior (vai no primeiro pedido).
+    direcao: a direção de arte (dirigir): o desenho indicado, os proibidos e o tom."""
+    texto = cena.get("texto") or ""
+    fala = " ".join([vizinhas[0], texto, vizinhas[1]])
+    direcao = direcao or direcao_pelo_codigo(cena, bool(nome_foto))
+    sugerido = direcao.get("desenho") or motion_modelos.indicado(dado_na_fala(texto), texto, bool(nome_foto))
     erros = list(erros_iniciais)
     for tentativa in range(int(config(projeto).get("tentativas_modelo", 3))):
         resposta = _perguntar(projeto, "motion IA: modelo", INSTRUCOES_MODELO,
-                              _pedido_modelo(cena, dur, vizinhas, erros, bool(nome_foto), usados), ESQUEMA_MODELO, log,
-                              temperatura=0.4 if tentativa else 0.2)
+                              _pedido_modelo(cena, dur, vizinhas, erros, bool(nome_foto), usados, direcao),
+                              ESQUEMA_MODELO, log, temperatura=0.4 if tentativa else 0.2)
         modelo = str(resposta.get("modelo") or "").strip()
-        dados, erros = motion_modelos.conferir(modelo, resposta, fala, tem_foto=bool(nome_foto),
-                                               fala_da_cena=cena.get("texto") or "",
-                                               sugerido=motion_modelos.indicado(dado_na_fala(cena.get("texto"))))
+        dados, erros = motion_modelos.conferir(modelo, resposta, fala, tem_foto=bool(nome_foto), fala_da_cena=texto,
+                                               sugerido=sugerido, proibidos=direcao.get("desenhos_proibidos") or ())
         if erros:
             continue
-        partes = motion_modelos.partes(modelo, dados, dur)
+        if modelo in ("tipografia", "colagem_balanca") and direcao.get("tom") in motion_modelos.TONS:
+            dados["tom"] = direcao["tom"]  # o movimento é decisão da direção de arte
+        figura = None
+        if modelo == "colagem_balanca":
+            figura = _recorte_da_cena(projeto, pasta, nome_foto, cena, log)
+            dados["moldura"] = figura is None  # sem recorte aprovado, a foto inteira na moldura de papel rasgado
+            figura = figura or nome_foto
+        partes = motion_modelos.partes(modelo, dados, dur, figura)
         (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto if modelo == "foto_dado" else None),
                                           encoding="utf-8")
         erros = [e for e in animacoes._erros_para_o_modelo(animacoes._conferir(projeto, pasta, clipe=True))]
         if not erros:
             return {**partes, "modelo": modelo, "dados": dados, "versao_modelos": motion_modelos.VERSAO,
-                    "foto": nome_foto if modelo == "foto_dado" else ""}
+                    "foto": nome_foto if modelo == "foto_dado" else "", "direcao": direcao}
     raise RuntimeError("; ".join(erros)[:300] or "o modelo não respondeu")
 
 
@@ -718,7 +1015,9 @@ CRITERIOS = {
                   "espremido num canto com o resto da tela vazio",
     "clareza": "olhando o último quadro por 1 segundo, a pessoa entende o dado ou a ideia da fala?",
     "fidelidade": "o que está escrito e desenhado é o que a fala diz? Número certo, palavras da fala, sem erro de "
-                  "escrita, sem desenho que não combina com o dado (um velocímetro para um peso)",
+                  "escrita, sem desenho que não combina com o dado (um velocímetro para um peso) nem objeto literal "
+                  "que contradiz o tom da cena (um peso de ferro para um bicho de meio quilo) ou que a direção de "
+                  "arte proibiu",
     "movimento": "comparando os quadros, a cena se monta ao longo do tempo, sem tela vazia ou parada demais, e o "
                  "último quadro está completo?",
     "acabamento": "parece motion graphics de um canal grande (Vox), e não um slide amador? Hierarquia clara, cores "
@@ -770,12 +1069,15 @@ def _folha_de_contato(projeto, pasta, dur):
     return folha if r.returncode == 0 and folha.exists() else None
 
 
-def _pedido_critica(cena, dur, aprovado, vizinhas) -> str:
+def _pedido_critica(cena, dur, aprovado, vizinhas, direcao=None) -> str:
     linhas = [f"Fala desta cena: \"{(cena.get('texto') or '').strip()}\"", f"Duração do clipe: {dur:.2f} s"]
     if vizinhas[0]:
         linhas.append(f"Fala anterior (contexto): \"{vizinhas[0]}\"")
     if vizinhas[1]:
         linhas.append(f"Fala seguinte (contexto): \"{vizinhas[1]}\"")
+    if direcao:
+        linhas.append(texto_da_direcao(direcao).replace("(siga)", "(confira no clipe; algo proibido aparecendo é "
+                                                                   "problema de fidelidade)"))
     if aprovado.get("modelo") and aprovado["modelo"] != "livre":
         linhas.append(f"O clipe usa o desenho pronto \"{aprovado['modelo']}\", com estes dados: "
                       + json.dumps(aprovado.get("dados") or {}, ensure_ascii=False)
@@ -811,7 +1113,7 @@ def _ler_critica(resposta):
             "problemas": problemas[:3]}
 
 
-def criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log=print):
+def criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log=print, direcao=None):
     """A nota do clipe que está em pasta/index.html, olhando a folha de contato. None quando não deu para olhar (o
     snapshot falhou, nenhum modelo de visão gratuito atendeu): o clipe segue sem a crítica, nunca para o vídeo."""
     from . import openrouter_local
@@ -821,7 +1123,8 @@ def criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log=print):
         return None
     try:
         resposta = openrouter_local.VISAO.perguntar(projeto, "motion IA: revisão visual", INSTRUCOES_CRITICA,
-                                                    _pedido_critica(cena, dur, aprovado, vizinhas), ESQUEMA_CRITICA,
+                                                    _pedido_critica(cena, dur, aprovado, vizinhas, direcao),
+                                                    ESQUEMA_CRITICA,
                                                     log=log, imagens=[folha], temperatura=0, so_gratuitos=True)
     except (RuntimeError, SystemExit) as e:
         log(f"  motion IA: cena {cena['n']}, nenhum modelo gratuito fez a revisão visual ({str(e)[:100]}); segue sem ela")
@@ -854,11 +1157,12 @@ def _resumo(critica) -> str:
 
 # ------------------------------------------------------------------------------------------------ o clipe
 
-def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_iniciais=()):
+def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_iniciais=(), direcao=None):
     """O HTML escrito pelo modelo dentro do esqueleto, de reserva. Devolve as partes aprovadas ou levanta RuntimeError."""
     erros = list(erros_iniciais)
     for tentativa in range(int(config(projeto).get("tentativas", 3))):
-        resposta = _perguntar(projeto, "motion IA: html", INSTRUCOES_HTML, _pedido(cena, dur, vizinhas, erros, foto=bool(nome_foto)),
+        resposta = _perguntar(projeto, "motion IA: html", INSTRUCOES_HTML,
+                              _pedido(cena, dur, vizinhas, erros, foto=bool(nome_foto), direcao=direcao),
                               ESQUEMA_HTML, log, temperatura=0.5 if tentativa else 0.3)
         partes = {k: str(resposta.get(k) or "") for k in ("css", "html", "js")}
         erros = problemas_do_codigo(partes)
@@ -878,33 +1182,34 @@ def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_
                             ".m-card conta left e top a partir da borda do card, não da tela. Dentro do card, use "
                             "left e top pequenos (ou nenhum, em fluxo normal) e confira que tudo cabe no card")
         if not erros:
-            return {**partes, "modelo": "livre", "foto": nome_foto or ""}
+            return {**partes, "modelo": "livre", "foto": nome_foto or "", "direcao": direcao or {}}
     raise RuntimeError("reprovado na conferência: " + "; ".join(erros)[:300])
 
 
-def _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=()):
+def _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=(), direcao=None):
     """Um clipe aprovado pelo código e pelo HyperFrames, ainda sem a revisão visual: primeiro um modelo pronto de
     demonstração; se nenhum servir, o HTML livre."""
     try:
-        aprovado = _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais)
+        aprovado = _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais,
+                                       direcao)
         log(f"  motion IA: cena {cena['n']}, modelo {aprovado['modelo']}")
         return aprovado
     except (RuntimeError, SystemExit) as e:
         log(f"  motion IA: cena {cena['n']}, nenhum modelo pronto serviu ({str(e)[:120]}); vai o HTML livre")
-    return _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_visuais)
+    return _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_visuais, direcao)
 
 
-def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log):
+def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direcao=None):
     """O clipe que passou na revisão visual (todas as notas em critica.nota ou mais), em até critica.rodadas
     revisões. Sem passar, fica o de melhor nota se a pior nota dele chegar a critica.aceitavel; senão RuntimeError,
     e a cena segue o caminho de antes."""
     cfg = critica_config(projeto)
-    aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log)
+    aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direcao=direcao)
     if not cfg["ativa"]:
         return aprovado
     melhor, historico = None, []
     for rodada in range(max(1, int(cfg["rodadas"]))):
-        critica = criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log)
+        critica = criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log, direcao)
         if critica is None:
             break
         historico.append({"rodada": rodada + 1, "modelo": aprovado.get("modelo"), **critica})
@@ -918,7 +1223,7 @@ def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log):
             break
         try:
             aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log,
-                                 erros_da_critica(critica, float(cfg["nota"])))
+                                 erros_da_critica(critica, float(cfg["nota"])), direcao)
         except (RuntimeError, SystemExit) as e:
             log(f"  motion IA: cena {cena['n']}, a correção não saiu ({str(e)[:120]}); fica o de melhor nota")
             break
@@ -948,7 +1253,8 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
     if foto is not None:
         nome_foto = f"foto{Path(foto).suffix.lower()}"
         shutil.copy2(foto, pasta / "assets" / nome_foto)
-    aprovado = _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log)
+    direcao = dirigir(projeto, cena, vizinhas, bool(nome_foto), log)
+    aprovado = _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direcao)
     # a revisão pode ter ficado com um clipe de uma rodada anterior: a página gravada é sempre a dele
     (pasta / "index.html").write_text(montar_html(aprovado, dur, foto=aprovado.get("foto") or None), encoding="utf-8")
     (pasta / "partes.json").write_text(json.dumps(aprovado, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -976,7 +1282,8 @@ def _aplicar(projeto, n, destino, capa, dur) -> None:
     with _TRAVA_CENAS:
         dados = projeto.ler_json("cenas.json")
         c = next(x for x in dados["cenas"] if x["n"] == n)
-        c["motion_reserva"] = {k: c.get(k) for k in ("midia", "tipo", "busca", "captura", "conferencia", "ia_reserva")}
+        if not (e_motion(c) and c.get("motion_reserva")):  # refazer um motion: a reserva é a foto de antes dele
+            c["motion_reserva"] = {k: c.get(k) for k in ("midia", "tipo", "busca", "captura", "conferencia", "ia_reserva")}
         c["midia"] = {"fonte": FONTE, "id": f"{n:04d}-{int(time.time())}", "tipo": "video",
                       "arquivo": destino.relative_to(projeto.pasta).as_posix(),
                       "capa": capa.relative_to(projeto.pasta).as_posix() if capa.exists() else None,
@@ -999,14 +1306,17 @@ def _marcar_falha(projeto, n, motivo) -> None:
 
 # ---------------------------------------------------------------------------------------------- a etapa
 
-def candidatas(projeto, cenas) -> list:
+def candidatas(projeto, cenas, refazer=False) -> list:
     """Cenas que iriam para a imagem de IA e podem virar motion: sem prompt ou imagem da pessoa, sem personagem e sem
-    uma falha de motion na mesma fala."""
+    uma falha de motion na mesma fala. refazer=True (a pessoa pediu a cena pelo número): a cena que já é motion, ou
+    que falhou ou foi desfeita, entra de novo."""
     saida = []
     for c in cenas:
         falha = c.get("motion_ia_falhou") or {}
-        if (c.get("prompt_manual") or c.get("imagem_da_pessoa") or c.get("personagem") or e_motion(c)
-                or falha.get("fala") == _assinatura_fala(c) or not (c.get("texto") or "").strip()):
+        if (c.get("prompt_manual") or c.get("imagem_da_pessoa") or c.get("personagem")
+                or not (c.get("texto") or "").strip()):
+            continue
+        if not refazer and (e_motion(c) or falha.get("fala") == _assinatura_fala(c)):
             continue
         saida.append(c)
     return saida
@@ -1093,6 +1403,8 @@ def desfazer(projeto, n) -> bool:
                 c.pop(campo, None)
             else:
                 c[campo] = valor
+        # desfeito por alguém: a criação não faz o motion de novo nesta fala (candidatas)
+        c["motion_ia_falhou"] = {"motivo": "desfeito", "fala": _assinatura_fala(c)}
         projeto.salvar_json("cenas.json", dados)
     return True
 
