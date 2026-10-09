@@ -130,6 +130,13 @@ def visao(projeto) -> list:
     Pedido do usuário em 2026-10-05: no nunca-deve-ter-dentro-de-casa-parte-2 (30 min, 457 cenas) a escolha das
     fotos caiu toda no Qwen Flash pago, porque o Gemma gratuito estava em 429, e custou US$ 2,44: 1.351 chamadas,
     2.500 tokens de raciocínio em cada. A análise da mídia tem que ser gratuita; o pago é só a reserva, sem pensar."""
+    from . import cliente
+
+    if cliente.visao_pela_fabrica(projeto):
+        # projeto do MCP: as imagens que o vídeo captura são descritas pela API do Gemini (mcp.modelos_visao)
+        lista = [m for m in ((projeto.config.get("mcp") or {}).get("modelos_visao") or []) if m]
+        if lista:
+            return lista
     lista = [m for m in ((projeto.config.get("midia") or {}).get("modelos_visao") or []) if m]
     return lista or principais(projeto)
 
@@ -183,7 +190,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     (nunca esperar). raciocinio: a tabela de esforço por modelo no lugar de openrouter.raciocinio_por_modelo."""
     from . import cliente, pago
 
-    if cliente.atende(projeto, etapa):
+    if cliente.atende(projeto, etapa, imagens=bool(imagens) or isinstance(pedido, list)):
         # projeto do MCP: quem responde é o Claude de quem usa o MCP, pela fila (cliente.py). Se ele parou depois da
         # metade do vídeo (cliente.Reserva), a cadeia de sempre responde: os gratuitos e o pago de reserva
         try:
@@ -254,12 +261,23 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
     """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
     from . import cliente
 
-    if cliente.atende(projeto, etapa):
+    if cliente.atende(projeto, etapa, imagens=bool(imagens) or isinstance(pedido, list)):
         # o Motion IA chama a rota direto, sem passar por perguntar
         try:
             return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
         except cliente.Reserva:
             pass
+    if rota.startswith("gemini:"):
+        # a API do Google com a GEMINI_API_KEY (faturamento do AI Studio): no MCP ela descreve e escolhe as imagens no
+        # lugar do Claude do cliente (mcp.visao_pela_fabrica). Quem não responde passa a vez na cadeia
+        from . import gemini_local
+        resposta = gemini_local.perguntar(projeto, etapa, instrucoes + REGRA_DO_ALFABETO, pedido, esquema, log=log,
+                                          modelo=rota[7:], imagens=imagens, temperatura=temperatura, na_cadeia=True,
+                                          raciocinio=(projeto.config.get("mcp") or {}).get("raciocinio_gemini"))
+        faltam = [k for k in (esquema or {}).get("required", []) if not isinstance(resposta, dict) or k not in resposta]
+        if faltam:
+            raise RotaIndisponivel(f"o Gemini não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")
+        return _sem_outro_alfabeto(resposta)
     if not rota.startswith("groq:"):
         return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
                                cadeia=cadeia, raciocinio=raciocinio)

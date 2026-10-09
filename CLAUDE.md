@@ -210,6 +210,71 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   cadeia de visão, só gratuitos** (`motion_ia._recorte_da_cena`, guardado em `recorte.json`): nas fotos do mico do
   11-animais-do-brasil as contas aprovaram 8 de 8 e três ficaram com o fundo em volta. Sem recorte aprovado, a foto
   inteira entra numa moldura de papel rasgado (`moldura` nos dados), que também é colagem.
+- **Medida em caderno de campo, com a foto própria do bicho** (`motion_modelos.medida_colagem`, `fabrica/motion_figura.py`,
+  pedido do usuário em 2026-10-08, depois de 5 motions feitos à mão para a cena 191 do 11-animais-do-brasil; ele
+  escolheu o da fita métrica). Comprimento ou altura de animal: o bicho recortado como figurinha, uma fita amarela
+  desenrola da cauda ao focinho até o valor dito, o "quase / 2 metros" no alto; se a fala cita uma parte do corpo
+  ("contando a cauda achatada"), o resto apaga e ela fica em destaque com círculo à mão, seta e anotação; a função
+  ("funciona como leme") entra depois, a parte balança e entra o ícone (`ICONES`). Cada momento cai na palavra falada:
+  o modelo aponta `palavra_valor`, `palavra_parte` e `palavra_funcao`, e `motion_ia.segundos_das_palavras` acha o
+  segundo delas no `alinhamento.json`.
+  - **A foto do motion é buscada para o desenho, não herdada da cena** (pedido do usuário: "você já se limita indo
+    buscar fotos da lontra que já tem no projeto... você tem banco de imagens"). Nas 9 fotos da ariranha do projeto
+    nenhuma era de corpo inteiro de perfil. `motion_figura.figura` busca o animal nos bancos gratuitos (iNaturalist,
+    Wikimedia, Pixabay, Pexels, Unsplash; pelo nome e pelo científico), a visão gratuita escolhe a foto de corpo
+    inteiro e de perfil e diz onde o bicho está e para que lado olha, o recorte sai em várias versões (pela caixa da
+    visão, pelas margens e sem a vegetação grudada, `recorte.recortar(caixa=, sem_verde=, espelhar=)`, sempre olhando
+    para a direita) e a visão aprova uma e aponta a parte citada (sem resposta, `PARTES` dá a posição provável). Fica
+    em `motion_ia/NNNN/figura.json`; o crédito vai em `motion_foto` da cena e entra no `creditos.txt`. Vale também
+    para a `colagem_balanca`. Sem figura nem foto da cena, a medida cai na `regua`.
+  - **O clipe cobre a frase inteira** (`motion_ia.frase_da_cena`): "pode chegar a quase dois metros de comprimento,
+    contando a | a cauda achatada que funciona como leme" passa por duas cenas, e com só os 3 s da primeira a cauda
+    ficava de fora. O clipe vai da cena até o ponto final, no mesmo bloco, até `motion_ia.duracao_maxima` (8 s), sem
+    atravessar foto, imagem ou prompt da pessoa; é gravado uma vez (`NNNN_motion_frase.mp4`) e cortado num pedaço por
+    cena (`NNNN_motion.mp4`), que o render monta em sequência. As cenas ganham `motion_trecho`. O som do clipe vai
+    com a primeira cena, até o fim da frase (`midia.duracao_frase`); os pedaços seguintes não repetem o som.
+  - **Recorte limpo, conferido na conta** (`recorte.fundo_grudado`, `motion_figura.FUNDO_MAXIMO`, 4%): a visão
+    gratuita aprovou duas vezes o mico com o céu azul grudado. A fração do recorte com cor viva muito diferente da cor
+    principal do bicho mediu de 0 a 1,7% nos limpos e de 7% a 32% nos sujos; acima de 4%, o recorte nem chega à
+    visão. Sem recorte limpo, a figura é a foto inteira (`moldura`), numa moldura de papel rasgado: serve para a
+    contagem e a balança; a medida precisa do bicho recortado e cai na régua.
+  - **Desenho impossível destrava o simples** (`motion_ia.SIMPLES`): sem foto para o desenho com o bicho, o desenho
+    simples (régua, contador, balança) deixa de ser proibido pela direção de arte. Na cena 21 a contagem ficou sem
+    recorte com o contador proibido, e sobrou o HTML livre, reprovado.
+  - **O que o modelo esquece sai da fala** (`motion_ia._completar_pela_fala`): o quantificador logo antes do número
+    ("apenas cerca de duzentos micos") vira o prefixo, e a palavra do número dá o tempo em que ele entra. Número exato
+    por extenso ("duzentos") conta subindo em algarismo; `rotulo_valor` é só para o inexato ("milhares").
+- **Contagem em caderno de campo** (`motion_modelos.contagem_colagem`, 2026-10-08): quantos bichos existem ou restam.
+  O próprio animal à esquerda (a figura própria) e ele mesmo em miniatura, colorido, repetido numa grade que enche no
+  tempo do número, que conta junto; no máximo 40 na grade, cada um valendo um número redondo ("cada um = 5 micos").
+  A silhueta preta saiu: o mico sentado virou borrão e a revisão visual leu "cachorro". Gente (pessoas, vítimas) é
+  sempre o `contador`.
+- **Critério com o recorte e com a repetição** (pedido do usuário em 2026-10-08, sobre a cena 257 do
+  11-animais-do-brasil: "o motion IA deve ser extremamente criterioso, imagens assim fica basicamente estranho... e
+  também mudar a balança, que já apareceu umas 10x"):
+  - **Recorte com pontas é barrado** (`recorte.pontas`, `PONTAS_MAXIMO` 2%, junto com o fundo grudado em
+    `recorte.limpo`, nos dois caminhos: a foto própria e o recorte da foto da cena). Mede quanto do bicho some quando a
+    borda é alisada, sem a borda branca da figurinha: o pirarucu com folhas e gravetos espetados perdia 4%, os bons de
+    0,1% a 1%. A revisão visual também reprova borda serrilhada, pontas e fundo grudado (`CRITERIOS["acabamento"]`).
+  - **Cada desenho no máximo 2 vezes no vídeo** (`motion_ia.com_esgotados`, `usados_no_video`,
+    `motion_ia.repetir_no_maximo`): eram 3 balanças e 4 tipografias em 16 clipes, porque o pedido só citava as 4 cenas
+    vizinhas. Balança e bicho na balança contam juntos (`FAMILIAS`). Os esgotados entram nos proibidos e o modelo
+    recebe a contagem do vídeo.
+  - **Ficha de caderno de campo** (`motion_modelos.ficha_colagem`): dois ou três dados do mesmo bicho na mesma fala
+    ("pode passar de dois metros e meio e pesar mais de cem quilos") viram uma ficha: a foto dele e uma linha por dado,
+    com ícone de traço e o número contando no segundo em que é falado. Bicho comprido (mais de 2,2 vezes mais largo
+    que alto) fica em cima, largo, com os dados lado a lado embaixo. O pirarucu virava a terceira balança, ou a régua
+    sem o peso. A moldura usa o formato da própria foto (em 4:3 o peixe saía cortado), e o número termina de contar
+    antes do corte.
+  - **"Dois metros e meio" é 2,5 e "passar de" é "mais de"** (`motion_ia._ajustar_pela_fala`, também nos itens da
+    ficha): o modelo escreveu 2.
+  - **A revisão olha o fim do clipe parado** (o último quadro da folha é `dur - 0,12`): com o quadro a 75% ela via o
+    número ainda contando ("48 quilos") e reprovava; e o desenho pronto reprovado ganha **uma segunda opinião**
+    (`criticar`), que fica se der mais: a revisão gratuita viu "foto e texto cortados" que não existiam.
+- **A revisão visual para quando a correção sai igual** (`motion_ia._revisado`): o desenho pronto com os mesmos dados
+  dá a mesma nota; na cena 191 eram três revisões iguais, uns 4 minutos à toa.
+- O padrão do peso em `motion_modelos._INDICADO` tinha um caractere de controle no lugar do `\b` (vinha do GitHub):
+  "kg" nunca casava. Ao escrever expressão regular por script no terminal, confira se `\b` não virou o caractere 0x08.
 - **Estilo editorial Vox / SaaS** (PRD de 2026-10-05, no lugar do "Apple Event" escuro): o esqueleto dá o fundo creme
   `#F7F6F2` com grade de pontos, as cores (`--verde`, `--azul`, `--laranja`, `--grafite`), as fontes Inter e Playfair,
   a linha do tempo `tl` do GSAP pausada, `window.seekToFrame` e as peças prontas: `.m-card` (branco, raio 20px, sombra
@@ -261,6 +326,21 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
 - **Nunca para o vídeo:** falhou (sem Node, modelo fora do ar, reprovado), a cena ganha `motion_ia_falhou` (não tenta
   de novo na mesma fala) e segue o caminho de antes: a imagem de IA se estava errada, a foto que tinha se era só nota
   baixa (`motion_so`, sem pagar imagem).
+- **Perfil `perfis/motion-ai.yaml`: vídeo todo em Motion IA** (pedido do usuário em 2026-10-08, para o TipLabs). `motion_ia.tudo: true` no perfil (a `motion_ia.config` mistura o perfil por cima do `config.yaml`) faz toda cena com fala virar clipe de motion, sem o Jev decidir (`classificar` devolve True) e **antes de qualquer busca de foto** (`motion_ia.todas_as_cenas`, passo 2b da criação no site e `etapa_motion_total` no `tudo`; a busca pula cena que já tem mídia). Cena que falhar cai no caminho de sempre (foto de banco, depois IA). O perfil desliga as animações em camada. Aparece na lista de perfis do site.
+- **Estilo "colagem Vox" e perfil `perfis/motion-vox.yaml`** (pedido do usuário em 2026-10-08, depois de estudar três
+  vídeos de referência: o dos 5 passos do @thejplabs, o do Claude Code + Gemini Omni e o "How To Create VOX STYLE Animation
+  100% FREE"). `motion_ia.estilo: colagem` (`fabrica/motion_estilo.py`) põe por cima do esqueleto, sem mexer nos desenhos:
+  jornal envelhecido (manchas, anel de café, colunas, curvas de mapa, peças de jornal rasgadas, grão de papel em
+  `multiply` e vinheta), paleta contida (preto, vermelho de tinta, azul-tinta, bege; amarelo só na fita), cards como folhas
+  de papel com fita, entradas em degraus (`back.out` vira `steps(7)`, "cortar de dois em dois quadros") e **câmera travada,
+  sem zoom** (o prompt do vídeo estudado manda `camera: static, locked off`). Os ids e classes do estilo não podem
+  repetir os dos desenhos (o `#m-papel` da tipografia já colidiu com o fundo). Trocar o ease depois de criar o movimento
+  (`tween.ease(...)`) fazia o conteúdo sumir: o estilo troca no texto do js. **Desenhos de colagem de acervo**
+  (`fabrica/motion_colagem.py`, registrados no fim de `motion_modelos.py`): `documento` (folha com linhas datilografadas e
+  carimbo vermelho que bate), `barbante` (2 a 4 notas presas com alfinete, ligadas por um barbante vermelho que se
+  desenha) e `foto_recortada` (só com a foto da cena: meio-tom, fita, etiqueta preta e carimbo ligado por barbante); mais
+  `topicos`, `contraste` e `marco` (sem número e sem foto). O diretor de arte nunca os proíbe (`SEMPRE_PERMITIDOS`). Fonte
+  datilografada fica para depois: só temos Inter e Playfair (OFL) na pasta de fontes.
 - **Onde ele não entra:** a conferência do Jev não julga o clipe (`corrigir.conferiveis`), a animação em camada não
   vai por cima dele (`animacoes.elegivel`, e `animacoes._fora_do_motion_ia` para a camada de uma cena anterior no
   começo do clipe: a frase da cena 5 do natureza-teste-1min, com o véu escuro, cobria o clipe da cena 6), e ele não vai para os créditos. No editor a cena mostra o selo

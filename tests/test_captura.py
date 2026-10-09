@@ -270,3 +270,42 @@ def test_banco_caido_seguido_fica_de_fora_um_tempo(tmp_path, monkeypatch):
     for i in range(midia.QUEDAS_PARA_PAUSAR):
         assert b._buscar("pexels", "foto", f"busca {i}") == []
     assert b.bloqueada_ate.get("pexels", 0) > midia.time.time() + 60
+
+
+def test_figura_do_motion_caixa_e_parte():
+    from fabrica import motion_figura
+    assert motion_figura._caixa([10, 20, 90, 80]) == [0.1, 0.2, 0.9, 0.8]  # veio em porcentagem
+    assert motion_figura._caixa([0.5, 0.5, 0.52, 0.9]) is None            # fina demais
+    assert motion_figura._caixa(["x"]) is None
+    assert motion_figura.parte_padrao("cauda achatada") == [0.0, 0.45, 0.26, 1.0]
+    assert motion_figura.parte_padrao("mancha clara") is None
+
+
+def test_recorte_com_fundo_grudado_e_medido(tmp_path):
+    # o céu azul grudado no mico (11-animais-do-brasil): a visão gratuita aprovou; a conta separa
+    import cv2
+    import numpy as np
+    from fabrica import recorte
+    limpo = np.zeros((100, 100, 4), np.uint8)
+    limpo[20:80, 20:80] = (40, 120, 200, 255)          # um bicho alaranjado (BGR)
+    cv2.imwrite(str(tmp_path / "limpo.png"), limpo)
+    sujo = limpo.copy()
+    sujo[60:80, 20:45] = (200, 180, 20, 255)            # um pedaço azul-esverdeado grudado
+    cv2.imwrite(str(tmp_path / "sujo.png"), sujo)
+    assert recorte.fundo_grudado(tmp_path / "limpo.png") < 0.04 < recorte.fundo_grudado(tmp_path / "sujo.png")
+
+
+def test_recorte_com_pontas_espetadas_e_barrado(tmp_path):
+    # o pirarucu da cena 257 do 11-animais-do-brasil com folhas e gravetos espetados: "fica basicamente estranho"
+    import cv2
+    import numpy as np
+    from fabrica import recorte
+    liso = np.zeros((300, 600, 4), np.uint8)
+    cv2.ellipse(liso, (300, 150), (250, 80), 0, 0, 360, (60, 90, 120, 255), -1)
+    cv2.imwrite(str(tmp_path / "liso.png"), liso)
+    espetado = liso.copy()
+    for x in range(80, 520, 40):
+        cv2.line(espetado, (x, 80), (x + 10, 15), (60, 90, 120, 255), 4)
+    cv2.imwrite(str(tmp_path / "espetado.png"), espetado)
+    assert recorte.pontas(tmp_path / "liso.png") < recorte.PONTAS_MAXIMO < recorte.pontas(tmp_path / "espetado.png")
+    assert recorte.limpo(tmp_path / "liso.png") and not recorte.limpo(tmp_path / "espetado.png")

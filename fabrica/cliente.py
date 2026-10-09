@@ -44,7 +44,8 @@ ROTEIRO, VISUAL = "roteiro", "visual"
 
 def grupo(etapa) -> str:
     etapa = str(etapa or "").lower()
-    return ROTEIRO if etapa.startswith("roteirista") or "diretor" in etapa else VISUAL
+    # a orquestradora do Motion IA lê o roteiro inteiro e decide os trechos: é trabalho de roteiro, não de olhar imagem
+    return ROTEIRO if etapa.startswith("roteirista") or "diretor" in etapa or "orquestradora" in etapa else VISUAL
 
 
 class Cancelada(RuntimeError):
@@ -83,10 +84,25 @@ def em_reserva(projeto) -> bool:
         return bool(_medidas(projeto.nome).get("reserva"))
 
 
-def atende(projeto, etapa) -> bool:
+# as etapas que olham as imagens do vídeo (ou julgam o que elas mostram): com mcp.visao_pela_fabrica, a fábrica faz
+_DE_IMAGEM = ("escolha das fotos", "conferir cenas", "julgar mídia", "descri", "revisão do vídeo")
+
+
+def visao_pela_fabrica(projeto) -> bool:
+    """Projeto do MCP em que a fábrica olha as imagens (pedido do usuário em 2026-10-09): o Gemini Flash descreve e
+    escolhe as fotos e o Jev julga a descrição, para tirar do Claude do cliente o trabalho mais pesado, o de ver
+    imagens (no ouro-serra-1min, 63% do consumo). O cliente segue com o roteiro e as decisões de texto."""
+    return ativo(projeto) and bool(((getattr(projeto, "config", None) or {}).get("mcp") or {}).get("visao_pela_fabrica"))
+
+
+def atende(projeto, etapa, imagens=False) -> bool:
     """Esta etapa vai para o Claude do cliente? Projeto do MCP, menos as etapas visuais enquanto a reserva está ligada
-    (ela desliga quando o cliente volta a responder)."""
-    return ativo(projeto) and not (grupo(etapa) == VISUAL and em_reserva(projeto))
+    (ela desliga quando o cliente volta a responder) e, com visao_pela_fabrica, menos o que olha ou julga imagens."""
+    if not ativo(projeto):
+        return False
+    if visao_pela_fabrica(projeto) and (imagens or any(p in str(etapa).lower() for p in _DE_IMAGEM)):
+        return False
+    return not (grupo(etapa) == VISUAL and em_reserva(projeto))
 
 
 def ativo(projeto) -> bool:

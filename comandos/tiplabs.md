@@ -1,34 +1,43 @@
 ---
 description: Produz um vídeo narrado com a fábrica TipLabs, do roteiro ao MP4
-argument-hint: <roteiro.txt> <nome-do-video> [perfil]
+argument-hint: <roteiro.txt ou o texto do roteiro>
 model: sonnet
 ---
-Produza um vídeo com a fábrica TipLabs (MCP fabrica).
-Argumentos: $ARGUMENTS
-O primeiro é o roteiro (o caminho de um arquivo ou o próprio texto), o segundo o nome do vídeo (letras minúsculas, números e hífen) e o terceiro, opcional, o perfil do canal (padrão: documentario). Se faltar o roteiro ou o nome, pergunte ao usuário.
+Produza um vídeo com a fábrica TipLabs (MCP fabrica). O usuário só mandou o roteiro e quer receber o vídeo:
+não mostre a ele ferramentas, tarefas nem detalhes técnicos, e não pergunte nada.
+Roteiro: $ARGUMENTS
+(o caminho de um arquivo de texto ou o próprio texto do roteiro; se vier vazio, peça só o roteiro ao usuário)
 
-1. Se o roteiro acima for o caminho de um arquivo, leia o arquivo; senão ele é o próprio texto. Chame criar_video(nome,
-   roteiro=<o texto>, perfil) sem confirmar e mostre a estimativa ao usuário. Siga só se ele concordar, com
-   criar_video(nome, roteiro="", confirmar=true). Se o nome já estiver em produção, pule para o passo 2.
-2. Ciclo até o vídeo sair. Chame esperar(nome); ele devolve uma linha:
+1. Se o roteiro acima for o caminho de um arquivo, leia o arquivo; senão ele é o próprio texto. Chame
+   criar_video(roteiro=<o texto>) e guarde o NOME que ele devolve. Se o mesmo roteiro já estava em produção, ele
+   devolve o mesmo nome e o vídeo continua de onde parou.
+2. Diga ao usuário só: "Seu vídeo está sendo produzido. Vou mostrando o andamento aqui."
+3. Lance UM subagente com a ferramenta Agent (subagent_type "general-purpose", model "sonnet",
+   run_in_background true, description "Produzindo o vídeo") com o texto OPERADOR abaixo, trocando o nome. Não
+   responda tarefa nesta conversa e não chame esperar, andamento nem proximas_tarefas aqui: o operador faz tudo.
+4. Enquanto o operador trabalha, repita acompanhar(nome, ultima=<a última porcentagem que você mostrou, ou -1 na
+   primeira vez>):
+   - "SEM MUDANÇA": chame de novo, sem escrever nada.
+   - Uma linha de andamento ("Escolhendo as imagens · 45% (etapa 4 de 7) · 6min12s"): mostre ao usuário exatamente essa linha,
+     sozinha, sem comentário, e chame de novo com a porcentagem nova.
+   - "PRONTO · 100% · <tempo>": guarde o tempo e siga para o passo 5.
+   - "PAUSADO · ..." ou "PAROU · ...": mostre a frase ao usuário e pare.
+5. Quando estiver pronto (o acompanhar disse PRONTO ou o operador terminou com "pronto"): chame entregar_video(nome),
+   baixe o vídeo e o pacote do projeto para a pasta atual (curl -L -o ARQUIVO LINK) e diga ao usuário, em uma ou duas
+   linhas, que o vídeo está pronto, em quanto tempo foi produzido e onde ficou o arquivo. Se o operador terminar com "erro" ou "cancelado": diga,
+   numa linha, que a produção parou e que basta mandar o mesmo roteiro de novo com /tiplabs para continuar.
+
+OPERADOR:
+Você é o operador da fábrica de vídeos TipLabs (ferramentas do MCP fabrica) no vídeo <o nome que o criar_video devolveu>. Trabalhe em
+silêncio até o vídeo ficar pronto: não escreva nada para o usuário no caminho.
+
+Repita:
+1. esperar(nome="<o nome que o criar_video devolveu>"). Ele devolve uma linha:
    - "trabalhando" ou "tarefas já entregues": chame esperar de novo.
-   - "tarefas: roteiro N, visual M": para cada grupo com tarefas, lance um subagente com a ferramenta Agent
-     (subagent_type "general-purpose", run_in_background false): o de roteiro com model "opus", o visual com model
-     "sonnet". Se os dois grupos tiverem tarefas, lance os dois na mesma mensagem. O prompt de cada subagente é o texto
-     AJUDANTE abaixo, com o tipo ("roteiro" ou "visual") no lugar indicado. Quando voltarem, chame esperar de novo.
-   - "pronto": chame entregar_video(nome). Ele devolve o link do vídeo e o do pacote do projeto: baixe os dois para a
-     pasta atual (curl -L -o ARQUIVO LINK) e diga ao usuário onde ficaram.
-   - "erro ..." ou "cancelado": mostre ao usuário e pare.
-   Nunca responda tarefa nesta conversa, só nos subagentes: assim as imagens não se acumulam aqui e o vídeo gasta o
-   mínimo da assinatura. Não chame andamento nem proximas_tarefas aqui. Durante o ciclo, no máximo uma linha ao
-   usuário por subagente que voltar.
-
-AJUDANTE:
-Você responde tarefas da fábrica de vídeos (ferramentas do MCP fabrica) do projeto <nome do vídeo>, só do tipo <roteiro ou visual>.
-Repita até 5 vezes: proximas_tarefas(nome="<nome do vídeo>", tipo="<roteiro ou visual>", limite=2, instrucoes_que_ja_tenho="<as marcas das
-instruções que você já recebeu, separadas por vírgula>"). Se vier "Nenhuma tarefa", pare. Para cada tarefa, siga as
-instruções e o esquema dela à risca e chame responder(tarefa_id, resposta_json) com um JSON só com as chaves do esquema;
-se for recusada, corrija e responda de novo. Olhe cada imagem com atenção: o sujeito que a narração cita tem que ser
-exatamente aquele, nunca outra coisa parecida. Decida direto: as instruções de cada tarefa já dizem como julgar, então
-não delibere longamente nem reveja a resposta antes de mandar. Não escreva arquivos nem explique nada ao usuário. No
-fim, devolva uma linha só: quantas tarefas respondeu e de quais etapas.
+   - "tarefas: ...": chame proximas_tarefas(nome="<o nome que o criar_video devolveu>", limite=3, instrucoes_que_ja_tenho="<as marcas das
+     instruções que você já recebeu, separadas por vírgula>") e responda cada tarefa com responder(tarefa_id,
+     resposta_json): um JSON só com as chaves do esquema dela, seguindo as instruções à risca. Se for recusada,
+     corrija e responda de novo. Decida direto: as instruções já dizem como julgar, não delibere longamente nem reveja
+     a resposta. Depois volte ao passo 1.
+   - "pronto", "erro ..." ou "cancelado": pare.
+2. No fim, devolva uma linha só: a última linha do esperar ("pronto", "erro ..." ou "cancelado").

@@ -235,6 +235,8 @@ animacoes:
 # (true/false) e JEV_MIN_SCORE_THRESHOLD (de 0 a 10) valem por cima destes
 motion_ia:
   ativo: true
+  estilo: ""                  # "" (editorial, cards sobre creme) ou "colagem" (jornal envelhecido, estilo Vox: motion_estilo.py).
+                              # Vale para todo clipe do Motion IA, também nas cenas de um documentário comum; o perfil troca por canal
   nota_minima: 40             # de 0 a 100, como o Jev da fábrica (o mesmo NOTA_MINIMA_FIXA)
   nota_utilidade: 70          # de 0 a 100: o Jev lê o roteiro e diz se o motion explica a fala melhor que a imagem
   tentativas: 3               # pedidos ao modelo quando o código ou o HyperFrames reprovam o HTML
@@ -280,3 +282,20 @@ trilha:
   volume_db: -16              # volume da trilha gerada (o volume_musica_db do perfil tem prioridade)
   efeitos: true               # passagem, impacto, subida e toque, nos momentos que a partitura e as cenas pedem
   volume_efeitos_db: 0        # ajuste geral dos efeitos gerados
+
+# MCP (o Claude do cliente pensa o vídeo): o cliente só manda o roteiro e recebe o vídeo. Quem vende decide aqui o
+# estilo e a voz de todo vídeo do MCP (pedido do usuário em 2026-10-09: "o cliente não deve escolher nada").
+mcp:
+  perfil: documentario        # documentario (motion editorial onde ajuda) ou documentario-vox (motion em colagem Vox)
+  voz: ""                     # vazio: a voz do perfil (GenAIPro, centavos); "fish": a voz grátis da Fish Audio
+  perfis: [documentario, documentario-vox]
+  # As imagens que o vídeo captura (escolha das fotos, descrição, conferência, revisão) são vistas pela fábrica, não
+  # pelo Claude do cliente: o Gemini descreve e escolhe, e o Jev julga a descrição. Tira do cliente o trabalho mais
+  # pesado (no ouro-serra-1min, ver imagens foi 63% do consumo dele). Chave: GEMINI_API_KEY no .env (faturamento do
+  # AI Studio). Sem a chave, ou com o Gemini fora, a cadeia passa para o Qwen 3.7 Flash pago.
+  visao_pela_fabrica: true
+  raciocinio_gemini: minimal    # sem pensar: o pensamento é cobrado como escrita (108 tokens contra 0, mesma resposta)
+  modelos_visao:
+    - gemini:gemini-3.1-flash-lite   # o mais barato do Google que responde (US$ 0,25 e 1,50 por milhão de tokens; o
+                                     # 2.5-flash-lite aparece na lista mas recusa gerar; o 3.8-flash, US$ 0,75 e 3,75)
+    - qwen/qwen3.7-flash

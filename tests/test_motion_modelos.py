@@ -154,3 +154,127 @@ def test_peso_com_a_foto_do_bicho_vira_a_colagem_na_balanca():
     assert "bounce.out" in pesado["js"]
     moldura = motion_modelos.partes("colagem_balanca", {**d, "moldura": True}, 3.6, "foto.jpg")
     assert "clip-path" in moldura["css"] and "cover" in moldura["css"]
+
+
+# ---------------- a medida em caderno de campo (o clipe 1 da ariranha, escolhido pelo usuário em 2026-10-08)
+
+ARIRANHA = "chegar a quase dois metros de comprimento, contando a a cauda achatada que funciona como leme."
+
+
+def test_comprimento_com_foto_do_bicho_vira_a_medida_em_colagem():
+    assert motion_modelos.indicado("dois metros", ARIRANHA, tem_foto=True) == "medida_colagem"
+    assert motion_modelos.indicado("dois metros", ARIRANHA, tem_foto=False) == "regua"
+    dados = {"valor": 2, "unidade": "metros", "prefixo": "quase", "parte": "cauda achatada",
+             "funcao": "funciona como leme", "palavra_valor": "dois", "palavra_parte": "cauda", "palavra_funcao": "leme"}
+    # sem foto da cena, vale a figura própria dos bancos (motion_figura); sem nenhuma das duas, não
+    _, erros = motion_modelos.conferir("medida_colagem", dados, ARIRANHA, tem_foto=False, figura=True)
+    assert erros == []
+    _, erros = motion_modelos.conferir("medida_colagem", dados, ARIRANHA, tem_foto=False, figura=False)
+    assert erros and "foto" in erros[0]
+    _, erros = motion_modelos.conferir("foto_dado", {"valor": 2, "unidade": "metros"}, ARIRANHA, figura=True)
+    assert erros  # o foto_dado precisa da foto da própria cena
+    _, erros = motion_modelos.conferir("medida_colagem", {**dados, "funcao": "serve de remo"}, ARIRANHA, figura=True)
+    assert any("remo" in e for e in erros)
+
+
+def test_medida_desenha_a_fita_a_parte_e_o_leme_no_tempo_das_palavras():
+    d, _ = motion_modelos.conferir("medida_colagem", {"valor": 2, "unidade": "metros", "prefixo": "quase",
+                                                      "parte": "cauda achatada", "funcao": "funciona como leme"},
+                                   ARIRANHA, figura=True)
+    d.update(fig=(1026, 396), ext=(0.03, 0.97), parte_caixa=[0.0, 0.45, 0.26, 1.0],
+             tempos={"valor": 0.67, "parte": 2.91, "funcao": 4.69})
+    partes = motion_modelos.partes("medida_colagem", d, 5.88, "figura.png")
+    html = partes["html"]
+    assert 'url("assets/figura.png")' in partes["css"] and "2 m" in html and "quase" in html
+    assert "cauda achatada" in html and "funciona como leme" in html and "m-icone" in html  # o leme tem ícone
+    assert "2.91" in partes["js"] and "0.67" in partes["js"]
+    sem_parte = motion_modelos.partes("medida_colagem", {**d, "parte": "", "parte_caixa": None}, 3.0, "figura.png")
+    assert "m-rotulo" not in sem_parte["html"]
+
+
+def test_marcas_da_fita_pela_unidade():
+    assert motion_modelos._passo(2.12) == 0.5 and motion_modelos._passo(32) == 10
+    assert motion_modelos._abreviacao("centímetros") == "cm" and motion_modelos._abreviacao("metros") == "m"
+
+
+# ------------------------------------------- a contagem em caderno de campo (cena 21 do 11-animais-do-brasil)
+
+MICOS = "Restavam apenas cerca de duzentos micos na natureza."
+
+
+def test_contagem_de_bichos_com_foto_vira_a_grade_de_silhuetas():
+    assert motion_modelos.indicado("duzentos micos", MICOS, tem_foto=True) == ""  # "micos" não é unidade conhecida
+    assert motion_modelos.indicado("cerca de 35 animais", "cerca de 35 animais", tem_foto=True) == "contagem_colagem"
+    assert motion_modelos.indicado("135 pessoas", "135 pessoas", tem_foto=True) == "contador"  # gente nunca
+    d, erros = motion_modelos.conferir("contagem_colagem", {"valor": 200, "unidade": "micos", "prefixo": "cerca de",
+                                                            "palavra_valor": "duzentos"}, MICOS, figura=True)
+    assert erros == []
+    d.update(fig=(900, 700), tempos={"valor": 1.2})
+    partes = motion_modelos.partes("contagem_colagem", d, 4.3, "figura.png")
+    assert partes["html"].count('class="m-ic"') == 40  # 200 micos: 40 miniaturas de 5
+    assert "cada um = 5 micos" in partes["html"]
+    moldura = motion_modelos.partes("contagem_colagem", {**d, "moldura": True}, 4.3, "figura_foto.jpg")
+    assert "border-radius:50%" in moldura["css"] and "clip-path" in moldura["css"]
+
+
+def test_quantificador_no_lugar_do_numero_vai_para_o_prefixo():
+    # o modelo pôs "cerca de" no rótulo do número, e o clipe mostrou "cerca de micos" sem o 200
+    d, _ = motion_modelos.conferir("contagem_colagem", {"valor": 200, "unidade": "micos", "rotulo_valor": "cerca de"},
+                                   MICOS, figura=True)
+    assert "rotulo_valor" not in d and d["prefixo"] == "cerca de"
+    d, _ = motion_modelos.conferir("contagem_colagem", {"valor": 1000, "unidade": "indivíduos",
+                                                        "rotulo_valor": "milhares"},
+                                   "existam alguns milhares de indivíduos", figura=True)
+    assert d["rotulo_valor"] == "milhares"
+
+
+def test_kg_e_reconhecido_como_peso():
+    # o padrão tinha um caractere de controle no lugar do limite de palavra: "kg" nunca casava
+    assert motion_modelos.indicado("200 kg", "pesa 200 kg") == "balanca"
+
+
+def test_medida_leva_o_segundo_dado_da_frase_sem_outra_balanca():
+    fala = "Pode passar de dois metros e meio e pesar mais de cem quilos."
+    base = {"valor": 2.5, "unidade": "metros", "prefixo": "mais de", "valor2": 100, "unidade2": "quilos",
+            "prefixo2": "mais de", "palavra_valor2": "cem"}
+    d, erros = motion_modelos.conferir("medida_colagem", base, fala, figura=True)
+    assert erros == [] and d["valor2"] == 100
+    d.update(fig=(1200, 340), ext=(0.02, 0.98), tempos={"valor": 0.5, "valor2": 2.6})
+    partes = motion_modelos.partes("medida_colagem", d, 3.4, "figura.png")
+    assert "mais de 100 quilos" in partes["html"] and "2.6" in partes["js"]
+    d, _ = motion_modelos.conferir("medida_colagem", {**base, "unidade2": ""}, fala, figura=True)
+    assert "valor2" not in d  # sem o que mede, o segundo dado sai
+
+
+def test_dois_dados_do_mesmo_bicho_viram_a_ficha():
+    # o pirarucu da cena 257: virava a terceira balança do vídeo, ou a régua sem o peso
+    fala = "Pode passar de dois metros e meio e pesar mais de cem quilos."
+    dado = motion_ia.dado_na_fala(fala)
+    assert motion_modelos.indicado(dado, fala, tem_foto=True) == "ficha_colagem"
+    itens = [{"valor": 2.5, "unidade": "metros", "prefixo": "mais de", "palavra": "dois"},
+             {"valor": 100, "unidade": "quilos", "prefixo": "mais de", "palavra": "cem"}]
+    d, erros = motion_modelos.conferir("ficha_colagem", {"itens": itens}, fala, figura=True)
+    assert erros == [] and len(d["itens"]) == 2
+    d.update(fig=(4, 3), moldura=True, tempos={"item0": 0.4, "item1": 2.6})
+    partes = motion_modelos.partes("ficha_colagem", d, 3.4, "figura_foto.jpg")
+    assert "metros" in partes["html"] and "quilos" in partes["html"] and "2.40" in partes["js"]  # adiantado: conta antes do corte
+    _, erros = motion_modelos.conferir("ficha_colagem", {"itens": itens[:1]}, fala, figura=True)
+    assert erros  # um dado só não é ficha
+
+
+def test_desenhos_de_narracao_sem_numero_nem_foto():
+    from fabrica import motion_modelos as mm
+    fala = "Em 1875 os primeiros imigrantes italianos chegam. Produzir menos, mas muito melhor, e esperar mais."
+    d, erros = mm.conferir("marco", {"marco": "1875", "texto": "os primeiros imigrantes italianos chegam"}, fala)
+    assert not erros and "1875" in mm.partes("marco", d, 5.0)["html"]
+    d, erros = mm.conferir("marco", {"marco": "1999", "texto": "os primeiros imigrantes"}, fala)
+    assert any("número" in e for e in erros)
+    d, erros = mm.conferir("topicos", {"etapas": ["produzir menos", "muito melhor"]}, fala)
+    assert not erros and mm.partes("topicos", d, 5.0)["js"].count("m-ponto-") == 2
+    d, erros = mm.conferir("topicos", {"etapas": ["produzir menos"]}, fala)
+    assert erros
+    d, erros = mm.conferir("contraste", {"itens": [{"rotulo": "menos", "texto": "produzir menos"},
+                                                    {"rotulo": "mais", "texto": "esperar mais"}]}, fala)
+    assert not erros and "m-lado-1" in mm.partes("contraste", d, 5.0)["html"]
+    d, erros = mm.conferir("contraste", {"itens": [{"rotulo": "menos", "texto": "produzir menos"}]}, fala)
+    assert erros

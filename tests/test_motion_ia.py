@@ -3,7 +3,10 @@
 Rode com: uv run --no-sync --with pytest python -m pytest tests
 Sem rede e sem custo: os modelos e o HyperFrames são trocados por respostas prontas.
 """
+import importlib.util
 from types import SimpleNamespace
+
+import pytest
 
 from fabrica import imagens, motion_ia
 
@@ -252,7 +255,8 @@ def _revisar(monkeypatch, criticas, cfg=None):
 
     def um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=(), direcao=None):
         pedidos.append(list(erros_visuais))
-        return {"css": "", "html": "", "js": "", "modelo": "contador", "versao": len(pedidos)}
+        return {"css": "", "html": "", "js": "", "modelo": "contador", "versao": len(pedidos),
+                "dados": {"rodada": len(pedidos)}}
     monkeypatch.setattr(motion_ia, "_um_clipe", um_clipe)
     monkeypatch.setattr(motion_ia, "criticar", lambda *a, **k: fila.pop(0))
     projeto = SimpleNamespace(config={"motion_ia": {"critica": cfg or {}}})
@@ -460,3 +464,187 @@ def test_motion_desfeito_nao_volta(tmp_path):
     voltou = projeto.ler_json("cenas.json")["cenas"]
     assert voltou[0]["midia"]["arquivo"] == "midia/0015.jpg"
     assert motion_ia.candidatas(projeto, voltou) == []
+
+
+# ------------------------------ o clipe cobre a frase inteira; a palavra dá o tempo (pedido de 2026-10-08)
+
+def test_o_clipe_cobre_a_frase_ate_o_ponto():
+    todas = {
+        191: {"n": 191, "ini": 691.3, "fim": 694.26, "bloco": "b9", "texto": "chegar a quase dois metros de comprimento, contando a"},
+        192: {"n": 192, "ini": 694.26, "fim": 697.18, "bloco": "b9", "texto": "a cauda achatada que funciona como leme."},
+        193: {"n": 193, "ini": 697.18, "fim": 700.9, "bloco": "b9", "texto": "Tem o corpo alongado, pelos curtos e densos,"},
+    }
+    projeto = SimpleNamespace(config={})
+    assert [c["n"] for c in motion_ia.frase_da_cena(projeto, todas[191], todas)] == [191, 192]
+    assert [c["n"] for c in motion_ia.frase_da_cena(projeto, todas[192], todas)] == [192]
+    # nunca passa do limite nem atravessa a foto que a pessoa subiu
+    curto = SimpleNamespace(config={"motion_ia": {"duracao_maxima": 4}})
+    assert [c["n"] for c in motion_ia.frase_da_cena(curto, todas[191], todas)] == [191]
+    todas[192]["imagem_da_pessoa"] = True
+    assert [c["n"] for c in motion_ia.frase_da_cena(projeto, todas[191], todas)] == [191]
+
+
+def test_o_segundo_de_cada_palavra_vem_da_narracao(tmp_path):
+    import json
+    (tmp_path / "alinhamento.json").write_text(json.dumps({"palavras": [
+        {"texto": "chegar", "ini": 691.181}, {"texto": "dois", "ini": 691.97}, {"texto": "metros", "ini": 692.237},
+        {"texto": "cauda", "ini": 694.211}, {"texto": "leme.", "ini": 695.987}, {"texto": "Tem", "ini": 697.142}]}),
+        encoding="utf-8")
+    projeto = _Projeto(tmp_path, [])
+    cena = {"ini": 691.3, "fim": 697.18}
+    tempos = motion_ia.segundos_das_palavras(projeto, cena, {"valor": "dois", "parte": "cauda", "funcao": "leme",
+                                                             "outra": "jacaré"})
+    assert tempos == {"valor": 0.67, "parte": 2.91, "funcao": 4.69}
+
+
+def test_correcao_que_sai_igual_para_a_revisao(monkeypatch):
+    # cena 191 do 11-animais-do-brasil: o desenho pronto saiu igual três vezes, com a mesma nota
+    pedidos = []
+
+    def um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=(), direcao=None):
+        pedidos.append(1)
+        return {"css": "", "html": "", "js": "", "modelo": "medida_colagem", "dados": {"valor": 2}}
+    monkeypatch.setattr(motion_ia, "_um_clipe", um_clipe)
+    monkeypatch.setattr(motion_ia, "criticar", lambda *a, **k: _critica(7))
+    projeto = SimpleNamespace(config={"motion_ia": {"critica": {}}})
+    resultado = motion_ia._revisado(projeto, {"n": 191}, 5.9, ("", ""), None, None, (), lambda *a: None)
+    assert len(pedidos) == 2 and resultado["critica"]["menor"] == 7
+
+
+def test_o_que_o_modelo_esqueceu_sai_da_fala():
+    # cena 21 do 11-animais-do-brasil: sem o "cerca de" e com o número por extenso, sem contar
+    from fabrica import motion_modelos
+    fala = "Restavam apenas cerca de duzentos micos na natureza."
+    d, _ = motion_modelos.conferir("contagem_colagem", {"valor": 200, "unidade": "micos", "rotulo_valor": "duzentos"},
+                                   fala, figura=True)
+    assert "rotulo_valor" not in d and d["palavra_valor"] == "duzentos"
+    motion_ia._completar_pela_fala(d, fala)
+    assert d["prefixo"] == "cerca de"
+    sem_palavra = {"valor": 2}
+    motion_ia._completar_pela_fala(sem_palavra, "pode chegar a quase dois metros de comprimento")
+    assert sem_palavra == {"valor": 2, "prefixo": "quase", "palavra_valor": "dois"}
+
+
+def test_o_mesmo_desenho_no_maximo_duas_vezes_no_video(monkeypatch, tmp_path):
+    # "mudar a balança, que já apareceu umas 10x": 3 balanças e 4 tipografias em 16 clipes do 11-animais-do-brasil
+    cenas = [{"n": n, "midia": {"fonte": "motion_ia"}} for n in (91, 257, 285, 350)]
+    projeto = _Projeto(tmp_path, cenas)
+    modelos = {91: "colagem_balanca", 257: "balanca", 285: "colagem_balanca", 350: "tipografia"}
+    monkeypatch.setattr(motion_ia, "modelo_da_cena", lambda projeto, n: modelos[n])
+    assert motion_ia.usados_no_video(projeto) == {"balanca": 3, "tipografia": 1}
+    direcao = motion_ia.com_esgotados({"desenho": "colagem_balanca", "desenhos_proibidos": []}, projeto, exceto=[257])
+    assert direcao["desenho"] == "" and {"balanca", "colagem_balanca"} <= set(direcao["desenhos_proibidos"])
+    assert "tipografia" not in direcao["desenhos_proibidos"]
+
+
+def test_dois_metros_e_meio_e_passar_de_saem_da_fala():
+    # o pirarucu da cena 257: o modelo escreveu "2 metros" e esqueceu o "mais de"
+    fala = "Pode passar de dois metros e meio e pesar mais de cem quilos."
+    dados = {"itens": [{"valor": 2, "unidade": "metros", "palavra": "dois"},
+                       {"valor": 100, "unidade": "quilos", "prefixo": "mais de", "palavra": "cem"}]}
+    motion_ia._completar_pela_fala(dados, fala)
+    assert dados["itens"][0] == {"valor": 2.5, "unidade": "metros", "palavra": "dois", "prefixo": "mais de"}
+    assert dados["itens"][1]["valor"] == 100 and dados["itens"][1]["prefixo"] == "mais de"
+
+
+def test_perfil_todo_em_motion_manda_toda_cena_sem_o_jev(tmp_path, monkeypatch):
+    cenas = [{"n": 1, "texto": "Uma frase."}, {"n": 2, "texto": "Outra.", "personagem": True}]
+    projeto = _Projeto(tmp_path, cenas)
+    projeto.perfil = {"motion_ia": {"tudo": True}}
+    monkeypatch.setattr(motion_ia, "ligado", lambda p: True)
+    assert motion_ia.tudo_em_motion(projeto)
+    assert motion_ia.classificar(projeto, cenas, log=lambda *a: None) == {1: True, 2: False}
+
+
+def test_estilo_colagem_por_cima_do_esqueleto():
+    html = motion_ia.montar_html(BOM, 3.0, estilo="colagem")
+    assert 'id="m-colagem-fundo"' in html and "m-textura-papel" in html
+    assert 'ease: "steps(6)"' in html and "back.out" not in html  # a mola vira degraus
+    assert "scale: 1.05" in html and "scale: 1.03" not in html  # zoom lento de 1,0 a 1,05
+    assert 'id="m-papel"' not in html  # o id da tipografia não pode colidir com o fundo
+    assert motion_ia.montar_html(BOM, 3.0) == motion_ia.montar_html(BOM, 3.0, estilo=None)
+    assert "m-colagem-fundo" not in motion_ia.montar_html(BOM, 3.0)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("fabrica.motion_colagem") is None,
+                    reason="fabrica/motion_colagem.py (documento, barbante, foto_recortada) não está na pasta")
+def test_desenhos_de_colagem_de_acervo():
+    from fabrica import motion_modelos as mm
+    fala = "O voo decola com 239 pessoas. Nvidia, OpenAI e Oracle se ligam. É a primeira Denominação de Origem."
+    d, erros = mm.conferir("documento", {"carimbo": "239 pessoas", "linhas": ["O voo decola"]}, fala)
+    assert not erros and "239 PESSOAS" in mm.partes("documento", d, 5.0)["html"]
+    assert mm.conferir("documento", {"carimbo": "999 pessoas"}, fala)[1]  # número que a fala não diz
+    assert mm.conferir("documento", {"linhas": ["O voo"]}, fala)[1]  # sem carimbo
+    d, erros = mm.conferir("barbante", {"etapas": ["Nvidia", "OpenAI", "Oracle"]}, fala)
+    assert not erros and mm.partes("barbante", d, 5.0)["js"].count("m-fio-") == 2
+    assert mm.conferir("barbante", {"etapas": ["Nvidia"]}, fala)[1]
+    # a foto recortada só vale quando a cena tem foto
+    assert mm.conferir("foto_recortada", {"etiqueta": "Origem"}, fala)[1]
+    d, erros = mm.conferir("foto_recortada", {"etiqueta": "Denominação de Origem"}, fala, tem_foto=True)
+    assert not erros and "m-fq" in mm.partes("foto_recortada", d, 5.0, "foto.jpg")["html"]
+
+
+def test_estilo_vox_entra_pelo_perfil_ao_lado_do_motion_ia_comum(tmp_path):
+    projeto = _Projeto(tmp_path, [], config={"motion_ia": {"ativo": True, "estilo": ""}})
+    projeto.perfil = {}
+    assert motion_ia.estilo(projeto) == "" and motion_ia.linha_do_estilo(projeto) == ""
+    projeto.perfil = {"motion_ia": {"estilo": "colagem"}}  # perfil documentario-vox: só troca o estilo, o resto do config fica
+    assert motion_ia.estilo(projeto) == "colagem" and motion_ia.config(projeto)["ativo"] is True
+    assert "foto_recortada" in motion_ia.linha_do_estilo(projeto)
+    projeto.perfil = {"motion_ia": {"estilo": "vox"}}
+    assert motion_ia.estilo(projeto) == "colagem"
+
+
+def _projeto_livre(tmp_path, cenas, **extra):
+    projeto = _Projeto(tmp_path, cenas, config={"motion_ia": {"demonstracao": "livre", **extra}})
+    projeto.perfil = {}
+    projeto.roteiro = lambda: " ".join(c["texto"] for c in cenas)
+    projeto.existe = lambda nome: (tmp_path / nome).exists()
+    (tmp_path / "alinhamento.json").write_text(
+        '{"palavras": [{"c": 0, "texto": "Em", "ini": 0.1}, {"c": 3, "texto": "1875", "ini": 1.2}]}', encoding="utf-8")
+    return projeto
+
+
+def test_demonstracao_livre_aceita_desenho_figurativo_e_barra_o_que_estraga():
+    bom = {"css": "#m-g { position: absolute; left: 300px; top: 200px; width: 400px; height: 500px; }"
+                  " .m-r { font-size: 48px; }",
+           "html": '<svg id="m-g" viewBox="0 0 400 500"><path d="M 100 0 L 300 0 L 340 500 L 60 500 Z" fill="#14213D"/></svg>',
+           "js": 'tl.fromTo("#m-g", {opacity: 0, y: 60}, {opacity: 1, y: 0, duration: 0.8, ease: "elastic.out(1, 0.5)"}, 1.2);'}
+    assert motion_ia.problemas_do_codigo_livre(bom) == []  # sem mola obrigatória nem peças prontas
+    assert any("sorteio" in e for e in motion_ia.problemas_do_codigo_livre({**bom, "js": bom["js"] + "Math.random();"}))
+    assert any("pequeno" in e for e in motion_ia.problemas_do_codigo_livre({**bom, "css": ".m-r { font-size: 20px; }"}))
+    assert any("pequeno" in e for e in motion_ia.problemas_do_codigo_livre(
+        {**bom, "html": '<svg><text font-size="24">x</text></svg>'}))
+    assert motion_ia.problemas_do_codigo_livre({**bom, "js": ""})
+
+
+def test_orquestradora_guarda_o_briefing_e_ele_vai_no_pedido(tmp_path, monkeypatch):
+    from fabrica import roteirista
+    cenas = [{"n": 1, "texto": "Em 1875 chegam os imigrantes.", "ini": 0.0, "fim": 3.5, "bloco": 1},
+             {"n": 2, "texto": "Eles plantam uvas.", "ini": 3.5, "fim": 6.0, "bloco": 1}]
+    projeto = _projeto_livre(tmp_path, cenas)
+    perguntas = []
+
+    class Agente:
+        def perguntar(self, projeto, etapa, instrucoes, pedido, esquema, log=print, **resto):
+            perguntas.append(pedido)
+            return {"trechos": [{"n": 1, "funcao": "abre a história", "o_que_mostrar": "um navio que chega a uma encosta",
+                                 "elementos": ["navio", "encosta"], "evitar": ["bandeira"],
+                                 "momentos": [{"palavra": "1875", "acontece": "o ano carimba o casco"}],
+                                 "texto_na_tela": "1875", "intensidade": "rica"},
+                                {"n": 2, "funcao": "mostra o trabalho", "o_que_mostrar": "fileiras de parreiras crescendo"},
+                                {"n": 99, "funcao": "x", "o_que_mostrar": "lixo"}]}
+
+    monkeypatch.setattr(roteirista, "_modelo_agente", lambda p: Agente())
+    feitos = motion_ia.orquestrar(projeto, log=lambda *a: None)
+    assert sorted(feitos) == [1, 2] and feitos[1]["o_que_mostrar"].startswith("um navio")
+    assert "[trecho 1]" in perguntas[0] and "TRECHOS PARA DECIDIR" in perguntas[0]
+    # guardado pela fala: a segunda chamada não pergunta de novo, e a fala nova pede de novo
+    motion_ia.orquestrar(projeto, log=lambda *a: None)
+    assert len(perguntas) == 1
+    trecho = motion_ia.trechos_do_projeto(projeto)[0]
+    assert motion_ia.briefing_do_trecho(projeto, trecho)["texto_na_tela"] == "1875"
+    direcao = motion_ia._direcao_do_briefing(projeto, trecho)
+    assert direcao["leitura"].startswith("um navio") and direcao["nao_mostrar"] == ["bandeira"]
+    pedido = motion_ia._pedido_livre(projeto, trecho[0], 3.5, ("", ""), [], briefing=direcao["briefing"])
+    assert "BRIEFING DA ORQUESTRADORA" in pedido and "na palavra \"1875\"" in pedido and "1875 1.20" in pedido

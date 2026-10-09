@@ -251,6 +251,18 @@ def etapa_imagens(p, a, aprovado=False):
     log(f"  revisão em {imagens.gerar(p, log=log, direto=getattr(a, 'direto', False))}")
 
 
+def etapa_motion_total(p, a, aprovado=False):
+    """Perfil todo em motion (motion_ia.tudo): toda cena vira clipe antes da busca de fotos. Gratuito e sem bloquear."""
+    from . import motion_ia
+    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json") or not motion_ia.tudo_em_motion(p):
+        return
+    log("Motion em todas as cenas")
+    try:
+        motion_ia.todas_as_cenas(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  o motion de todas as cenas falhou, as que faltam seguem com foto: {erro}")
+
+
 def etapa_motion(p, a, aprovado=False):
     """Onde a fala traz um dado e o Jev diz que o motion ajuda o roteiro, a cena vira clipe de motion, mesmo com a
     foto aprovada (pedido do usuário em 2026-10-07). Gratuito e sem bloquear: falhou, a cena fica com a foto."""
@@ -427,7 +439,7 @@ def cmd_tudo(a):
         a._dentro_do_tudo = True  # no tudo, as etapas seguintes já completam as cenas
         etapa_narrar(p, a, aprovado=True)
         pronto.result()
-    for etapa in (etapa_cenas, etapa_midia, etapa_corrigir, etapa_imagens, etapa_motion, etapa_efeitos,
+    for etapa in (etapa_cenas, etapa_motion_total, etapa_midia, etapa_corrigir, etapa_imagens, etapa_motion, etapa_efeitos,
                   etapa_animacoes, etapa_trilha):
         etapa(p, a, aprovado=True)
     if render.com_avatar(p, a.sem_avatar):
@@ -480,6 +492,9 @@ def cmd_motion(a):
     from . import motion_ia
 
     p = Projeto(a.nome)
+    if getattr(a, "estilo", None):  # só nesta rodada: o estilo do projeto vem do perfil (motion_ia.estilo)
+        p.config["motion_ia"] = {**(p.config.get("motion_ia") or {}), "estilo": a.estilo}
+        p.perfil["motion_ia"] = {**(p.perfil.get("motion_ia") or {}), "estilo": a.estilo}
     if not p.existe("cenas.json"):
         raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
     if not motion_ia.ligado(p):
@@ -1021,6 +1036,8 @@ def main():
     s.add_argument("--cenas", type=int, nargs="*", help="só estas cenas (qualquer nota); sem isto, as de nota baixa")
     s.add_argument("--aplicar", action="store_true", help="faz os clipes (sem isto, só mostra as notas do Jev)")
     s.add_argument("--sim", action="store_true", help="aprova o gasto do Jev sem perguntar")
+    s.add_argument("--estilo", choices=["colagem", "editorial"],
+                   help="estilo dos clipes desta rodada: colagem (jornal envelhecido, estilo Vox) ou editorial (padrão)")
     s.set_defaults(funcao=cmd_motion)
 
     s = sub.add_parser("avatar-partes", help="corta a narração nos áudios que vão para o HeyGen")

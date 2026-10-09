@@ -1,0 +1,10 @@
+# Documentário comum (fotos e vídeos de banco, imagens de IA), com os clipes do Motion IA no estilo Vox de colagem de
+# jornal envelhecido: onde a fala traz um dado, uma afirmação para carimbar ou uma relação entre coisas, a cena vira
+# documento com carimbo vermelho, notas ligadas por barbante ou a própria foto da cena em meio-tom (foto_recortada).
+# As outras cenas seguem como no documentário de sempre. Para o vídeo inteiro em motion, use motion-vox.yaml.
+base: documentario.yaml
+
+nome: Documentário com Motion IA estilo Vox
+
+motion_ia:
+  estilo: colagem

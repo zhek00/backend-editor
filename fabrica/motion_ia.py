@@ -36,7 +36,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import animacoes, motion_modelos
+from . import animacoes, motion_estilo, motion_modelos
 from .util import rodar
 
 FONTE = "motion_ia"
@@ -48,7 +48,7 @@ _TRAVA_CENAS = threading.Lock()
 
 def config(projeto) -> dict:
     """motion_ia do config.yaml, com JEV_MOTION_FALLBACK_ENABLED e JEV_MIN_SCORE_THRESHOLD (0 a 10) do .env por cima."""
-    cfg = dict(projeto.config.get("motion_ia") or {})
+    cfg = {**(projeto.config.get("motion_ia") or {}), **((getattr(projeto, "perfil", None) or {}).get("motion_ia") or {})}  # o perfil manda
     ligado = os.environ.get("JEV_MOTION_FALLBACK_ENABLED")
     if ligado is not None:
         cfg["ativo"] = ligado.strip().lower() in ("1", "true", "sim", "yes")
@@ -63,6 +63,34 @@ def config(projeto) -> dict:
 
 def ligado(projeto) -> bool:
     return bool(config(projeto).get("ativo", True)) and not projeto.offline
+
+
+def tudo_em_motion(projeto) -> bool:
+    """Perfil de vídeo todo em motion (`motion_ia.tudo: true` no perfil): toda cena vira clipe, sem o Jev decidir."""
+    return ligado(projeto) and bool(config(projeto).get("tudo"))
+
+
+def todas_as_cenas(projeto, log=print) -> list:
+    """Perfil de vídeo todo em motion: antes de buscar fotos, toda cena com fala vira clipe de motion. A que falhar
+    (sem Node, modelo fora do ar, reprovada) segue o caminho de sempre: foto de banco e, por último, imagem de IA."""
+    if not tudo_em_motion(projeto):
+        return []
+    if not modelos(projeto):
+        log("  motion IA: nenhum modelo gratuito configurado, o vídeo segue com fotos")
+        return []
+    if not animacoes.node_pronto():
+        log("  motion IA: falta o Node.js 22 ou mais, o vídeo segue com fotos")
+        return []
+    cands = candidatas(projeto, [c for c in projeto.ler_json("cenas.json")["cenas"] if not (c.get("midia") or {}).get("arquivo")])
+    if not cands:
+        return []
+    log(f"  motion IA: vídeo todo em motion, {len(cands)} cena(s) viram clipe, de graça")
+    if livre(projeto):
+        try:  # a orquestradora lê o roteiro inteiro e diz o que o motion precisa mostrar em cada trecho, de uma vez
+            orquestrar(projeto, log=log)
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - sem briefing, cada clipe o pede sozinho
+            log(f"  motion IA: a orquestradora falhou ({str(e)[:120]}); cada trecho pede o próprio briefing")
+    return fazer(projeto, cands, log)
 
 
 def nota_minima(projeto) -> float:
@@ -86,6 +114,22 @@ def modelos(projeto) -> list:
     do_env = [m.strip() for m in (os.environ.get("OPENROUTER_FREE_MODELS") or "").split(",")]
     lista = [m for m in do_env if m] or config(projeto).get("modelos") or principais(projeto)
     return [m for m in lista if m and _gratuito(m)]
+
+
+def estilo(projeto) -> str:
+    """O estilo visual dos clipes: "colagem" (papel, recortes, stop-motion; motion_estilo.py) ou o editorial de sempre."""
+    nome = str(config(projeto).get("estilo") or "").strip().lower()
+    return motion_estilo.NOME if nome in (motion_estilo.NOME, "vox") else ""
+
+
+def linha_do_estilo(projeto) -> str:
+    """O que o modelo precisa saber do estilo do projeto (no estilo editorial de sempre, nada)."""
+    if estilo(projeto) != motion_estilo.NOME:
+        return ""
+    return ("\n\nESTILO DOS CLIPES DESTE PROJETO: colagem de jornal envelhecido, no jeito do Vox (folhas, notas, carimbo "
+            "vermelho, barbante, foto em meio-tom). Com a foto da cena e sem número na fala, prefira foto_recortada; "
+            "afirmação que merece destaque é documento; relação ou ciclo entre coisas é barbante. foto_dado só quando a "
+            "fala traz número.")
 
 
 def fps(projeto) -> int:
@@ -316,6 +360,8 @@ def classificar(projeto, cenas, log=print) -> dict:
     todas = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
     limiar = limiar_util(projeto)
     saida, notas = {}, {}
+    if tudo_em_motion(projeto):  # perfil todo em motion: o Jev não decide, toda cena vira clipe
+        return {c["n"]: not c.get("personagem") for c in cenas}
     for c in cenas:
         foto = foto_da_cena(projeto, c) if concreta(c) else None
         if c.get("personagem"):
@@ -551,7 +597,7 @@ _PROIBIDOS = [
     (r"fetch\(|XMLHttpRequest|import\s*\(", "chamada de rede"),
     (r"ease\s*:\s*['\"](?:linear|none|power1\.inOut)['\"]", "curva proibida (use back.out(1.7) nas entradas e power3.out nas linhas)"),
     (r"position\s*:\s*fixed", "position fixed"),
-    (r"<script|</section|<body|<html|<head", "tag de documento dentro do html (só o conteúdo da cena)"),
+    (r"<script\b|</section\b|<body\b|<html\b|<head\b", "tag de documento dentro do html (só o conteúdo da cena)"),
 ]
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F2FF]")
 
@@ -601,11 +647,11 @@ def _palavras_inventadas(partes, fala) -> list:
     return [p for p in re.findall(r"[a-z]{4,}", normal(texto)) if p not in ditas][:6]
 
 
-def montar_html(partes, dur, largura=1920, altura=1080, foto=None) -> str:
+def montar_html(partes, dur, largura=1920, altura=1080, foto=None, estilo=None) -> str:
     """O esqueleto da fábrica com o que o modelo escreveu dentro: fundo creme com pontos, as peças prontas, a
     flutuação dos cards, o traço das linhas e a faixa da legenda."""
     dur = round(dur, 3)
-    return f"""<!doctype html>
+    html = f"""<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
@@ -675,6 +721,8 @@ def montar_html(partes, dur, largura=1920, altura=1080, foto=None) -> str:
   </body>
 </html>
 """
+    return motion_estilo.aplicar(html) if estilo == motion_estilo.NOME else html
+
 
 
 def _pedido(cena, dur, vizinhas, erros, foto=False, direcao=None):
@@ -710,10 +758,12 @@ campos dela. A fábrica desenha o clipe; você só escolhe o modelo e escreve os
 Regras:
 1. Siga a DIREÇÃO DE ARTE do pedido (desenho indicado, tom e o que é proibido). Sem ela, escolha pelo SENTIDO do dado,
    não só pela unidade: velocidade é velocimetro; peso de um animal com foto é colagem_balanca (o próprio bicho na
-   balança); sem foto, peso de coisa pesada é balanca e de coisa leve ou pequena é tipografia (nunca um peso de ferro
-   para um bicho de meio quilo); tamanho é regua, quantidade de gente é contador,
-   queda ou extinção é tendencia, causa e consequência é fluxo, posição é ranking. frase só quando a fala não tem
-   número, comparação, causa nem posição.
+   balança); comprimento ou altura de animal com foto é medida_colagem (o bicho com a fita métrica); sem foto, peso
+   de coisa pesada é balanca e de coisa leve ou pequena é tipografia (nunca um peso de ferro para um bicho de meio
+   quilo); tamanho é regua, quantidade de gente é contador,
+   queda ou extinção é tendencia, causa e consequência é fluxo, posição é ranking. Sem número: afirmação para carimbar é documento, relação ou ciclo entre coisas é barbante, enumeração ou
+   argumento em pontos é topicos, dois lados opostos é contraste, fato num ano ou época é marco. frase só quando a
+   fala não tem número, comparação, causa, pontos, lados nem época.
 2. Nada inventado: valor, rótulos, etapas, nome e frase saem da fala desta cena (ou das vizinhas, para dar sentido).
 3. Variedade: quando a fala permitir mais de um modelo, não repita o que as cenas de motion vizinhas usaram.
 4. Textos curtos: topo com até 7 palavras; etapas e rótulos com até 4 palavras."""
@@ -727,10 +777,17 @@ ESQUEMA_MODELO = {
         "forma": {"type": "string"}, "direcao": {"type": "string"}, "inicio": {"type": "string"},
         "fim": {"type": "string"}, "posicao": {"type": "integer"}, "total": {"type": "integer"},
         "nome": {"type": "string"}, "frase": {"type": "string"}, "texto": {"type": "string"},
+        "marco": {"type": "string"}, "carimbo": {"type": "string"}, "etiqueta": {"type": "string"},
+        "linhas": {"type": "array", "items": {"type": "string"}},
+        "parte": {"type": "string"}, "funcao": {"type": "string"}, "palavra_valor": {"type": "string"},
+        "palavra_parte": {"type": "string"}, "palavra_funcao": {"type": "string"}, "rotulo_valor": {"type": "string"},
+        "valor2": {"type": "number"}, "unidade2": {"type": "string"}, "prefixo2": {"type": "string"},
+        "palavra_valor2": {"type": "string"},
         "tom": {"type": "string", "enum": list(motion_modelos.TONS)},
         "etapas": {"type": "array", "items": {"type": "string"}},
         "itens": {"type": "array", "items": {"type": "object", "properties": {
-            "rotulo": {"type": "string"}, "valor": {"type": "number"}}}},
+            "rotulo": {"type": "string"}, "valor": {"type": "number"}, "unidade": {"type": "string"},
+            "prefixo": {"type": "string"}, "palavra": {"type": "string"}, "texto": {"type": "string"}}}},
     },
     "required": ["modelo"],
 }
@@ -744,7 +801,7 @@ ESQUEMA_MODELO = {
 # que o espectador tem de sentir, o tom do movimento, o desenho e o que fica proibido. A unidade virou só uma
 # sugestão do código (motion_modelos.indicado), que ainda vale por cima numa regra: coisa leve nunca vai para a
 # balança. Um pedido a mais por cena, só nos gratuitos; sem resposta, vale a direção do código (nunca para o vídeo).
-VERSAO_DIRECAO = 1  # suba quando mudar as instruções: a direção guardada na pasta da cena é pedida de novo
+VERSAO_DIRECAO = 3  # suba quando mudar as instruções: a direção guardada na pasta da cena é pedida de novo
 
 INSTRUCOES_DIRECAO = """Você é o diretor de arte de um canal de documentários no estilo editorial da Vox. Uma cena
 vai virar um clipe curto de motion graphics enquanto o narrador diz a fala dela. Antes de alguém desenhar, você
@@ -765,7 +822,14 @@ tipografia, tom leve, balanca proibida, e nada de peso de ferro, bigorna ou halt
 uma tonelada" é a ideia de massa: balanca, tom pesado.
 Quando a cena TEM FOTO do animal citado, o peso dele vira colagem_balanca: o próprio bicho recortado pousando numa
 balança de cozinha, com o ponteiro e a etiqueta do valor (tom leve para o mico de meio quilo, pesado para a onça de
-cem quilos). É o mais intuitivo, e é o próprio animal, não um objeto no lugar dele.
+cem quilos). É o mais intuitivo, e é o próprio animal, não um objeto no lugar dele. Do mesmo jeito, o comprimento
+ou a altura dele vira medida_colagem: o bicho recortado com uma fita métrica até o valor, e a parte do corpo que a
+fala cita ("contando a cauda achatada que funciona como leme") em destaque, com a função anotada.
+Fala SEM número (origem, história, argumento, comparação de ideias, conclusão): não use a tipografia nem a
+balança. Enumeração ou argumento em pontos é topicos; dois lados opostos é contraste; um fato num ano ou época é
+marco; causa e consequência é fluxo; uma afirmação que merece destaque é documento (carimbo vermelho); relação ou
+ciclo entre coisas é barbante. frase é o último recurso, para uma única ideia que não cabe em nenhum desses, e
+nunca coloque topicos, contraste, marco ou fluxo em desenhos_proibidos: desenho de narração nunca estraga uma cena.
 Sem foto, prefira tipografia quando o dado é uma qualidade (leveza, pequenez, raridade, fragilidade) e não uma medida
 para comparar. Nunca escolha foto_dado nem colagem_balanca se o pedido disser que a cena não tem foto.
 
@@ -798,11 +862,15 @@ def direcao_pelo_codigo(cena, foto=False) -> dict:
     return direcao
 
 
+SEMPRE_PERMITIDOS = ("topicos", "contraste", "marco", "fluxo", "documento", "barbante")
+
+
 def _limpar_direcao(resposta, cena, foto=False) -> dict:
     """A resposta do diretor conferida: desenho e proibidos só do catálogo, e a regra do código por cima."""
     base = direcao_pelo_codigo(cena, foto)
     modelos_validos = set(motion_modelos.MODELOS) - (set() if foto else set(motion_modelos.COM_FOTO))
     proibidos = [p for p in (resposta.get("desenhos_proibidos") or []) if p in motion_modelos.MODELOS]
+    proibidos = [p for p in proibidos if p not in SEMPRE_PERMITIDOS]  # os desenhos de narração nunca estragam a cena
     proibidos = list(dict.fromkeys(proibidos + base["desenhos_proibidos"]))
     desenho = str(resposta.get("desenho") or "").strip()
     if desenho not in modelos_validos or desenho in proibidos:
@@ -936,7 +1004,7 @@ def texto_da_direcao(direcao) -> str:
     return "\n".join(linhas)
 
 
-def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados, direcao=None):
+def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados, direcao=None, figura=False):
     texto = (cena.get("texto") or "").strip()
     linhas = [f"Fala desta cena: \"{texto}\"", f"Duração: {dur:.2f} s"]
     if vizinhas[0]:
@@ -946,19 +1014,154 @@ def _pedido_modelo(cena, dur, vizinhas, erros, foto, usados, direcao=None):
     dado = dado_na_fala(texto)
     if dado:
         linhas.append(f"Dado que o código achou na fala: {dado}")
-        if motion_modelos.indicado(dado, texto, foto) and not (direcao or {}).get("desenho"):
-            linhas.append(f"Modelo indicado para esse dado: {motion_modelos.indicado(dado, texto, foto)}")
+        indicado = motion_modelos.indicado(dado, texto, foto or figura)
+        if indicado and not (direcao or {}).get("desenho"):
+            linhas.append(f"Modelo indicado para esse dado: {indicado}")
     if direcao:
         linhas.append(texto_da_direcao(direcao))
     if (cena.get("mostrar") or "").strip():
         linhas.append(f"O que o agente de roteiro pediu para a imagem da cena (só contexto): {cena['mostrar'].strip()}")
-    linhas.append("A cena TEM FOTO (os modelos foto_dado e colagem_balanca podem ser usados)." if foto else
-                  "A cena NÃO tem foto: não use foto_dado nem colagem_balanca.")
+    if foto:
+        linhas.append("A cena TEM FOTO (foto_dado pode ser usado).")
+    if foto or figura:
+        citado = (cena.get("animal") or cena.get("exato") or cena.get("sujeito") or "").strip()
+        linhas.append(f"Dá para recortar o sujeito ({citado}) de uma foto: colagem_balanca (peso) e medida_colagem "
+                      "(comprimento, altura) podem ser usados.")
+    else:
+        linhas.append("Não há foto do sujeito: não use foto_dado, colagem_balanca nem medida_colagem.")
     if usados:
         linhas.append("Modelos das cenas de motion vizinhas: " + ", ".join(usados) + ". Evite repetir.")
+    if (direcao or {}).get("usados_no_video"):
+        linhas.append("Já usados no vídeo: " + direcao["usados_no_video"] + ". Os que chegaram ao limite estão nos "
+                      "proibidos: a mesma demonstração repetida cansa quem assiste.")
     if erros:
         linhas.append("\nA resposta anterior foi REPROVADA por estes motivos. Corrija todos:\n- " + "\n- ".join(erros[:8]))
     return "\n".join(linhas)
+
+
+def pode_ter_figura(cena) -> bool:
+    """A cena cita um animal ou uma coisa exata: dá para buscar a foto própria dele nos bancos (motion_figura)."""
+    return bool((cena.get("animal") or cena.get("exato") or "").strip())
+
+
+def _normal(texto) -> str:
+    return unicodedata.normalize("NFKD", str(texto or "").lower()).encode("ascii", "ignore").decode()
+
+
+def segundos_das_palavras(projeto, cena, palavras) -> dict:
+    """{chave: o segundo, desde o começo da cena, em que a palavra é falada}, pelo alinhamento.json. As palavras são
+    as que o modelo apontou ("dois", "cauda", "leme"); a que não aparece na fala da cena fica de fora."""
+    try:
+        faladas = projeto.ler_json("alinhamento.json").get("palavras") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    ini, fim = float(cena["ini"]), float(cena["fim"])
+    trecho = [w for w in faladas if ini - 0.15 <= float(w.get("ini", -1)) < fim]
+    saida = {}
+    for chave, palavra in palavras.items():
+        alvo = re.sub(r"[^a-z0-9]", "", _normal(palavra))[:5]
+        if not alvo:
+            continue
+        achada = next((w for w in trecho if re.sub(r"[^a-z0-9]", "", _normal(w.get("texto")))[:5] == alvo), None)
+        if achada is not None:
+            saida[chave] = round(max(0.05, float(achada["ini"]) - ini), 2)
+    return saida
+
+
+def _dimensoes(arquivo):
+    """(largura, altura) da figurinha e onde o bicho começa e termina na largura dela (de 0 a 1)."""
+    from PIL import Image
+    with Image.open(arquivo) as imagem:
+        largura, altura = imagem.size
+        alfa = imagem.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 128 else 0)
+        caixa = alfa.getbbox() or (0, 0, largura, altura)
+    return (largura, altura), (round(caixa[0] / largura, 3), round(caixa[2] / largura, 3))
+
+
+def _completar_pela_fala(dados, texto) -> None:
+    """O que o modelo esqueceu e a fala diz: o quantificador logo antes do número ("apenas cerca de duzentos micos":
+    "cerca de") vira o prefixo, e a palavra do número vira a palavra_valor (o tempo em que ele entra). Na cena 21 do
+    11-animais-do-brasil o clipe saiu sem o "cerca de" e com o número em tempo chutado."""
+    if dados.get("valor"):
+        dados["valor"], palavra, prefixo = _ajustar_pela_fala(
+            dados["valor"], dados.get("palavra_valor") or dados.get("rotulo_valor") or "", dados.get("prefixo"), texto)
+        dados["prefixo"] = prefixo or dados.get("prefixo") or ""
+        if palavra and not dados.get("palavra_valor"):
+            dados["palavra_valor"] = palavra
+    for item in dados.get("itens") or []:
+        if isinstance(item, dict) and item.get("valor"):
+            item["valor"], palavra, prefixo = _ajustar_pela_fala(item["valor"], item.get("palavra") or "",
+                                                                 item.get("prefixo"), texto)
+            item["prefixo"] = prefixo or item.get("prefixo") or ""
+            item["palavra"] = item.get("palavra") or palavra
+
+
+# "pode passar de dois metros": passar de é mais de
+_ANTES_DO_NUMERO = {"passar de": "mais de", "passa de": "mais de", "passar dos": "mais de", "chegar a": "até"}
+
+
+def _ajustar_pela_fala(valor, palavra, prefixo, texto):
+    """(valor, palavra do número, prefixo) conferidos na fala: "dois metros e meio" é 2,5 (no pirarucu da cena 257 o
+    modelo escreveu 2), e o quantificador logo antes do número vira o prefixo, se o modelo não deu um."""
+    palavra = (palavra or "").split()
+    numero = re.escape(palavra[0]) if palavra else _NUMEROS
+    achado = re.search(rf"\b((?:mais|menos)\s+de|cerca\s+de|quase|apenas|s[óo]|at[ée]|pouco\s+mais\s+de|"
+                       rf"aproximadamente|perto\s+de|passar?\s+d[eo]s?|chegar\s+a)\s+({numero})\b", texto or "", re.I)
+    solto = achado or re.search(rf"\b({numero})\b", texto or "", re.I)
+    if not solto:
+        return valor, "", ""
+    palavra_achada = solto.group(2) if achado else solto.group(1)
+    novo_prefixo = ""
+    if achado and not prefixo:
+        dito = " ".join(achado.group(1).split()).lower()
+        novo_prefixo = _ANTES_DO_NUMERO.get(dito, dito)
+    if abs(valor - round(valor)) < 1e-9 and re.search(rf"\b{re.escape(palavra_achada)}\s+\w+\s+e\s+mei[oa]\b",
+                                                      texto or "", re.I):
+        valor += 0.5
+    return valor, palavra_achada, novo_prefixo
+
+
+# Pedido do usuário em 2026-10-08: "mudar a balança, que já apareceu umas 10x". No 11-animais-do-brasil eram 3
+# balanças e 4 tipografias em 16 clipes, porque o pedido só citava as 4 cenas vizinhas. Agora cada desenho entra no
+# máximo motion_ia.repetir_no_maximo vezes (2) no vídeo inteiro; os parecidos contam juntos (FAMILIAS).
+FAMILIAS = {"colagem_balanca": "balanca", "foto_dado": "foto_dado", "tipografia": "tipografia"}
+
+
+def usados_no_video(projeto, exceto=()) -> dict:
+    """{desenho: quantas vezes} nos clipes de motion do vídeo, pela família (balança e bicho na balança juntos)."""
+    from collections import Counter
+    contagem = Counter()
+    for c in projeto.ler_json("cenas.json")["cenas"]:
+        if not e_motion(c) or c["n"] in exceto or (c.get("motion_trecho") and c["n"] != c["motion_trecho"][0]):
+            continue
+        modelo = modelo_da_cena(projeto, c["n"])
+        if modelo and modelo != "livre":
+            contagem[FAMILIAS.get(modelo, modelo)] += 1
+    return dict(contagem)
+
+
+def com_esgotados(direcao, projeto, exceto=()) -> dict:
+    """A direção de arte com os desenhos que já chegaram ao limite no vídeo entre os proibidos."""
+    limite = int(config(projeto).get("repetir_no_maximo", 2))
+    try:
+        usados = usados_no_video(projeto, exceto)
+    except (OSError, ValueError, KeyError):
+        return direcao
+    familias = {f for f, k in usados.items() if k >= limite}
+    esgotados = [m for m in motion_modelos.MODELOS if FAMILIAS.get(m, m) in familias]
+    if not esgotados and not usados:
+        return direcao
+    saida = {**direcao, "esgotados": esgotados,
+             "usados_no_video": ", ".join(f"{f} {k}x" for f, k in sorted(usados.items(), key=lambda x: -x[1])),
+             "desenhos_proibidos": list(dict.fromkeys((direcao.get("desenhos_proibidos") or []) + esgotados))}
+    if saida.get("desenho") in esgotados:
+        saida["desenho"] = ""
+    return saida
+
+
+# o desenho simples de cada desenho com o bicho recortado, para quando não há foto que sirva
+SIMPLES = {"medida_colagem": "regua", "contagem_colagem": "contador", "colagem_balanca": "balanca",
+           "ficha_colagem": "tipografia"}
 
 
 def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_iniciais=(),
@@ -967,34 +1170,83 @@ def _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, 
     Devolve as partes aprovadas, com o modelo e os dados, ou levanta RuntimeError.
     erros_iniciais: o que a crítica visual apontou no clipe anterior (vai no primeiro pedido).
     direcao: a direção de arte (dirigir): o desenho indicado, os proibidos e o tom."""
+    from . import motion_figura
     texto = cena.get("texto") or ""
     fala = " ".join([vizinhas[0], texto, vizinhas[1]])
-    direcao = direcao or direcao_pelo_codigo(cena, bool(nome_foto))
-    sugerido = direcao.get("desenho") or motion_modelos.indicado(dado_na_fala(texto), texto, bool(nome_foto))
+    figura_possivel = pode_ter_figura(cena)
+    com_figura = bool(nome_foto) or figura_possivel
+    direcao = direcao or direcao_pelo_codigo(cena, com_figura)
+    sugerido = direcao.get("desenho") or motion_modelos.indicado(dado_na_fala(texto), texto, com_figura)
+    if sugerido in (direcao.get("desenhos_proibidos") or []):
+        sugerido = ""  # o desenho que a unidade indicaria já se esgotou no vídeo
     erros = list(erros_iniciais)
     for tentativa in range(int(config(projeto).get("tentativas_modelo", 3))):
         resposta = _perguntar(projeto, "motion IA: modelo", INSTRUCOES_MODELO,
-                              _pedido_modelo(cena, dur, vizinhas, erros, bool(nome_foto), usados, direcao),
+                              _pedido_modelo(cena, dur, vizinhas, erros, bool(nome_foto), usados, direcao,
+                                             figura=figura_possivel) + linha_do_estilo(projeto),
                               ESQUEMA_MODELO, log, temperatura=0.4 if tentativa else 0.2)
         modelo = str(resposta.get("modelo") or "").strip()
         dados, erros = motion_modelos.conferir(modelo, resposta, fala, tem_foto=bool(nome_foto), fala_da_cena=texto,
-                                               sugerido=sugerido, proibidos=direcao.get("desenhos_proibidos") or ())
+                                               sugerido=sugerido, proibidos=direcao.get("desenhos_proibidos") or (),
+                                               figura=figura_possivel)
         if erros:
             continue
-        if modelo in ("tipografia", "colagem_balanca") and direcao.get("tom") in motion_modelos.TONS:
+        _completar_pela_fala(dados, texto)
+        if modelo in ("tipografia", "colagem_balanca", "medida_colagem") and direcao.get("tom") in motion_modelos.TONS:
             dados["tom"] = direcao["tom"]  # o movimento é decisão da direção de arte
-        figura = None
-        if modelo == "colagem_balanca":
-            figura = _recorte_da_cena(projeto, pasta, nome_foto, cena, log)
-            dados["moldura"] = figura is None  # sem recorte aprovado, a foto inteira na moldura de papel rasgado
-            figura = figura or nome_foto
+        figura, credito = None, None
+        if modelo in ("colagem_balanca", "medida_colagem", "contagem_colagem", "ficha_colagem"):
+            # a foto própria do sujeito, buscada nos bancos para o desenho; sem ela, o recorte da foto da cena
+            propria = motion_figura.figura(projeto, pasta, cena, parte=dados.get("parte") or "", log=log) \
+                if figura_possivel else None
+            moldura = False
+            if propria:
+                figura, credito = propria["arquivo"], propria.get("credito")
+                moldura = bool(propria.get("moldura"))  # sem recorte limpo: a foto inteira, numa moldura
+                if modelo == "medida_colagem":
+                    dados["parte_caixa"] = propria.get("parte")
+            elif nome_foto:
+                figura = _recorte_da_cena(projeto, pasta, nome_foto, cena, log)
+                if figura is None:
+                    figura, moldura = nome_foto, True
+                if modelo == "medida_colagem":
+                    dados["parte_caixa"] = motion_figura.parte_padrao(dados.get("parte"))
+            if figura is None or (moldura and modelo == "medida_colagem"):
+                # a medida precisa do bicho recortado: sem ele, vale o desenho simples, mesmo que a direção de arte
+                # o tenha proibido (cena 21 do 11-animais-do-brasil: contagem sem recorte e contador proibido, e
+                # sobrou só o HTML livre)
+                simples = SIMPLES[modelo]
+                if simples in (direcao.get("esgotados") or []):
+                    simples = ""  # o simples também já se esgotou no vídeo: o modelo escolhe outro desenho
+                direcao = {**direcao, "desenho": simples,
+                           "desenhos_proibidos": [d for d in direcao.get("desenhos_proibidos") or [] if d != simples]
+                           + [modelo]}
+                sugerido = simples
+                erros = [f"não há foto do sujeito para o {modelo}: " + (f"use o modelo {simples}" if simples else
+                                                                          "escolha outro desenho que a fala permita")]
+                continue
+            dados["moldura"] = moldura
+            if modelo == "ficha_colagem":
+                # o formato da própria foto, também na moldura: o pirarucu comprido da Wikimedia, espremido em 4:3,
+                # saía cortado ao meio
+                dados["fig"] = _dimensoes(pasta / "assets" / figura)[0]
+                dados["tempos"] = segundos_das_palavras(projeto, cena, {
+                    f"item{k}": item.get("palavra") or "" for k, item in enumerate(dados["itens"])})
+            if modelo == "contagem_colagem":
+                dados["fig"] = _dimensoes(pasta / "assets" / figura)[0]
+                dados["tempos"] = segundos_das_palavras(projeto, cena, {"valor": dados.get("palavra_valor") or ""})
+            if modelo == "medida_colagem":
+                dados["fig"], dados["ext"] = _dimensoes(pasta / "assets" / figura)
+                dados["tempos"] = segundos_das_palavras(projeto, cena, {
+                    "valor": dados.get("palavra_valor") or "", "parte": dados.get("palavra_parte") or "",
+                    "funcao": dados.get("palavra_funcao") or "", "valor2": dados.get("palavra_valor2") or ""})
         partes = motion_modelos.partes(modelo, dados, dur, figura)
-        (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto if modelo == "foto_dado" else None),
+        (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto if modelo in ("foto_dado", "foto_recortada") else None, estilo=estilo(projeto)),
                                           encoding="utf-8")
         erros = [e for e in animacoes._erros_para_o_modelo(animacoes._conferir(projeto, pasta, clipe=True))]
         if not erros:
             return {**partes, "modelo": modelo, "dados": dados, "versao_modelos": motion_modelos.VERSAO,
-                    "foto": nome_foto if modelo == "foto_dado" else "", "direcao": direcao}
+                    "foto": nome_foto if modelo == "foto_dado" else "", "direcao": direcao, "credito": credito}
     raise RuntimeError("; ".join(erros)[:300] or "o modelo não respondeu")
 
 
@@ -1021,7 +1273,8 @@ CRITERIOS = {
     "movimento": "comparando os quadros, a cena se monta ao longo do tempo, sem tela vazia ou parada demais, e o "
                  "último quadro está completo?",
     "acabamento": "parece motion graphics de um canal grande (Vox), e não um slide amador? Hierarquia clara, cores "
-                  "contidas, uma cor de destaque",
+                  "contidas, uma cor de destaque. Bicho recortado com borda serrilhada, pontas espetadas (folhas, "
+                  "gravetos), pedaços do fundo grudados ou partes do corpo cortadas fica estranho: nota baixa",
 }
 
 INSTRUCOES_CRITICA = """Você é o diretor de arte que aprova os clipes de motion graphics de um canal de documentários
@@ -1030,7 +1283,8 @@ no alto) e a fala da cena. O clipe entra no vídeo no lugar de uma foto, enquant
 
 O que é de propósito e NÃO é problema: o fundo creme com grade de pontos, a faixa que escurece a parte de baixo (é onde
 a legenda vai entrar, por isso nada importante fica ali), os cards brancos de cantos arredondados, a palavra de
-destaque em serifa itálica colorida, o primeiro quadro ainda incompleto (as coisas estão entrando).
+destaque em serifa itálica colorida, o primeiro quadro ainda incompleto (as coisas estão entrando), e o número
+que ainda está contando (subindo do zero) nos quadros do meio: o número que vale é o do ÚLTIMO quadro.
 
 Dê uma nota de 1 a 10 a cada critério (10 é pronto para publicar, 8 é bom, 5 é fraco, 1 é inaceitável):
 """ + "\n".join(f"- {k}: {v}" for k, v in CRITERIOS.items()) + """
@@ -1061,7 +1315,9 @@ def _folha_de_contato(projeto, pasta, dur):
     """Os quadros do clipe numa folha só, pelo `hyperframes snapshot`, sem gravar o MP4. None se não saiu."""
     destino = pasta / "quadros"
     shutil.rmtree(destino, ignore_errors=True)
-    momentos = sorted({round(min(0.6, dur * 0.2), 2), round(dur * 0.45, 2), round(dur * 0.75, 2)})
+    # o último quadro é o fim do clipe, já parado: com o quadro a 75%, a revisão gratuita via o número ainda
+    # contando ("48 quilos" no lugar de 100, cena 257 do 11-animais-do-brasil) e reprovava a fidelidade
+    momentos = sorted({round(min(0.6, dur * 0.2), 2), round(dur * 0.45, 2), round(max(dur * 0.5, dur - 0.12), 2)})
     # --describe=false: sem isso o HyperFrames manda os quadros para o Gemini, que a fábrica não usa
     r = animacoes._hyperframes(projeto, ["snapshot", "--at", ",".join(f"{t:.2f}" for t in momentos),
                                          "--describe=false", "-o", str(destino), "."], pasta, 240)
@@ -1130,6 +1386,20 @@ def criticar(projeto, pasta, cena, dur, aprovado, vizinhas, log=print, direcao=N
         log(f"  motion IA: cena {cena['n']}, nenhum modelo gratuito fez a revisão visual ({str(e)[:100]}); segue sem ela")
         return None
     critica = _ler_critica(resposta)
+    if (critica is not None and aprovado.get("modelo") not in (None, "livre")
+            and critica["menor"] < float(critica_config(projeto)["aceitavel"])):
+        # segunda opinião antes de jogar fora um desenho pronto: a revisão gratuita reprovou o pirarucu da cena 257
+        # por "foto e texto cortados" que não existiam. Fica a melhor das duas
+        try:
+            outra = _ler_critica(openrouter_local.VISAO.perguntar(
+                projeto, "motion IA: revisão visual (segunda opinião)", INSTRUCOES_CRITICA,
+                _pedido_critica(cena, dur, aprovado, vizinhas, direcao), ESQUEMA_CRITICA, log=log, imagens=[folha],
+                temperatura=0.5, so_gratuitos=True))
+        except (RuntimeError, SystemExit):
+            outra = None
+        if outra is not None and _chave(outra) > _chave(critica):
+            log(f"  motion IA: cena {cena['n']}, a segunda opinião deu mais: {_resumo(outra)}")
+            critica = outra
     if critica is not None:
         shutil.copy2(folha, pasta / "revisao.jpg")  # a folha da última revisão fica, para a pessoa ver o que foi julgado
     return critica
@@ -1174,7 +1444,7 @@ def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_
             erros.append("usa palavras que a fala não diz (" + ", ".join(inventadas) + "): só palavras da fala")
         if erros:
             continue
-        (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto), encoding="utf-8")
+        (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto, estilo=estilo(projeto)), encoding="utf-8")
         brutos = animacoes._conferir(projeto, pasta, clipe=True)
         erros = animacoes._erros_para_o_modelo(brutos)
         if any(e.startswith(animacoes._ESTOURO_NO_CLIPE) for e in brutos):
@@ -1186,9 +1456,408 @@ def _pelo_html_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_
     raise RuntimeError("reprovado na conferência: " + "; ".join(erros)[:300])
 
 
+# ------------------------------------------------------------- a IA orquestradora (pedido de 2026-10-08)
+
+# Pedido do usuário em 2026-10-08: "deve ter um auxílio da IA orquestradora, que ela basicamente vai dizer o que
+# realmente o motion precisa mostrar na cena, para auxiliar corretamente o roteiro". Quem desenha cada clipe só via a
+# fala da cena e as vizinhas: não sabia qual o papel daquela frase no argumento, nem o que as outras cenas já mostraram.
+# A orquestradora é o agente de roteiro (roteirista._modelo_agente): lê o roteiro inteiro e o mapa, e para cada trecho
+# (uma frase falada) diz O QUE o motion precisa mostrar. O gerador livre decide COMO desenhar e a revisão visual confere
+# o clipe contra esse briefing.
+VERSAO_ORQUESTRA = 1  # suba quando mudar as instruções: os briefings guardados são pedidos de novo
+
+INSTRUCOES_ORQUESTRA = """Você é o diretor-orquestrador de um vídeo explicativo feito só de motion graphics (sem fotos
+nem filmagens). Você leu o roteiro inteiro. Para cada TRECHO (uma frase falada) abaixo, decida o que o motion
+PRECISA mostrar para o roteiro ser entendido e sentido naquele ponto. Quem desenha o clipe segue o seu briefing: você
+diz O QUE, ele decide COMO desenhar.
+
+Regras:
+1. Serve ao argumento. Diga primeiro a função do trecho no roteiro (abre o assunto, prova, contrasta, vira a história,
+   dá a consequência, fecha), depois o que o espectador precisa ver para essa função se cumprir. Motion não decora:
+   mostra a ideia.
+2. Concreto. Escreva o que aparece, o que se move e como as partes se relacionam (uma pilha maior que a outra, um
+   líquido que sobe, um caminho que se bifurca, um relógio que acelera). Nada de "um visual bonito" ou "algo dinâmico".
+3. Fiel. Nada que contradiga a fala ou o roteiro, nenhum fato ou número que o roteiro não diga. Metáfora é bem-vinda
+   quando explica; se pode ser lida como fato falso, evite e diga em "evitar".
+4. Continuidade e variedade. A lista "JÁ DECIDIDO" mostra o que os trechos anteriores mostram. Não repita a mesma
+   metáfora nem a mesma estrutura em trechos próximos; quando o roteiro RETOMA um tema (o contraste do começo volta
+   no fim), retome o mesmo motivo visual para dar unidade.
+5. Momentos. Diga em que palavra da fala cada coisa importante acontece ("na palavra 1875 o ano aparece").
+6. Texto na tela: no máximo 8 palavras, todas da fala (um número, um nome, a palavra-chave). Vazio se o desenho basta.
+7. Intensidade: "rica" quando o trecho carrega a ideia central ou um dado; "simples" quando é só transição curta, e
+   então o briefing é uma imagem única e limpa.
+Responda em português, com um item para CADA trecho, pelo número n."""
+
+ESQUEMA_ORQUESTRA = {
+    "type": "object",
+    "properties": {"trechos": {"type": "array", "items": {"type": "object", "properties": {
+        "n": {"type": "integer"}, "funcao": {"type": "string"}, "o_que_mostrar": {"type": "string"},
+        "elementos": {"type": "array", "items": {"type": "string"}},
+        "momentos": {"type": "array", "items": {"type": "object", "properties": {
+            "palavra": {"type": "string"}, "acontece": {"type": "string"}}}},
+        "evitar": {"type": "array", "items": {"type": "string"}}, "texto_na_tela": {"type": "string"},
+        "intensidade": {"type": "string"}},
+        "required": ["n", "funcao", "o_que_mostrar"]}}},
+    "required": ["trechos"],
+}
+
+
+def _arquivo_da_orquestra(projeto):
+    return projeto.pasta / "motion_ia" / "orquestra.json"
+
+
+def _marca_do_trecho(trecho) -> str:
+    texto = " ".join((c.get("texto") or "").strip() for c in trecho)
+    return hashlib.sha1(f"v{VERSAO_ORQUESTRA}|{texto}".encode("utf-8")).hexdigest()[:12]
+
+
+def _briefings(projeto) -> dict:
+    try:
+        return json.loads(_arquivo_da_orquestra(projeto).read_text(encoding="utf-8")).get("trechos") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _guardar_briefings(projeto, novos) -> None:
+    with _TRAVA_CENAS:
+        guardados = _briefings(projeto)
+        guardados.update(novos)
+        arquivo = _arquivo_da_orquestra(projeto)
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        arquivo.write_text(json.dumps({"versao": VERSAO_ORQUESTRA, "trechos": guardados}, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+
+
+def trechos_do_projeto(projeto) -> list:
+    """Os trechos (frases) do vídeo, como o `fazer` os corta: cada um é a lista das cenas que um clipe cobre."""
+    todas = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+    trechos, cobertas = [], set()
+    for n in sorted(todas):
+        c = todas[n]
+        if n in cobertas or c.get("personagem") or not (c.get("texto") or "").strip():
+            continue
+        trecho = frase_da_cena(projeto, c, todas)
+        cobertas.update(x["n"] for x in trecho)
+        trechos.append(trecho)
+    return trechos
+
+
+def briefing_do_trecho(projeto, trecho):
+    """O briefing guardado do trecho (a mesma fala), ou None."""
+    achado = _briefings(projeto).get(str(trecho[0]["n"]))
+    return achado if achado and achado.get("marca") == _marca_do_trecho(trecho) else None
+
+
+def _linha_do_briefing(b) -> str:
+    return f"trecho {b['n']}: {b.get('o_que_mostrar', '')}"[:260]
+
+
+def _limpar_briefing(item, trecho) -> dict:
+    lista = lambda v: [" ".join(str(x).split())[:120] for x in (v or []) if str(x).strip()][:8]
+    momentos = [{"palavra": " ".join(str(m.get("palavra") or "").split())[:30],
+                 "acontece": " ".join(str(m.get("acontece") or "").split())[:140]}
+                for m in item.get("momentos") or [] if isinstance(m, dict) and str(m.get("acontece") or "").strip()][:6]
+    texto = " ".join(str(item.get("texto_na_tela") or "").split()[:8])
+    return {"n": trecho[0]["n"], "marca": _marca_do_trecho(trecho),
+            "funcao": " ".join(str(item.get("funcao") or "").split())[:160],
+            "o_que_mostrar": " ".join(str(item.get("o_que_mostrar") or "").split())[:500],
+            "elementos": lista(item.get("elementos")), "momentos": momentos, "evitar": lista(item.get("evitar")),
+            "texto_na_tela": texto,
+            "intensidade": "simples" if str(item.get("intensidade") or "").lower().startswith("s") else "rica"}
+
+
+def orquestrar(projeto, trechos=None, log=print) -> dict:
+    """A orquestradora (o agente de roteiro) lê o roteiro e o mapa e diz, trecho a trecho, o que o motion precisa
+    mostrar. Guardado em motion_ia/orquestra.json; só pede de novo o trecho cuja fala mudou. Devolve {n: briefing}.
+    Nunca para o vídeo: o trecho sem briefing segue só com a fala e as vizinhas."""
+    from . import corrigir, roteirista
+    trechos = trechos if trechos is not None else trechos_do_projeto(projeto)
+    guardados = _briefings(projeto)
+    faltam = [t for t in trechos if not (guardados.get(str(t[0]["n"])) or {}).get("marca") == _marca_do_trecho(t)]
+    if not faltam:
+        return {int(k): v for k, v in guardados.items()}
+    mapa = roteirista._mapa_para_o_modelo(projeto.ler_json("roteiro_mapa.json")) if projeto.existe("roteiro_mapa.json") else ""
+    roteiro = projeto.roteiro()
+    log(f"  motion IA: a orquestradora decide o que o motion mostra em {len(faltam)} trecho(s)")
+    ja = [_linha_do_briefing(b) for k, b in sorted(guardados.items(), key=lambda x: int(x[0]))][-14:]
+    por_bloco, lote = [], []
+    for t in faltam:  # lotes de até 8 trechos do mesmo bloco
+        if lote and (len(lote) >= 8 or lote[0][0].get("bloco") != t[0].get("bloco")):
+            por_bloco.append(lote)
+            lote = []
+        lote.append(t)
+    if lote:
+        por_bloco.append(lote)
+    agente = roteirista._modelo_agente(projeto)
+    for lote in por_bloco:
+        linhas = []
+        for t in lote:
+            fala = " ".join((c.get("texto") or "").strip() for c in t)
+            bloco = corrigir._bloco_da_cena_no_mapa(projeto, t[0])
+            dur = float(t[-1]["fim"]) - float(t[0]["ini"])
+            linhas.append(f"[trecho {t[0]['n']}] ({dur:.1f} s, assunto: {bloco or 'geral'}) \"{fala}\"")
+        pedido = (f"ROTEIRO INTEIRO (para entender o argumento):\n{roteiro}\n\n"
+                  + (f"MAPA DO VÍDEO:\n{mapa}\n\n" if mapa else "")
+                  + ("JÁ DECIDIDO NOS TRECHOS ANTERIORES (não repita, retome quando o roteiro retoma):\n"
+                     + "\n".join(f"- {x}" for x in ja) + "\n\n" if ja else "")
+                  + "TRECHOS PARA DECIDIR AGORA:\n" + "\n".join(linhas))
+        try:
+            resposta = agente.perguntar(projeto, "motion IA: orquestradora", INSTRUCOES_ORQUESTRA, pedido,
+                                        ESQUEMA_ORQUESTRA, log=log, temperatura=0.4)
+        except (RuntimeError, SystemExit) as e:
+            log(f"  motion IA: a orquestradora não respondeu ({str(e)[:120]}); estes trechos seguem sem briefing")
+            continue
+        por_n = {int(i.get("n")): i for i in (resposta or {}).get("trechos") or [] if str(i.get("n", "")).lstrip("-").isdigit()}
+        novos = {}
+        for t in lote:
+            item = por_n.get(t[0]["n"])
+            if item and str(item.get("o_que_mostrar") or "").strip():
+                b = _limpar_briefing(item, t)
+                novos[str(t[0]["n"])] = b
+                ja.append(_linha_do_briefing(b))
+        if novos:
+            _guardar_briefings(projeto, novos)
+        log(f"  motion IA: orquestradora decidiu {len(novos)} de {len(lote)} trecho(s)")
+    return {int(k): v for k, v in _briefings(projeto).items()}
+
+
+def texto_do_briefing(b) -> str:
+    """O briefing da orquestradora, no pedido de quem desenha e de quem revisa."""
+    if not b:
+        return ""
+    linhas = ["BRIEFING DA ORQUESTRADORA (o que o motion PRECISA mostrar; você decide como desenhar):"]
+    if b.get("funcao"):
+        linhas.append(f"- papel do trecho no roteiro: {b['funcao']}")
+    linhas.append(f"- o que mostrar: {b['o_que_mostrar']}")
+    if b.get("elementos"):
+        linhas.append("- elementos que têm de aparecer: " + "; ".join(b["elementos"]))
+    for m in b.get("momentos") or []:
+        linhas.append(f"- na palavra \"{m['palavra']}\": {m['acontece']}")
+    if b.get("evitar"):
+        linhas.append("- evitar: " + "; ".join(b["evitar"]))
+    if b.get("texto_na_tela"):
+        linhas.append(f"- texto na tela (da fala): {b['texto_na_tela']}")
+    linhas.append("- intensidade: " + ("imagem única e limpa, sem excesso" if b.get("intensidade") == "simples"
+                                        else "demonstração rica, com várias partes se movendo"))
+    return "\n".join(linhas)
+
+
+# ------------------------------------------------------------------ a demonstração livre (pedido de 2026-10-08)
+
+# Pedido do usuário em 2026-10-08: "a demonstração que o motion deve fazer é livre, não templates prontos como está
+# hoje". Os desenhos prontos (motion_modelos) saíam repetidos e só serviam para dado com número; o roteiro de economia
+# da Serra Gaúcha tinha 96 cenas quase sem número, e cada cena virava `frase` ou um HTML reprovado. Com
+# `motion_ia.demonstracao: livre` (no perfil), o modelo INVENTA a demonstração de cada cena: pensa a ideia visual que faz
+# o espectador entender e sentir a fala e a desenha em SVG, CSS e GSAP, com objetos figurativos e metáforas. Sem direção
+# de arte por catálogo, sem desenho pronto, sem teto de repetição. O código só confere o que protege o vídeo.
+
+INSTRUCOES_LIVRE = """Você é diretor de motion graphics e ilustrador de um canal de documentários explicativos. Para UMA
+cena, invente a DEMONSTRAÇÃO VISUAL que faz o espectador entender e sentir o que a narração diz naquele momento, e
+escreva o código dela. Não existem modelos prontos: a ideia é sua. A fala não traz só números: traz origem, história,
+causa, contraste, processo, espera, valor, tradição. Ache a imagem mental certa e anime-a.
+
+COMO PENSAR (campo "ideia", escreva ANTES do código, em 2 ou 3 frases):
+- o que a fala quer que a pessoa veja e sinta em 1 segundo;
+- a demonstração: o que aparece, o que se move e em que palavra, e por que isso explica a fala melhor que um texto;
+- varie: metáfora literal (uma garrafa que enche, um barril que envelhece), diagrama vivo (camadas de terreno, linha do
+  tempo que cresce, setas que se cruzam), comparação de escala (uma pilha contra outra), mapa estilizado, objeto que se
+  monta peça a peça, balança, relógio ou ampulheta, mãos de recorte, ilustração de papel com personagens simples.
+  Nada de "card com frase": se a fala só pede uma ideia, desenhe a ideia, e use o texto como legenda do desenho.
+
+O QUE VOCÊ PODE FAZER (liberdade total dentro do esqueleto):
+- desenhar com SVG (path, circle, rect, polygon, gradientes, clip-path, máscaras, filtros simples), CSS e HTML;
+  objetos figurativos e ilustrações são BEM-VINDOS (garrafa, barril, parreira, faca, montanha em camadas, moeda,
+  engrenagem, balança, casa, pessoa de recorte). Faça formas com personalidade: cantos irregulares, sombras duras,
+  detalhes (rótulo da garrafa, nível do líquido, veios da madeira), não só retângulos;
+- animar qualquer coisa no tl (linha do tempo do GSAP 3): entrar, crescer, encher (height, scaleY, clip-path),
+  desenhar traço (strokeDashoffset), girar, empilhar, cair, derramar, mover a "câmera" (x, y, scale de um grupo),
+  paralaxe entre camadas, contar um número (objeto {v:0} com onUpdate dentro do tl), trocar de cena dentro do clipe
+  (uma coisa sai, outra entra) quando a fala tem duas partes;
+- sincronizar com a fala: o pedido traz o segundo de cada palavra (relativo ao começo do clipe). Faça cada coisa
+  aparecer NA palavra que a cita ("1875" entra em 1,2 s porque o narrador o diz em 1,2 s).
+
+O ESQUELETO (já pronto, não repita):
+- tela 1920x1080; o fundo, a textura e os recortes de papel já existem: não pinte o fundo;
+- o seu html entra dentro de <section id="cena"> (position: relative, tela inteira);
+- existem o tl (gsap.timeline paused) e a constante DUR (duração em segundos);
+- fontes: "Texto" (Inter, pesos 300 a 800) e "Titulo" (Playfair Display, serifa);
+- cores em variáveis: --verde, --azul, --laranja, --grafite (use e combine; veja o ESTILO abaixo);
+- peças opcionais: .m-card (papel/cartão, posicione com position: absolute; o conteúdo dentro fica em fluxo normal),
+  .m-num, .m-rot, .m-sub, .m-frase (tipografia pronta), .m-destaque (palavra de ênfase), .m-linha (path SVG que se
+  desenha com tl.to(".m-linha-1", {strokeDashoffset: 0, ...}) e já vem escondido), .m-foto (só se o pedido disser que a
+  cena tem foto).
+
+REGRAS QUE O CÓDIGO CONFERE (o resto é liberdade):
+1. TODA animação no tl, com o segundo na posição: tl.fromTo("#m-x", {de}, {para, duration, ease}, segundo). Nada de
+   @keyframes, animation ou transition no CSS; nada de setTimeout, setInterval, requestAnimationFrame, Date,
+   Math.random, fetch, imagens ou endereços externos, emoji. O clipe tem que sair igual toda vez. Pode usar qualquer ease
+   do GSAP (power2.out, back.out, elastic.out, steps(6) para stop-motion...). Tudo termina de entrar antes de DUR - 0.4 e
+   fica parado até o fim (movimento leve contínuo é bem-vindo).
+2. Texto: poucas palavras (no máximo 14 visíveis), TODAS tiradas da fala (números, nomes, palavra-chave). Nada de frase
+   inventada. Nenhum texto com menos de 32 px (rótulos 36 px ou mais, o texto principal 64 px ou mais). Texto dentro de
+   SVG com font-size em px ou no atributo font-size, também 32 ou mais.
+3. Espaço: margem de 140 px nos lados e em cima; os 260 px de baixo ficam livres (legenda). Nada sai da tela, nenhum
+   texto fica sobre outro texto, e o desenho ocupa boa parte da tela (nada de miniatura num canto).
+4. Todo id e classe seus começa com "m-". Nada de position: fixed. Dentro de um .m-card não use position absolute.
+5. O código tem no máximo 30.000 caracteres: faça desenhos ricos, mas enxutos (use <defs> e <use> para repetir).
+6. Se o pedido disser que a cena tem foto, mostre-a em <div class="m-card m-foto"></div> (560x400 ou maior).
+
+Devolva: ideia, css, html, js."""
+
+ESTILOS_LIVRE = {
+    "colagem": """ESTILO "COLAGEM DE PAPEL" (Vox): tudo parece recortado e colado numa mesa. Fundo de papel kraft amassado
+com textura por cima (já pronto), recortes de papel rasgado ao fundo (já prontos). Desenhe com formas de papel: cantos
+levemente irregulares (polygon, clip-path), sombra dura deslocada (box-shadow 6px 8px 0 rgba(17,17,17,.2) ou
+filter: drop-shadow), borda branca de figurinha, fita adesiva (retângulo translúcido amarelo no canto), carimbos e riscos
+de caneta. Paleta contida: preto #111, vermelho de tinta #B3261E, azul-marinho #14213D, amarelo #F2B705, creme
+#F8F2E2. Movimento de stop-motion: prefira ease "steps(6)" ou "steps(8)" nas entradas, como papel jogado na mesa; pode
+misturar com paralaxe lenta entre camadas. Sem degradês brilhantes, sem 3D liso, sem vetor corporativo de banco de
+imagens.""",
+    "": """ESTILO EDITORIAL LIMPO: fundo creme com grade de pontos (pronto), formas simples e bem acabadas, cores
+--laranja, --azul e --verde, sombra suave, movimento com mola (back.out(1.7)) e linhas que se desenham.""",
+}
+
+ESQUEMA_LIVRE = {
+    "type": "object",
+    "properties": {"ideia": {"type": "string"}, "css": {"type": "string"}, "html": {"type": "string"},
+                   "js": {"type": "string"}},
+    "required": ["ideia", "css", "html", "js"],
+}
+
+
+def livre(projeto) -> bool:
+    """O perfil pede a demonstração livre (o modelo inventa) no lugar dos desenhos prontos."""
+    return str(config(projeto).get("demonstracao") or "").strip().lower() == "livre"
+
+
+def instrucoes_livre(projeto) -> str:
+    return INSTRUCOES_LIVRE + "\n\n" + ESTILOS_LIVRE.get(estilo(projeto), ESTILOS_LIVRE[""])
+
+
+def palavras_da_cena(projeto, cena, limite=60) -> list:
+    """[(palavra, segundo desde o começo do clipe)] das palavras faladas na cena, pelo alinhamento.json."""
+    try:
+        faladas = projeto.ler_json("alinhamento.json").get("palavras") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    ini, fim = float(cena["ini"]), float(cena["fim"])
+    return [(str(w.get("texto") or ""), round(max(0.0, float(w["ini"]) - ini), 2)) for w in faladas
+            if ini - 0.15 <= float(w.get("ini", -1)) < fim][:limite]
+
+
+def _pedido_livre(projeto, cena, dur, vizinhas, erros, foto=False, briefing=None):
+    linhas = [f"Fala desta cena: \"{(cena.get('texto') or '').strip()}\"", f"Duração: {dur:.2f} s (DUR)",
+              "Proporção: 16:9, 1920x1080"]
+    palavras = palavras_da_cena(projeto, cena)
+    if palavras:
+        linhas.append("Segundo em que cada palavra é falada (desde o começo do clipe): "
+                      + ", ".join(f"{t} {seg:.2f}" for t, seg in palavras))
+    if vizinhas[0]:
+        linhas.append(f"Fala anterior (só contexto): \"{vizinhas[0]}\"")
+    if vizinhas[1]:
+        linhas.append(f"Fala seguinte (só contexto): \"{vizinhas[1]}\"")
+    try:
+        from . import corrigir
+        bloco = corrigir._bloco_da_cena_no_mapa(projeto, cena)
+    except Exception:  # noqa: BLE001 - o assunto do bloco é só contexto
+        bloco = ""
+    if bloco:
+        linhas.append(f"Assunto deste trecho do roteiro: {bloco}")
+    if briefing:
+        linhas.append(texto_do_briefing(briefing))
+    elif (cena.get("mostrar") or "").strip():
+        linhas.append(f"O diretor de arte do roteiro sugeriu (inspiração, não obrigação): {cena['mostrar'].strip()}")
+    if foto:
+        citado = (cena.get("exato") or cena.get("animal") or cena.get("sujeito") or "").strip()
+        linhas.append(f"A cena TEM FOTO ({citado}): se ajudar a demonstração, mostre-a em <div class=\"m-card m-foto\"></div>.")
+    if erros:
+        linhas.append("\nA resposta anterior foi REPROVADA por estes motivos. Corrija todos, mantendo a ideia:\n- "
+                      + "\n- ".join(erros[:8]))
+    return "\n".join(linhas)
+
+
+def problemas_do_codigo_livre(partes) -> list:
+    """O que o código confere na demonstração livre: o que protege o vídeo, sem exigir mola nem componentes prontos."""
+    erros = []
+    tudo = "\n".join(str(partes.get(k) or "") for k in ("css", "html", "js"))
+    for padrao, motivo in _PROIBIDOS:
+        if "ease" in padrao:
+            continue  # a curva é livre na demonstração livre
+        if re.search(padrao, tudo, re.I):
+            erros.append(f"tem {motivo}")
+    if _EMOJI.search(tudo):
+        erros.append("tem emoji")
+    if "tl." not in str(partes.get("js") or ""):
+        erros.append("o js não anima nada no tl")
+    if not str(partes.get("html") or "").strip():
+        erros.append("o html está vazio")
+    if not str(partes.get("css") or "").strip():
+        erros.append("o css está vazio: posicione cada elemento (position: absolute, left, top, width) e dê o tamanho "
+                     "de cada texto (font-size em px)")
+    pequenos = sorted({int(t) for t in re.findall(r"font-size\s*[:=]\s*[\"']?(\d+)(?:\.\d+)?(?:px)?", tudo)
+                       if int(t) < 32})
+    if pequenos:
+        erros.append(f"tem texto pequeno demais ({', '.join(str(t) + 'px' for t in pequenos)}): nenhum texto abaixo "
+                     "de 32px (rótulos 36px ou mais, texto principal 64px ou mais)")
+    if len(tudo) > 30000:
+        erros.append("o código passou de 30.000 caracteres: simplifique (use <defs> e <use> para repetir)")
+    return erros
+
+
+def _pela_demonstracao_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_iniciais=(), direcao=None):
+    """O modelo inventa a demonstração (ideia, css, html, js); o código e o HyperFrames conferem; a revisão visual
+    (_revisado) olha o resultado. Levanta RuntimeError se nenhuma tentativa passar."""
+    erros = list(erros_iniciais)
+    for tentativa in range(int(config(projeto).get("tentativas", 4))):
+        resposta = _perguntar(projeto, "motion IA: demonstração livre", instrucoes_livre(projeto),
+                              _pedido_livre(projeto, cena, dur, vizinhas, erros, foto=bool(nome_foto),
+                                           briefing=(direcao or {}).get("briefing")),
+                              ESQUEMA_LIVRE, log, temperatura=0.8 if tentativa else 0.6)
+        partes = {k: str(resposta.get(k) or "") for k in ("css", "html", "js")}
+        ideia = " ".join(str(resposta.get("ideia") or "").split())[:400]
+        erros = problemas_do_codigo_livre(partes)
+        if nome_foto and "m-foto" not in partes["html"]:
+            pass  # a foto é opcional na demonstração livre
+        inventadas = _palavras_inventadas(partes, " ".join([vizinhas[0], cena.get("texto") or "", vizinhas[1]]))
+        if inventadas:
+            erros.append("usa palavras que a fala não diz (" + ", ".join(inventadas) + "): só palavras da fala")
+        if erros:
+            continue
+        (pasta / "index.html").write_text(montar_html(partes, dur, foto=nome_foto, estilo=estilo(projeto)),
+                                          encoding="utf-8")
+        brutos = animacoes._conferir(projeto, pasta, clipe=True)
+        erros = animacoes._erros_para_o_modelo(brutos)
+        if any(e.startswith(animacoes._ESTOURO_NO_CLIPE) for e in brutos):
+            erros.insert(0, "há texto ou desenho fora da tela (ou fora do card que o contém): confira posições e "
+                            "tamanhos, e que tudo cabe na área de 140 a 1780 px de largura e 140 a 820 px de altura")
+        if not erros:
+            log(f"  motion IA: cena {cena['n']}, ideia: {ideia[:140]}")
+            return {**partes, "modelo": "livre", "ideia": ideia, "foto": nome_foto or "", "direcao": direcao or {}}
+    raise RuntimeError("reprovado na conferência: " + "; ".join(erros)[:300])
+
+
+
+def _direcao_do_briefing(projeto, trecho, log=print) -> dict:
+    """Na demonstração livre a direção é o briefing da orquestradora (pedido agora, se ainda não houver). A revisão
+    visual também lê: "leitura" é o que o clipe precisa mostrar, e "nao_mostrar" o que evitar."""
+    b = briefing_do_trecho(projeto, trecho)
+    if b is None:
+        try:
+            orquestrar(projeto, [trecho], log)
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - sem orquestradora o clipe sai só com a fala
+            log(f"  motion IA: sem briefing da orquestradora ({str(e)[:100]})")
+        b = briefing_do_trecho(projeto, trecho)
+    if not b:
+        return {}
+    return {"leitura": b["o_que_mostrar"], "tom": "neutro", "desenhos_proibidos": [], "nao_mostrar": b.get("evitar") or [],
+            "origem": "orquestradora", "briefing": b}
+
+
 def _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais=(), direcao=None):
     """Um clipe aprovado pelo código e pelo HyperFrames, ainda sem a revisão visual: primeiro um modelo pronto de
-    demonstração; se nenhum servir, o HTML livre."""
+    demonstração; se nenhum servir, o HTML livre. Com `motion_ia.demonstracao: livre`, só a demonstração livre."""
+    if livre(projeto):
+        return _pela_demonstracao_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_visuais, direcao)
     try:
         aprovado = _pelo_modelo_pronto(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, erros_visuais,
                                        direcao)
@@ -1221,11 +1890,18 @@ def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direc
             + (" (aprovado)" if passou else ""))
         if passou or rodada == int(cfg["rodadas"]) - 1:
             break
+        antes = (aprovado.get("modelo"), json.dumps(aprovado.get("dados"), sort_keys=True, ensure_ascii=False))
         try:
             aprovado = _um_clipe(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log,
                                  erros_da_critica(critica, float(cfg["nota"])), direcao)
         except (RuntimeError, SystemExit) as e:
             log(f"  motion IA: cena {cena['n']}, a correção não saiu ({str(e)[:120]}); fica o de melhor nota")
+            break
+        if aprovado.get("modelo") != "livre" and antes == (
+                aprovado.get("modelo"), json.dumps(aprovado.get("dados"), sort_keys=True, ensure_ascii=False)):
+            # o desenho pronto saiu igual: revisar de novo só repetiria a nota (cena 191 do 11-animais-do-brasil,
+            # três revisões iguais, uns 4 minutos à toa). O que a revisão apontou é do desenho, não dos dados
+            log(f"  motion IA: cena {cena['n']}, a correção saiu igual; fica o de melhor nota")
             break
     if melhor is None:
         return aprovado
@@ -1236,8 +1912,25 @@ def _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direc
     return melhor
 
 
-def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
-    """Faz o clipe de uma cena. Devolve o caminho relativo do MP4, ou levanta RuntimeError com o motivo.
+def frase_da_cena(projeto, cena, todas) -> list:
+    """As cenas que o clipe cobre: da cena até o fim da frase, no mesmo bloco, até motion_ia.duracao_maxima (8 s).
+    Pedido do usuário em 2026-10-08: "pode chegar a quase dois metros de comprimento, contando a | a cauda achatada
+    que funciona como leme" é uma frase em duas cenas (191 e 192 do 11-animais-do-brasil); com só os 3 s da 191, a
+    cauda ficava de fora do clipe. Cena com personagem, imagem ou prompt da pessoa encerra o trecho."""
+    maximo = float(config(projeto).get("duracao_maxima", 8))
+    trecho = [cena]
+    while not re.search(r"[.!?…]['\"”)]*\s*$", (trecho[-1].get("texto") or "").strip()):
+        seguinte = todas.get(trecho[-1]["n"] + 1)
+        if (not seguinte or seguinte.get("personagem") or seguinte.get("imagem_da_pessoa") or seguinte.get("prompt_manual")
+                or seguinte.get("bloco") != cena.get("bloco") or float(seguinte["fim"]) - float(cena["ini"]) > maximo):
+            break
+        trecho.append(seguinte)
+    return trecho
+
+
+def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=(), trecho=None):
+    """Faz o clipe de uma cena, ou da frase inteira (trecho: as cenas que ele cobre, frase_da_cena). Devolve
+    ([(n, mp4, capa, duração) de cada cena], o crédito da foto própria do sujeito, se houve) ou levanta RuntimeError.
 
     Primeiro um modelo pronto de demonstração (motion_modelos: velocímetro, balança, régua...), escolhido e preenchido
     pelo modelo de linguagem; se nenhum servir, o HTML livre do modelo, de reserva. Antes de gravar, a revisão visual
@@ -1245,6 +1938,10 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
     foto: a imagem da própria cena, opcional (o modelo foto_dado). usados: os modelos das cenas de motion vizinhas."""
     if not animacoes.node_pronto():
         raise RuntimeError("falta o Node.js 22 ou mais (o HyperFrames grava o clipe)")
+    trecho = trecho or [cena]
+    if len(trecho) > 1:
+        # a frase inteira: a fala junta e o tempo do começo da primeira cena ao fim da última
+        cena = {**cena, "texto": " ".join((c.get("texto") or "").strip() for c in trecho), "fim": trecho[-1]["fim"]}
     dur = max(float(cena["fim"]) - float(cena["ini"]), 1.0)
     pasta = _pasta(projeto, cena["n"])
     pasta.mkdir(parents=True, exist_ok=True)
@@ -1253,12 +1950,16 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
     if foto is not None:
         nome_foto = f"foto{Path(foto).suffix.lower()}"
         shutil.copy2(foto, pasta / "assets" / nome_foto)
-    direcao = dirigir(projeto, cena, vizinhas, bool(nome_foto), log)
+    # demonstração livre: sem direção de arte por catálogo de desenhos (o modelo pensa a ideia dentro do pedido)
+    direcao = _direcao_do_briefing(projeto, trecho, log) if livre(projeto) else com_esgotados(
+        dirigir(projeto, cena, vizinhas, bool(nome_foto) or pode_ter_figura(cena), log), projeto,
+        [c["n"] for c in trecho])
     aprovado = _revisado(projeto, cena, dur, vizinhas, pasta, nome_foto, usados, log, direcao)
+    aprovado["trecho"] = [c["n"] for c in trecho]
     # a revisão pode ter ficado com um clipe de uma rodada anterior: a página gravada é sempre a dele
-    (pasta / "index.html").write_text(montar_html(aprovado, dur, foto=aprovado.get("foto") or None), encoding="utf-8")
+    (pasta / "index.html").write_text(montar_html(aprovado, dur, foto=aprovado.get("foto") or None, estilo=estilo(projeto)), encoding="utf-8")
     (pasta / "partes.json").write_text(json.dumps(aprovado, ensure_ascii=False, indent=1), encoding="utf-8")
-    destino = projeto.pasta / "midia" / f"{cena['n']:04d}_motion.mp4"
+    destino = projeto.pasta / "midia" / f"{cena['n']:04d}_motion{'_frase' if len(trecho) > 1 else ''}.mp4"
     destino.parent.mkdir(parents=True, exist_ok=True)
     temporario = destino.with_name(destino.stem + ".tmp.mp4")
     r = animacoes._hyperframes(projeto, ["render", "--output", str(temporario), "--format", "mp4", "--fps",
@@ -1268,17 +1969,32 @@ def gerar_cena(projeto, cena, vizinhas, log=print, foto=None, usados=()):
         temporario.unlink(missing_ok=True)
         raise RuntimeError(f"o HyperFrames não gravou o clipe: {(r.stderr or r.stdout or '')[-200:]}")
     temporario.replace(destino)
-    capa = destino.with_name(f"{cena['n']:04d}_motion_capa.jpg")
-    rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{min(dur * 0.6, dur - 0.1):.2f}", "-i", str(destino),
-           "-frames:v", "1", "-q:v", "3", str(capa)])
     # o HTML é só um passo: fica o partes.json, para refazer ou conferir depois
     (pasta / "index.html").unlink(missing_ok=True)
     shutil.rmtree(pasta / "quadros", ignore_errors=True)
-    return destino, capa, dur
+    saida = []
+    for c in trecho:
+        inicio = float(c["ini"]) - float(cena["ini"])
+        dur_c = max(float(c["fim"]) - float(c["ini"]), 0.5)
+        if len(trecho) > 1:
+            # um pedaço por cena, no tempo dela: o render monta cena a cena, e os pedaços tocam em sequência
+            pedaco = projeto.pasta / "midia" / f"{c['n']:04d}_motion.mp4"
+            rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.3f}", "-i", str(destino), "-t",
+                   f"{dur_c + 0.05:.3f}", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "16",
+                   "-pix_fmt", "yuv420p", str(pedaco)])
+        else:
+            pedaco = destino
+        capa = pedaco.with_name(f"{c['n']:04d}_motion_capa.jpg")
+        rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{min(dur_c * 0.6, dur_c - 0.1):.2f}", "-i", str(pedaco),
+               "-frames:v", "1", "-q:v", "3", str(capa)])
+        saida.append((c["n"], pedaco, capa, dur_c))
+    return saida, aprovado.get("credito")
 
 
-def _aplicar(projeto, n, destino, capa, dur) -> None:
-    """O clipe entra como a mídia da cena, igual a um vídeo de banco. O que a cena tinha fica em motion_reserva."""
+def _aplicar(projeto, n, destino, capa, dur, trecho=None, credito=None, duracao_frase=None) -> None:
+    """O clipe entra como a mídia da cena, igual a um vídeo de banco. O que a cena tinha fica em motion_reserva.
+    trecho: as cenas da frase que o clipe cobre (motion_trecho); credito: a foto própria do sujeito, que vai para os
+    créditos do vídeo (motion_foto, lido por midia.escrever_creditos)."""
     with _TRAVA_CENAS:
         dados = projeto.ler_json("cenas.json")
         c = next(x for x in dados["cenas"] if x["n"] == n)
@@ -1290,8 +2006,14 @@ def _aplicar(projeto, n, destino, capa, dur) -> None:
                       "autor": "", "licenca": "feito pela fábrica", "pagina": "", "duracao": round(dur, 2)}
         c["tipo"] = "video_real"
         c["captura"] = {"conferida": True, "motion_ia": True}
-        for campo in ("sem_midia_real", "conferencia", "motion_ia_falhou", "motion_so"):
+        for campo in ("sem_midia_real", "conferencia", "motion_ia_falhou", "motion_so", "motion_trecho", "motion_foto"):
             c.pop(campo, None)
+        if trecho and len(trecho) > 1:
+            c["motion_trecho"] = list(trecho)
+            if n == trecho[0] and duracao_frase:
+                c["midia"]["duracao_frase"] = round(duracao_frase, 3)  # os sons do clipe vão até o fim da frase
+        if credito and n == (trecho or [n])[0]:
+            c["motion_foto"] = credito
         projeto.salvar_json("cenas.json", dados)
 
 
@@ -1351,15 +2073,27 @@ def resolver(projeto, pendentes, log=print) -> list:
 def fazer(projeto, escolhidas, log=print) -> list:
     """Grava o clipe de cada cena e põe no lugar da mídia. Devolve as que saíram; a que falhar fica como estava."""
     todas = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+    # cada clipe cobre a frase inteira: a cena que já cai na frase de uma escolhida anterior não ganha clipe próprio
+    trechos, cobertas = {}, set()
+    for c in sorted(escolhidas, key=lambda x: x["n"]):
+        if c["n"] in cobertas:
+            continue
+        trechos[c["n"]] = frase_da_cena(projeto, todas.get(c["n"], c), todas)
+        cobertas.update(x["n"] for x in trechos[c["n"]])
+    escolhidas = [c for c in escolhidas if c["n"] in trechos]
 
     def uma(c):
-        antes, depois = todas.get(c["n"] - 1) or {}, todas.get(c["n"] + 1) or {}
+        trecho = trechos[c["n"]]
+        antes, depois = todas.get(c["n"] - 1) or {}, todas.get(trecho[-1]["n"] + 1) or {}
         vizinhas = ((antes.get("texto") or "").strip()[-200:], (depois.get("texto") or "").strip()[:200])
         try:
             foto = foto_da_cena(projeto, c) if concreta(c) else None
-            destino, capa, dur = gerar_cena(projeto, c, vizinhas, log, foto=foto,
-                                            usados=modelos_vizinhos(projeto, todas, c["n"]))
-            _aplicar(projeto, c["n"], destino, capa, dur)
+            pedacos, credito = gerar_cena(projeto, c, vizinhas, log, foto=foto,
+                                          usados=modelos_vizinhos(projeto, todas, c["n"]), trecho=trecho)
+            total = sum(p[3] for p in pedacos)
+            for n, destino, capa, dur in pedacos:
+                _aplicar(projeto, n, destino, capa, dur, trecho=[x["n"] for x in trecho], credito=credito,
+                         duracao_frase=total)
             return c["n"], None
         except (Exception, SystemExit) as erro:
             return c["n"], str(erro) or erro.__class__.__name__
@@ -1493,7 +2227,9 @@ def sons_do_clipe(projeto, cena):
         partes = json.loads((pasta / "partes.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    dur = float((cena.get("midia") or {}).get("duracao") or (float(cena["fim"]) - float(cena["ini"])))
+    midia = cena.get("midia") or {}
+    # o clipe da frase inteira (motion_trecho): os sons vão até o fim dela, não só até o fim da primeira cena
+    dur = float(midia.get("duracao_frase") or midia.get("duracao") or (float(cena["fim"]) - float(cena["ini"])))
     eventos = eventos_de_som(partes.get("js") or "", dur)
     if not eventos:
         return None
@@ -1530,6 +2266,8 @@ def sons_na_linha(projeto, cenas, log=print) -> list:
     for c in cenas:
         if not e_motion(c):
             continue
+        if c.get("motion_trecho") and c["n"] != c["motion_trecho"][0]:
+            continue  # o pedaço de um clipe de frase: o som dele já entra com a primeira cena
         try:
             arquivo = sons_do_clipe(projeto, c)
         except Exception as erro:  # noqa: BLE001 - um clipe sem som não derruba o render

@@ -1,0 +1,34 @@
+# Vídeo todo em Motion IA: nenhuma foto de banco, nenhuma imagem de IA. Cada cena vira um clipe de motion graphics
+# (estilo editorial Vox: fundo creme, cards, números que contam, linhas que se desenham, tudo no tempo da fala).
+# Serve para explicativos, notícias, dados, finanças, tecnologia e tudo que se explica melhor com infográfico.
+# Herda o resto de base-documentario.yaml. Para um canal próprio, copie este arquivo e ajuste voz e diretrizes.
+base: base-documentario.yaml
+
+nome: Motion IA (vídeo todo em motion)
+
+motion_ia:
+  ativo: true
+  tudo: true
+  demonstracao: livre         # o modelo inventa a demonstração de cada cena (guiado pela orquestradora), sem desenhos prontos
+  tentativas: 4                  # toda cena vira clipe de motion, sem o Jev decidir onde vale a pena
+  # a revisão visual gratuita viu "frase cortada nas laterais" em frases que não estavam cortadas (o layout dos desenhos
+  # prontos já passa no hyperframes check): aqui ela só barra o clipe de verdade ruim (pior nota abaixo de 3)
+  critica:
+    ativa: true
+    nota: 8
+    aceitavel: 3
+    rodadas: 2
+  repetir_no_maximo: 10       # sem foto e quase sem número, 96 cenas esgotavam os desenhos com o limite de 2 (padrão)
+
+# Se algum clipe falhar (sem Node.js 22, modelo gratuito fora do ar, reprovado na revisão), só aquela cena cai para
+# foto de banco, e por último para a imagem de IA. Para proibir isso e deixar a cena para revisão, ligue ia.ativa: false
+# no config.yaml.
+
+diretrizes: >-
+  Este é um vídeo explicativo todo em motion graphics: não há fotos nem filmagens. Escreva o roteiro como quem
+  explica com infográficos: uma ideia por frase, cada número com o que ele mede, comparações com os dois lados
+  ditos, causa e consequência em sequência. Evite trechos longos só de descrição de cenário, que não têm o que
+  desenhar.
+
+animacoes:
+  ativo: false                # as camadas de animação por cima de foto não se aplicam: o clipe já é a cena inteira

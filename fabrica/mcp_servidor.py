@@ -22,6 +22,8 @@ import hashlib
 import json
 import re
 import tempfile
+import unicodedata
+import secrets
 import threading
 import time
 import traceback
@@ -39,13 +41,14 @@ from .projeto import PROJETOS, Projeto
 INSTRUCOES_DO_SERVIDOR = """Fábrica de vídeos narrados. Você é quem toma as decisões criativas do vídeo; a fábrica faz
 narração, busca nos bancos de imagem e render.
 
-O jeito certo de produzir é o comando /tiplabs: ele cria o vídeo, mostra a estimativa, e responde as tarefas em
-subagentes até o vídeo sair, gastando o mínimo da sua assinatura. Se o usuário ainda não tem o /tiplabs, chame
-instalar_tiplabs e grave o arquivo que ela devolve no caminho indicado (uma vez só).
+O usuário só manda o roteiro e recebe o vídeo: estilo, voz e nome são decididos pela fábrica, e ele não aprova nada.
+O jeito certo de produzir é o comando /tiplabs: ele cria o vídeo, responde as tarefas num operador em segundo plano e
+mostra ao usuário só a porcentagem (acompanhar), sem o maquinário. Se o usuário ainda não tem o /tiplabs, chame instalar_tiplabs e grave o arquivo
+que ela devolve no caminho indicado (uma vez só).
 
 Sem o comando:
-1. criar_video(nome, roteiro, perfil) mostra a estimativa de custo e não gasta nada. Mostre ao usuário e só chame
-   criar_video de novo com confirmar=true se ele concordar.
+1. criar_video(roteiro) começa a produção e devolve o nome do vídeo. Mandar o mesmo roteiro de novo continua o vídeo
+   que parou, sem começar outro.
 2. Repita esperar(nome) e, quando houver tarefas, proximas_tarefas -> responder cada uma. Cada tarefa traz instruções,
    um pedido (às vezes com imagens) e o esquema JSON da resposta. Responda com um JSON que siga o esquema, com
    exatamente as chaves dele. Siga as instruções à risca: são as regras da fábrica (o que a narração cita tem de
@@ -110,23 +113,66 @@ def _log_da_producao(mensagem):
 cli.log = _log_da_producao
 
 
+# Os perfis que o cliente do MCP pode usar (pedido do usuário em 2026-10-09): o vídeo é feito com banco de imagens e IA,
+# e o motion só apoia, nas cenas em que explica melhor o roteiro. Os perfis todo em motion (motion-ai, motion-vox) e os
+# canais pessoais ficam fora. Ordem: o primeiro é o padrão.
+PERFIS_DO_MCP = ("documentario", "documentario-vox")
+
+
+def _perfis_do_mcp() -> list:
+    from .config import config_geral
+    lista = (config_geral().get("mcp") or {}).get("perfis") or PERFIS_DO_MCP
+    return [n for n in lista if (RAIZ / "perfis" / f"{n}.yaml").is_file()]
+
+
+def _escolhas_da_fabrica() -> tuple:
+    """O perfil e a voz de todo vídeo do MCP, decididos por quem vende (mcp.perfil e mcp.voz no config.yaml), nunca
+    pelo cliente (pedido do usuário em 2026-10-09: "o cliente não deve escolher nada, somente receber o vídeo")."""
+    from .config import config_geral
+    cfg = config_geral().get("mcp") or {}
+    perfis = _perfis_do_mcp()
+    perfil = cfg.get("perfil") if cfg.get("perfil") in perfis else (perfis[0] if perfis else "documentario")
+    return perfil, str(cfg.get("voz") or "").strip()
+
+
+def _nome_automatico(roteiro: str) -> str:
+    """O nome do vídeo a partir das primeiras palavras do roteiro, com um final que não repete."""
+    palavras = re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", roteiro.lower()).encode("ascii", "ignore").decode())
+    base = "-".join(palavras[:5])[:40].strip("-") or "video"
+    return f"{base}-{datetime.now():%m%d}-{secrets.token_hex(2)}"
+
+
+def _marca_do_roteiro(roteiro: str) -> str:
+    return hashlib.sha1(" ".join(roteiro.split()).encode("utf-8")).hexdigest()[:16]
+
+
+def _video_em_andamento(marca: str) -> str:
+    """O vídeo deste cliente com o mesmo roteiro que ainda não foi entregue: mandar o roteiro de novo continua ele."""
+    for pasta in sorted(PROJETOS.iterdir(), key=lambda q: q.stat().st_mtime, reverse=True) if PROJETOS.exists() else ():
+        try:
+            dados = json.loads((pasta / "projeto.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if dados.get("modelo") == "cliente" and dados.get("roteiro_marca") == marca and _e_meu(pasta.name):
+            return pasta.name
+    return ""
+
+
 def _perfil(nome_do_perfil: str) -> Path:
-    caminho = RAIZ / "perfis" / f"{Path(nome_do_perfil).stem}.yaml"
-    if not caminho.is_file():
-        disponiveis = ", ".join(sorted(p.stem for p in (RAIZ / "perfis").glob("*.yaml")))
-        raise ValueError(f"o perfil {nome_do_perfil} não existe. Disponíveis: {disponiveis}")
-    return caminho
+    nome = Path(nome_do_perfil or "").stem
+    if nome not in _perfis_do_mcp():
+        raise ValueError(f"o perfil {nome_do_perfil} não está disponível. Disponíveis: {', '.join(_perfis_do_mcp())}")
+    return RAIZ / "perfis" / f"{nome}.yaml"
 
 
 def _marca(instrucoes: str) -> str:
     return hashlib.sha1(instrucoes.encode("utf-8")).hexdigest()[:8]
 
 
-@servidor.tool(structured_output=False)
 def listar_perfis() -> str:
     """Os perfis de canal (a identidade de cada canal: voz, estilo das imagens, regras) disponíveis na fábrica."""
     linhas = []
-    for caminho in sorted((RAIZ / "perfis").glob("*.yaml")):
+    for caminho in (RAIZ / "perfis" / f"{n}.yaml" for n in _perfis_do_mcp()):
         try:
             perfil = carregar_perfil(caminho)
         except (Exception, SystemExit):
@@ -136,17 +182,25 @@ def listar_perfis() -> str:
 
 
 @servidor.tool(structured_output=False)
-def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar: bool = False,
-                voz_do_computador: bool = False, imagens_de_ia: bool = True, voz: str = "") -> str:
-    """Cria o vídeo a partir do roteiro. Sem confirmar, só cria o projeto e devolve a estimativa de custo (nada é
-    gasto). Com confirmar=true, a produção começa e você passa a responder as tarefas (proximas_tarefas).
+def criar_video(roteiro: str, nome: str = "", confirmar: bool = True, voz_do_computador: bool = False,
+                imagens_de_ia: bool = True, voz: str = "") -> str:
+    """Começa o vídeo a partir do roteiro (o texto) e devolve o nome dele, que as outras ferramentas pedem. O estilo, a
+    voz e o nome são da fábrica: não pergunte nada ao usuário. Mandar o mesmo roteiro de novo continua o vídeo que
+    parou (limite de uso, terminal fechado) em vez de começar outro.
 
-    nome: letras minúsculas, números e hífen. voz: vazio usa a voz do perfil; "fish" usa a voz grátis da Fish Audio
-    (o narrador padrão) e "fish:CODIGO" outra voz da biblioteca da Fish. voz_do_computador e imagens_de_ia=false
-    fazem um teste sem custo."""
-    voz = (voz or "").strip()
+    nome, voz, voz_do_computador, imagens_de_ia e confirmar=false (só a estimativa) são para os testes de quem vende,
+    na própria máquina; pela internet eles são ignorados."""
+    roteiro = roteiro or ""
+    perfil, voz_da_fabrica = _escolhas_da_fabrica()
+    if _URL_PUBLICA:
+        nome, voz, voz_do_computador, imagens_de_ia, confirmar = "", "", False, True, True
+    voz = (voz or "").strip() or voz_da_fabrica
     if voz and not re.fullmatch(r"fish(:[0-9a-f]{32})?", voz):
         return 'Voz inválida: use "fish" ou "fish:CODIGO_DA_VOZ" (32 letras e números), ou deixe vazio.'
+    if not nome:
+        if not roteiro.strip():
+            return "O roteiro está vazio."
+        nome = _video_em_andamento(_marca_do_roteiro(roteiro)) or _nome_automatico(roteiro)
     if not _NOME_VALIDO.match(nome):
         return "Nome inválido: use de 3 a 60 letras minúsculas, números e hífen (ex.: animais-perigosos-1)."
     if ((PROJETOS / nome).exists() or (pacote.ENTREGAS / nome).exists()) and not _e_meu(nome):
@@ -160,6 +214,7 @@ def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar
             p = Projeto.criar(nome, str(arquivo), str(_perfil(perfil)), offline=False)
         p.dados["modelo"] = "cliente"
         p.dados["dono"] = _cliente()
+        p.dados["roteiro_marca"] = _marca_do_roteiro(roteiro)
         if voz_do_computador:
             p.dados["voz_override"] = {"provedor": "computador"}
         elif voz:
@@ -172,10 +227,10 @@ def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar
     if not cliente.ativo(p):
         return f"O projeto {nome} já existe e não é um projeto do MCP. Escolha outro nome."
     if not confirmar:
-        return (custos.formatar(custos.estimar(p)) + "\n\nNada foi gasto. Mostre a estimativa ao usuário e, se ele "
-                f"concordar, chame criar_video(nome='{nome}', roteiro='', confirmar=true).")
+        return (custos.formatar(custos.estimar(p)) + f"\n\nNada foi gasto. Nome do vídeo: {nome}. Para começar, "
+                f"chame criar_video(roteiro='', nome='{nome}', confirmar=true).")
     if (_PRODUCOES.get(nome) or {}).get("estado") == "produzindo":
-        return f"{nome} já está em produção. Siga com esperar('{nome}')."
+        return f"{nome} já está em produção. NOME: {nome}."
     if _URL_PUBLICA and not p.dados.get("producao_contada"):
         # o limite de vídeos por dia conta o vídeo começado; retomar o mesmo vídeo depois de uma queda não conta de novo
         motivo = clientes_mcp.pode_comecar(_cliente())
@@ -190,8 +245,7 @@ def criar_video(nome: str, roteiro: str, perfil: str = "documentario", confirmar
         _PRODUCOES[nome] = {"estado": "produzindo", "log": [], "inicio": datetime.now().isoformat(timespec="seconds"),
                             "fim": None, "erro": None}
     threading.Thread(target=_produzir, args=(nome,), daemon=True, name=f"producao-{nome}").start()
-    return (f"Produção de {nome} começou. Agora repita proximas_tarefas -> responder até andamento('{nome}') dizer "
-            "'pronto'.")
+    return f"Vídeo começou. NOME: {nome} (as outras ferramentas pedem este nome)."
 
 
 def _produzir(nome):
@@ -266,6 +320,49 @@ def _estado_curto(nome: str) -> str:
     if cliente.pendentes(nome):
         return "tarefas já entregues, esperando as respostas"
     return "trabalhando"
+
+
+def _tempo_de_producao(nome: str) -> str:
+    """Quanto tempo o vídeo já leva sendo produzido, do começo da produção até agora (ou até o fim)."""
+    with _TRAVA:
+        prod = dict(_PRODUCOES.get(nome) or {})
+    if not prod.get("inicio"):
+        return ""
+    fim = datetime.fromisoformat(prod["fim"]) if prod.get("fim") else datetime.now()
+    segundos = int(max(0, (fim - datetime.fromisoformat(prod["inicio"])).total_seconds()))
+    return f"{segundos // 3600}h{segundos % 3600 // 60:02d}min" if segundos >= 3600 else f"{segundos // 60}min{segundos % 60:02d}s"
+
+
+def _linha_de_progresso(e: dict, tempo: str = "") -> str:
+    tempo = f" · {tempo}" if tempo else ""
+    if e["estado"] == "pronto":
+        return f"PRONTO · 100%{tempo}"
+    if e["estado"] in ("erro", "cancelado", "desconhecido"):
+        return f"PAROU · {e['frase']}"
+    if e["estado"] == "pausado":
+        return f"PAUSADO · {e['frase']}"
+    return f"{e['titulo']} · {e['porcentagem']}% (etapa {e['etapa']} de {e['total']}){tempo}"
+
+
+@servidor.tool(structured_output=False)
+def acompanhar(nome: str, ultima: int = -1, segundos: int = 50) -> str:
+    """O andamento do vídeo para mostrar ao usuário, numa linha pronta, com o tempo real de produção até agora:
+    "Escolhendo as imagens · 45% (etapa 4 de 7) · 6min12s", "PRONTO · 100% · 18min40s", "PAUSADO · ..." ou "PAROU · ...". Espera no servidor (até `segundos`, no máximo 55) o andamento
+    avançar desde a porcentagem `ultima` que você já mostrou: uma etapa nova ou 5% a mais. Se nada mudou, devolve
+    "SEM MUDANÇA" e não há nada a mostrar."""
+    if not _e_meu(nome):
+        return NAO_ACHEI
+    fim = time.time() + max(1, min(int(segundos), 55))
+    inicio = progresso(nome)
+    while True:
+        e = progresso(nome)
+        mudou = (e["estado"] != "produzindo" or e["porcentagem"] >= ultima + 5 or e["etapa"] != inicio["etapa"]
+                 or ultima < 0)
+        if mudou:
+            return _linha_de_progresso(e, _tempo_de_producao(nome))
+        if time.time() >= fim:
+            return "SEM MUDANÇA"
+        time.sleep(2)
 
 
 @servidor.tool(structured_output=False)
@@ -387,56 +484,62 @@ def cancelar(nome: str) -> str:
     return f"Cancelado: {soltas} tarefa(s) soltas. O que já foi feito fica salvo."
 
 
-AJUDANTE = """Você responde tarefas da fábrica de vídeos (ferramentas do MCP fabrica) do projeto {nome}, só do tipo {tipo}.
-Repita até 5 vezes: proximas_tarefas(nome="{nome}", tipo="{tipo}", limite=2, instrucoes_que_ja_tenho="<as marcas das
-instruções que você já recebeu, separadas por vírgula>"). Se vier "Nenhuma tarefa", pare. Para cada tarefa, siga as
-instruções e o esquema dela à risca e chame responder(tarefa_id, resposta_json) com um JSON só com as chaves do esquema;
-se for recusada, corrija e responda de novo. Olhe cada imagem com atenção: o sujeito que a narração cita tem que ser
-exatamente aquele, nunca outra coisa parecida. Decida direto: as instruções de cada tarefa já dizem como julgar, então
-não delibere longamente nem reveja a resposta antes de mandar. Não escreva arquivos nem explique nada ao usuário. No
-fim, devolva uma linha só: quantas tarefas respondeu e de quais etapas."""
+AJUDANTE = """Você é o operador da fábrica de vídeos TipLabs (ferramentas do MCP fabrica) no vídeo {nome}. Trabalhe em
+silêncio até o vídeo ficar pronto: não escreva nada para o usuário no caminho.
 
-COMANDO = """Produza um vídeo com a fábrica TipLabs (MCP fabrica).
+Repita:
+1. esperar(nome="{nome}"). Ele devolve uma linha:
+   - "trabalhando" ou "tarefas já entregues": chame esperar de novo.
+   - "tarefas: ...": chame proximas_tarefas(nome="{nome}", limite=3, instrucoes_que_ja_tenho="<as marcas das
+     instruções que você já recebeu, separadas por vírgula>") e responda cada tarefa com responder(tarefa_id,
+     resposta_json): um JSON só com as chaves do esquema dela, seguindo as instruções à risca. Se for recusada,
+     corrija e responda de novo. Decida direto: as instruções já dizem como julgar, não delibere longamente nem reveja
+     a resposta. Depois volte ao passo 1.
+   - "pronto", "erro ..." ou "cancelado": pare.
+2. No fim, devolva uma linha só: a última linha do esperar ("pronto", "erro ..." ou "cancelado")."""
+
+COMANDO = """Produza um vídeo com a fábrica TipLabs (MCP fabrica). O usuário só mandou o roteiro e quer receber o vídeo:
+não mostre a ele ferramentas, tarefas nem detalhes técnicos, e não pergunte nada.
 {argumentos}
 
-1. Se o roteiro acima for o caminho de um arquivo, leia o arquivo; senão ele é o próprio texto. Chame criar_video(nome,
-   roteiro=<o texto>, perfil) sem confirmar e mostre a estimativa ao usuário. Siga só se ele concordar, com
-   criar_video(nome, roteiro="", confirmar=true). Se o nome já estiver em produção, pule para o passo 2.
-2. Ciclo até o vídeo sair. Chame esperar(nome); ele devolve uma linha:
-   - "trabalhando" ou "tarefas já entregues": chame esperar de novo.
-   - "tarefas: roteiro N, visual M": para cada grupo com tarefas, lance um subagente com a ferramenta Agent
-     (subagent_type "general-purpose", run_in_background false): o de roteiro com model "opus", o visual com model
-     "sonnet". Se os dois grupos tiverem tarefas, lance os dois na mesma mensagem. O prompt de cada subagente é o texto
-     AJUDANTE abaixo, com o tipo ("roteiro" ou "visual") no lugar indicado. Quando voltarem, chame esperar de novo.
-   - "pronto": chame entregar_video(nome). Ele devolve o link do vídeo e o do pacote do projeto: baixe os dois para a
-     pasta atual (curl -L -o ARQUIVO LINK) e diga ao usuário onde ficaram.
-   - "erro ..." ou "cancelado": mostre ao usuário e pare.
-   Nunca responda tarefa nesta conversa, só nos subagentes: assim as imagens não se acumulam aqui e o vídeo gasta o
-   mínimo da assinatura. Não chame andamento nem proximas_tarefas aqui. Durante o ciclo, no máximo uma linha ao
-   usuário por subagente que voltar.
+1. Se o roteiro acima for o caminho de um arquivo, leia o arquivo; senão ele é o próprio texto. Chame
+   criar_video(roteiro=<o texto>) e guarde o NOME que ele devolve. Se o mesmo roteiro já estava em produção, ele
+   devolve o mesmo nome e o vídeo continua de onde parou.
+2. Diga ao usuário só: "Seu vídeo está sendo produzido. Vou mostrando o andamento aqui."
+3. Lance UM subagente com a ferramenta Agent (subagent_type "general-purpose", model "sonnet",
+   run_in_background true, description "Produzindo o vídeo") com o texto OPERADOR abaixo, trocando o nome. Não
+   responda tarefa nesta conversa e não chame esperar, andamento nem proximas_tarefas aqui: o operador faz tudo.
+4. Enquanto o operador trabalha, repita acompanhar(nome, ultima=<a última porcentagem que você mostrou, ou -1 na
+   primeira vez>):
+   - "SEM MUDANÇA": chame de novo, sem escrever nada.
+   - Uma linha de andamento ("Escolhendo as imagens · 45% (etapa 4 de 7) · 6min12s"): mostre ao usuário exatamente essa linha,
+     sozinha, sem comentário, e chame de novo com a porcentagem nova.
+   - "PRONTO · 100% · <tempo>": guarde o tempo e siga para o passo 5.
+   - "PAUSADO · ..." ou "PAROU · ...": mostre a frase ao usuário e pare.
+5. Quando estiver pronto (o acompanhar disse PRONTO ou o operador terminou com "pronto"): chame entregar_video(nome),
+   baixe o vídeo e o pacote do projeto para a pasta atual (curl -L -o ARQUIVO LINK) e diga ao usuário, em uma ou duas
+   linhas, que o vídeo está pronto, em quanto tempo foi produzido e onde ficou o arquivo. Se o operador terminar com "erro" ou "cancelado": diga,
+   numa linha, que a produção parou e que basta mandar o mesmo roteiro de novo com /tiplabs para continuar.
 
-AJUDANTE:
+OPERADOR:
 {ajudante}"""
 
 
-def texto_do_comando(roteiro="", nome="", perfil="") -> str:
+def texto_do_comando(roteiro="") -> str:
     """O texto do /tiplabs. Sem argumentos, é o do arquivo de comando, que recebe $ARGUMENTS do Claude Code."""
-    if roteiro or nome:
-        argumentos = f"Roteiro: {roteiro}\nNome do vídeo: {nome}. Perfil do canal: {perfil or 'documentario'}."
-        ajudante = AJUDANTE.format(nome=nome, tipo="<roteiro ou visual>")
+    if roteiro:
+        argumentos = f"Roteiro: {roteiro}"
     else:
-        argumentos = ("Argumentos: $ARGUMENTS\nO primeiro é o roteiro (o caminho de um arquivo ou o próprio texto), o "
-                      "segundo o nome do vídeo (letras minúsculas, números e hífen) e o terceiro, opcional, o perfil do "
-                      "canal (padrão: documentario). Se faltar o roteiro ou o nome, pergunte ao usuário.")
-        ajudante = AJUDANTE.format(nome="<nome do vídeo>", tipo="<roteiro ou visual>")
-    return COMANDO.format(argumentos=argumentos, ajudante=ajudante)
+        argumentos = ("Roteiro: $ARGUMENTS\n(o caminho de um arquivo de texto ou o próprio texto do roteiro; se vier "
+                      "vazio, peça só o roteiro ao usuário)")
+    return COMANDO.format(argumentos=argumentos, ajudante=AJUDANTE.format(nome="<o nome que o criar_video devolveu>"))
 
 
 # model: sonnet. Quem coordena só espera a fábrica e lança subagentes: no teste do ouro-serra-1min o coordenador no
 # Opus custou US$ 0,83 (equivalente em API) de US$ 2,22 sem tomar nenhuma decisão do vídeo
 ARQUIVO_DO_COMANDO = """---
 description: Produz um vídeo narrado com a fábrica TipLabs, do roteiro ao MP4
-argument-hint: <roteiro.txt> <nome-do-video> [perfil]
+argument-hint: <roteiro.txt ou o texto do roteiro>
 model: sonnet
 ---
 {texto}
@@ -445,18 +548,180 @@ model: sonnet
 
 @servidor.prompt(name="tiplabs", title="TipLabs: produzir um vídeo",
                  description="Produz o vídeo do roteiro até o fim, com as tarefas em subagentes (Opus no roteiro, "
-                             "Sonnet nas imagens). Argumentos: roteiro (arquivo ou texto), nome, perfil.")
-def comando_tiplabs(roteiro: str, nome: str, perfil: str = "documentario") -> str:
-    return texto_do_comando(roteiro, nome, perfil)
+                             "Sonnet nas imagens). Argumento: o roteiro (arquivo ou texto).")
+def comando_tiplabs(roteiro: str) -> str:
+    return texto_do_comando(roteiro)
 
 
 @servidor.tool(structured_output=False)
 def instalar_tiplabs() -> str:
     """O arquivo do comando /tiplabs para o Claude Code do usuário. Grave o conteúdo devolvido, exatamente como está,
     em ~/.claude/commands/tiplabs.md (na pasta do usuário; crie a pasta se faltar). Depois disso o usuário produz um
-    vídeo com /tiplabs roteiro.txt nome-do-video."""
+    vídeo com /tiplabs roteiro.txt."""
     return ("Grave o texto entre as linhas ===== em ~/.claude/commands/tiplabs.md, sem mudar nada:\n=====\n"
             + ARQUIVO_DO_COMANDO.format(texto=texto_do_comando()) + "=====")
+
+
+# A produção em macro-etapas, na linguagem de quem faz vídeo (pedido do usuário em 2026-10-09: o cliente não vê o
+# maquinário, só o andamento). Cada etapa começa quando a fábrica escreve um destes títulos no log; a narração e a
+# leitura do roteiro correm juntas, e vale a etapa mais adiantada.
+ETAPAS = (
+    ("Lendo o roteiro", ("Mapa do roteiro", "JSON de cenas")),
+    ("Gravando a narração", ("Narração",)),
+    ("Dividindo em cenas", ("Cenas",)),
+    ("Escolhendo as imagens", ("Material real", "Conferindo", "Imagens de IA", "Motion em todas", "Motion onde ajuda")),
+    ("Criando animações e trilha", ("Efeitos sonoros", "Animações", "Trilha")),
+    ("Montando o vídeo", ("Render",)),
+    ("Revisão final", ("Revisão do vídeo pronto",)),
+)
+_LINKS_DE_ACOMPANHAR = "acompanhar.json"
+
+
+def _arquivo_de_links() -> Path:
+    return pacote.ENTREGAS / _LINKS_DE_ACOMPANHAR
+
+
+def _link_de_acompanhar(nome: str) -> str:
+    """O link da página de acompanhamento do vídeo (o mesmo enquanto o vídeo existir): o código é o segredo dele."""
+    arquivo = _arquivo_de_links()
+    with _TRAVA:
+        try:
+            links = json.loads(arquivo.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            links = {}
+        codigo = next((c for c, n in links.items() if n == nome), None)
+        if not codigo:
+            codigo = secrets.token_urlsafe(12)
+            links[codigo] = nome
+            arquivo.parent.mkdir(parents=True, exist_ok=True)
+            arquivo.write_text(json.dumps(links, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"{(_URL_PUBLICA or 'http://127.0.0.1:8092').rstrip('/')}/acompanhar/{codigo}"
+
+
+def _nome_do_codigo(codigo: str) -> str:
+    try:
+        return json.loads(_arquivo_de_links().read_text(encoding="utf-8")).get(codigo) or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _video_pronto(nome: str):
+    for caminho in (pacote.ENTREGAS / nome / "final.mp4", PROJETOS / nome / "final.mp4"):
+        if caminho.is_file():
+            return caminho
+    return None
+
+
+def progresso(nome: str) -> dict:
+    """O andamento em linguagem de produção: a etapa, quantas são, a porcentagem e uma frase."""
+    with _TRAVA:
+        prod = dict(_PRODUCOES.get(nome) or {})
+        linhas = list(prod.get("log") or [])
+    total = len(ETAPAS)
+    if prod.get("estado") == "pronto" or (not prod and _video_pronto(nome)):
+        return {"estado": "pronto", "etapa": total, "total": total, "titulo": "Vídeo pronto", "porcentagem": 100,
+                "frase": "Seu vídeo está pronto e chegando na sua pasta."}
+    if prod.get("estado") in ("erro", "cancelado"):
+        return {"estado": prod["estado"], "etapa": 0, "total": total, "titulo": "Produção interrompida",
+                "porcentagem": 0, "frase": "A produção parou. Mande o mesmo roteiro de novo para continuar."}
+    if not prod:
+        return {"estado": "desconhecido", "etapa": 0, "total": total, "titulo": "Aguardando", "porcentagem": 0,
+                "frase": "Este vídeo não está em produção agora. Mande o roteiro de novo para continuar."}
+    etapa = 0
+    for linha in linhas:
+        texto = str(linha).strip()
+        for i, (_, titulos) in enumerate(ETAPAS):
+            if any(texto.startswith(t) for t in titulos):
+                etapa = max(etapa, i)
+    # dentro da etapa: o andamento do render ("clipes 10/16") ou o de quem está escolhendo as imagens
+    dentro = 0.0
+    for linha in reversed(linhas):
+        achado = re.search(r"(?:clipes|imagens|revisadas)\s+(\d+)\s*(?:/|de)\s*(\d+)", str(linha))
+        if achado and int(achado.group(2)):
+            dentro = min(1.0, int(achado.group(1)) / int(achado.group(2)))
+            break
+    porcentagem = int(100 * (etapa + dentro * 0.95) / total)
+    m = cliente.medidas(nome)
+    titulo = ETAPAS[etapa][0]
+    if m.get("pausado"):
+        return {"estado": "pausado", "etapa": etapa + 1, "total": total, "titulo": titulo, "porcentagem": porcentagem,
+                "frase": "Pausado: o limite de uso do seu Claude acabou. Quando ele voltar, mande o mesmo roteiro de "
+                         "novo com /tiplabs e o vídeo continua daqui."}
+    return {"estado": "produzindo", "etapa": etapa + 1, "total": total, "titulo": titulo, "porcentagem": porcentagem,
+            "frase": f"{titulo}…"}
+
+
+PAGINA = r"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TipLabs · seu vídeo</title>
+<style>
+:root{--fundo:#f7f6f2;--texto:#1c1c1a;--suave:#6b6a64;--trilho:#e4e2da;--cor:#2f6f4f;--cartao:#fff}
+@media (prefers-color-scheme:dark){:root{--fundo:#151513;--texto:#ecebe6;--suave:#a3a199;--trilho:#2b2a26;--cor:#6fbf8f;--cartao:#1e1d1a}}
+*{box-sizing:border-box}body{margin:0;background:var(--fundo);color:var(--texto);font:16px/1.5 system-ui,sans-serif;
+display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px}
+.cartao{background:var(--cartao);border-radius:18px;padding:32px 28px;max-width:560px;width:100%;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+.marca{font-weight:700;letter-spacing:.04em;color:var(--cor);font-size:13px;text-transform:uppercase}
+h1{font-size:24px;margin:6px 0 4px}.frase{color:var(--suave);margin:0 0 22px}
+.trilho{height:10px;background:var(--trilho);border-radius:99px;overflow:hidden}
+.barra{height:100%;width:0;background:var(--cor);border-radius:99px;transition:width .8s ease}
+.pct{font-variant-numeric:tabular-nums;color:var(--suave);font-size:14px;margin-top:8px}
+ol{list-style:none;padding:0;margin:24px 0 0}li{display:flex;gap:10px;align-items:center;padding:6px 0;color:var(--suave)}
+li .p{width:20px;height:20px;border-radius:50%;border:2px solid var(--trilho);flex:none}
+li.feita{color:var(--texto)}li.feita .p{background:var(--cor);border-color:var(--cor)}
+li.agora{color:var(--texto);font-weight:600}li.agora .p{border-color:var(--cor);animation:pulso 1.4s infinite}
+@keyframes pulso{50%{box-shadow:0 0 0 6px rgba(47,111,79,.18)}}
+a.botao{display:none;margin-top:24px;background:var(--cor);color:#fff;text-decoration:none;padding:12px 18px;
+border-radius:12px;font-weight:600;text-align:center}
+</style></head><body><main class="cartao">
+<div class="marca">TipLabs</div><h1 id="titulo">Preparando…</h1><p class="frase" id="frase"></p>
+<div class="trilho"><div class="barra" id="barra"></div></div><div class="pct" id="pct">0%</div>
+<ol id="etapas">__ETAPAS__</ol><a class="botao" id="baixar" href="video" download>Baixar o vídeo</a>
+</main><script>
+async function olhar(){
+  try{
+    const r=await fetch(location.pathname.replace(/\/$/,'')+'/estado',{cache:'no-store'});const e=await r.json();
+    document.getElementById('titulo').textContent=e.titulo;document.getElementById('frase').textContent=e.frase;
+    document.getElementById('barra').style.width=e.porcentagem+'%';document.getElementById('pct').textContent=e.porcentagem+'%';
+    document.querySelectorAll('#etapas li').forEach((li,i)=>{li.className=(i+1<e.etapa||e.estado==='pronto')?'feita':(i+1===e.etapa?'agora':'')});
+    const b=document.getElementById('baixar');b.href=location.pathname.replace(/\/$/,'')+'/video';
+    b.style.display=e.estado==='pronto'?'block':'none';if(e.estado==='pronto')return;
+  }catch(_){}
+  setTimeout(olhar,5000);
+}
+olhar();
+</script></body></html>"""
+
+
+@servidor.custom_route("/acompanhar/{codigo}", methods=["GET"])
+async def pagina_acompanhar(request):
+    """A página do cliente: só a barra de progresso em macro-etapas, sem o maquinário."""
+    from starlette.responses import HTMLResponse, PlainTextResponse
+
+    if not _nome_do_codigo(request.path_params["codigo"]):
+        return PlainTextResponse("Link inválido.", status_code=404)
+    itens = "".join(f'<li><span class="p"></span>{titulo}</li>' for titulo, _ in ETAPAS)
+    return HTMLResponse(PAGINA.replace("__ETAPAS__", itens))
+
+
+@servidor.custom_route("/acompanhar/{codigo}/estado", methods=["GET"])
+async def acompanhar_estado(request):
+    from starlette.responses import JSONResponse
+
+    nome = _nome_do_codigo(request.path_params["codigo"])
+    if not nome:
+        return JSONResponse({"erro": "link inválido"}, status_code=404)
+    return JSONResponse(progresso(nome), headers={"Cache-Control": "no-store"})
+
+
+@servidor.custom_route("/acompanhar/{codigo}/video", methods=["GET"])
+async def acompanhar_video(request):
+    from starlette.responses import FileResponse, PlainTextResponse
+
+    nome = _nome_do_codigo(request.path_params["codigo"])
+    video = _video_pronto(nome) if nome else None
+    if video is None:
+        return PlainTextResponse("O vídeo ainda não está pronto.", status_code=404)
+    return FileResponse(video, filename=f"{nome}.mp4")
 
 
 class _Verificador:

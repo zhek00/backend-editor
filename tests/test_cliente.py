@@ -156,14 +156,28 @@ def test_tarefas_separadas_em_roteiro_e_visual():
             f.join(2)
 
 
-def test_comando_tiplabs():
-    # o arquivo do /tiplabs recebe os argumentos do Claude Code; o prompt do servidor já vem com eles
+def test_comando_tiplabs_so_pede_o_roteiro():
+    # o cliente não escolhe nada (pedido do usuário em 2026-10-09): nem nome, nem estilo, nem voz, nem estimativa
     from fabrica import mcp_servidor
     arquivo = mcp_servidor.instalar_tiplabs()
     assert "~/.claude/commands/tiplabs.md" in arquivo and "$ARGUMENTS" in arquivo and "argument-hint:" in arquivo
-    assert "{" not in arquivo.split("=====")[1].replace("{nome}", "")  # nenhum campo sem preencher
-    pronto = mcp_servidor.comando_tiplabs("roteiro.txt", "cafe-1")
-    assert "Nome do vídeo: cafe-1" in pronto and '"sonnet"' in pronto and "$ARGUMENTS" not in pronto
+    assert "estimativa" not in arquivo.split("AJUDANTE:")[0] and "perfil" not in arquivo.split("AJUDANTE:")[0]
+    pronto = mcp_servidor.comando_tiplabs("roteiro.txt")
+    assert "Roteiro: roteiro.txt" in pronto and '"sonnet"' in pronto and "$ARGUMENTS" not in pronto
+
+
+def test_nome_automatico_e_o_mesmo_roteiro_continua_o_video(tmp_path, monkeypatch):
+    import json
+    from fabrica import mcp_servidor
+    monkeypatch.setattr(mcp_servidor, "PROJETOS", tmp_path)
+    nome = mcp_servidor._nome_automatico("Ninguém imagina, mas o lobo-guará come frutas.")
+    assert mcp_servidor._NOME_VALIDO.match(nome) and nome.startswith("ninguem-imagina-mas-o-lobo")
+    roteiro = "O lobo-guará come frutas.\n\nE espalha sementes."
+    (tmp_path / nome).mkdir()
+    (tmp_path / nome / "projeto.json").write_text(json.dumps(
+        {"modelo": "cliente", "roteiro_marca": mcp_servidor._marca_do_roteiro(roteiro)}), encoding="utf-8")
+    assert mcp_servidor._video_em_andamento(mcp_servidor._marca_do_roteiro("O lobo-guará  come frutas. E espalha sementes.")) == nome
+    assert mcp_servidor._video_em_andamento(mcp_servidor._marca_do_roteiro("Outro roteiro.")) == ""
 
 
 # ---------------------------------------------------------------- reserva: o cliente parou no meio do vídeo
@@ -220,3 +234,82 @@ def test_tarefa_de_roteiro_nunca_vai_para_a_reserva(tmp_path):
     assert fio.is_alive()
     cliente.cancelar(p.nome)
     fio.join(2)
+
+
+def test_mcp_oferece_so_os_perfis_de_motion_de_apoio():
+    # o vídeo do cliente é de banco de imagens e IA; o motion só apoia. Perfis todo em motion e canais pessoais ficam fora
+    from fabrica import mcp_servidor
+    assert mcp_servidor._perfis_do_mcp() == ["documentario", "documentario-vox"]
+    assert "motion-vox" not in mcp_servidor.listar_perfis()
+    with pytest.raises(ValueError):
+        mcp_servidor._perfil("motion-ai")
+    assert mcp_servidor._perfil("documentario-vox").name == "documentario-vox.yaml"
+
+
+def test_com_visao_pela_fabrica_as_imagens_saem_do_claude_do_cliente(monkeypatch):
+    # pedido do usuário em 2026-10-09: o Gemini descreve e escolhe as imagens e o Jev julga; o cliente fica com o texto
+    from fabrica import openrouter_local
+    p = _projeto()
+    p.config = {"mcp": {"visao_pela_fabrica": True, "modelos_visao": ["gemini:gemini-3.1-flash-lite", "qwen/qwen3.7-flash"]}}
+    assert not cliente.atende(p, "escolha das fotos")
+    assert not cliente.atende(p, "conferir cenas") and not cliente.atende(p, "julgar mídia")
+    assert not cliente.atende(p, "motion IA: revisão visual", imagens=True)
+    assert cliente.atende(p, "roteirista: cenas") and cliente.atende(p, "trilha")
+    assert cliente.atende(p, "motion IA: modelo")  # decisão de texto do motion segue com o cliente
+    assert openrouter_local.visao(p) == ["gemini:gemini-3.1-flash-lite", "qwen/qwen3.7-flash"]
+    sem = _projeto()
+    assert cliente.atende(sem, "escolha das fotos")  # sem a chave de config, tudo segue com o cliente
+
+
+def test_rota_gemini_na_cadeia(monkeypatch):
+    from fabrica import gemini_local, openrouter_local
+    chamadas = []
+
+    def falso(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
+              na_cadeia=False, raciocinio=None):
+        chamadas.append((modelo, na_cadeia))
+        return {"escolhas": [2]}
+
+    monkeypatch.setattr(gemini_local, "perguntar", falso)
+    p = _projeto(modelo="")
+    p.config = {}
+    r = openrouter_local.uma_rota(p, "escolha das fotos", "regras", "pedido", ESQUEMA, print, "gemini:gemini-3.8-flash",
+                                  (), None)
+    assert r == {"escolhas": [2]} and chamadas == [("gemini-3.8-flash", True)]
+
+
+def test_andamento_em_linguagem_de_producao(monkeypatch):
+    # o cliente vê "Escolhendo as imagens", nunca "Usou fabrica: esperar"
+    from fabrica import mcp_servidor
+    monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-x", {"estado": "produzindo", "log": [
+        "Mapa do roteiro", "Narração", "JSON de cenas", "Cenas", "Material real", "  imagens 3/10"]})
+    e = mcp_servidor.progresso("video-x")
+    assert e["estado"] == "produzindo" and e["titulo"] == "Escolhendo as imagens" and e["etapa"] == 4
+    assert 42 < e["porcentagem"] < 60
+    monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-x", {"estado": "produzindo", "log": ["Render", "  clipes 8/16"]})
+    assert mcp_servidor.progresso("video-x")["titulo"] == "Montando o vídeo"
+    monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-x", {"estado": "pronto", "log": []})
+    assert mcp_servidor.progresso("video-x")["porcentagem"] == 100
+
+
+def test_link_de_acompanhar_e_sempre_o_mesmo(tmp_path, monkeypatch):
+    from fabrica import mcp_servidor, pacote
+    monkeypatch.setattr(pacote, "ENTREGAS", tmp_path)
+    link = mcp_servidor._link_de_acompanhar("video-y")
+    assert link == mcp_servidor._link_de_acompanhar("video-y")
+    assert mcp_servidor._nome_do_codigo(link.rsplit("/", 1)[1]) == "video-y"
+    assert mcp_servidor._nome_do_codigo("inventado") == ""
+
+
+def test_acompanhar_devolve_a_porcentagem_so_quando_muda(monkeypatch):
+    from fabrica import mcp_servidor
+    monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-z", {"estado": "produzindo", "log": ["Cenas"],
+                                                             "inicio": "2026-10-09T10:00:00", "fim": None})
+    linha = mcp_servidor.acompanhar("video-z")
+    assert linha.rsplit(" · ", 1)[1].count("min") == 1  # o tempo real de produção vai junto
+    assert linha.startswith("Dividindo em cenas · ") and "etapa 3 de 7" in linha
+    pct = int(linha.split("· ")[1].split("%")[0])
+    assert mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1) == "SEM MUDANÇA"
+    monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-z", {"estado": "pronto", "log": [],
+                                                             "inicio": "2026-10-09T10:00:00", "fim": "2026-10-09T10:18:40"})
+    assert mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1) == "PRONTO · 100% · 18min40s"

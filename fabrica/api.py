@@ -379,6 +379,15 @@ def _esteira(nome: str, task_id: str) -> None:
         _etapa(task_id, "Divisão de cenas", lambda: cenas.planejar(p, log=log_w))
         marcar("cenas")
 
+    # PASSO 2b: perfil todo em motion: toda cena vira clipe antes de qualquer busca de foto (a busca pula quem já tem)
+    from . import motion_ia
+    if motion_ia.tudo_em_motion(p):
+        _atualizar(task_id, etapa="motion", progresso_pct=40, mensagem="Criando os clipes de motion de todas as cenas...")
+        try:
+            motion_ia.todas_as_cenas(p, log=log_w)
+        except (Exception, SystemExit) as erro_motion:
+            log_w(f"  o motion de todas as cenas falhou, as que faltam seguem com foto: {erro_motion}")
+
     # PASSO 3: Mídia de Acervo (Pexels / Pixabay / Wikimedia). A busca pula as cenas que já têm material.
     _atualizar(task_id, etapa="midia", passo_atual=3, progresso_pct=65,
                mensagem="Buscando fotos e vídeos de acervo (Pexels, Pixabay e Wikimedia)...")
@@ -1042,6 +1051,9 @@ def listar_perfis():
         "asteroide": "Ciência, Espaço & Documentário",
         "livro-de-enoque": "História Antiga & Mistérios Bíblicos",
         "meditacao": "Meditação & Relaxamento Guiado",
+        "motion-ai": "Motion IA (vídeo todo em motion graphics)",
+        "motion-vox": "Motion IA estilo Vox (vídeo todo em colagem de jornal)",
+        "documentario-vox": "Documentário com Motion IA estilo Vox",
         "vo-cida": "Receitas & Histórias da Vovó",
         "workshop": "Workshop & Educacional",
     }

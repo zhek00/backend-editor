@@ -62,28 +62,61 @@ def resumo_uso(projeto):
     }
 
 
-def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None):
-    """imagens é uma lista de caminhos de JPG enviados junto do pedido."""
+def _partes(types, pedido, imagens):
+    """O pedido em partes: texto e imagens. O pedido da escolha das fotos já vem montado (texto e imagens em base64
+    intercalados, como no OpenRouter); as imagens soltas vão no fim, pelo caminho do arquivo."""
+    import base64
+    import mimetypes
+
+    partes = []
+    if isinstance(pedido, list):
+        for parte in pedido:
+            if parte.get("type") == "text":
+                partes.append(types.Part.from_text(text=parte.get("text", "")))
+            elif parte.get("type") == "image_url":
+                url = (parte.get("image_url") or {}).get("url", "")
+                if url.startswith("data:") and "," in url:
+                    cabeca, dados = url.split(",", 1)
+                    partes.append(types.Part.from_bytes(data=base64.b64decode(dados),
+                                                        mime_type=cabeca[5:].split(";")[0] or "image/jpeg"))
+    else:
+        partes.append(types.Part.from_text(text=str(pedido)))
+    for caminho in imagens or ():
+        with open(caminho, "rb") as arquivo:
+            partes.append(types.Part.from_bytes(data=arquivo.read(),
+                                                mime_type=mimetypes.guess_type(str(caminho))[0] or "image/jpeg"))
+    return partes
+
+
+def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
+              na_cadeia=False, raciocinio=None):
+    """imagens é uma lista de caminhos de imagem enviados junto do pedido.
+
+    na_cadeia=True: é uma rota da cadeia de visão ("gemini:MODELO", openrouter_local.uma_rota). Quem não responde
+    levanta RotaIndisponivel e a cadeia passa para o seguinte, em vez de cair no MiMo, que saiu da fábrica."""
     from google.genai import errors, types
 
     cfg = projeto.config.get("gemini") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
-    partes = [types.Part.from_text(text=pedido)]
-    for caminho in imagens:
-        with open(caminho, "rb") as arquivo:
-            partes.append(types.Part.from_bytes(data=arquivo.read(), mime_type="image/jpeg"))
-    config = types.GenerateContentConfig(
-        system_instruction=instrucoes,
-        temperature=cfg.get("temperatura", 0.3) if temperatura is None else temperatura,
-        response_mime_type="application/json",
-        response_json_schema=esquema,
-        max_output_tokens=cfg.get("max_tokens", 16000),
-        # o pensamento conta como token escrito, o mais caro. Nível baixo basta para escolher cenas e buscas
-        thinking_config=types.ThinkingConfig(thinking_level=str(cfg.get("raciocinio", "low")).upper()),
-    )
+    partes = _partes(types, pedido, imagens)
+    def config_de(nome):
+        # o pensamento conta como token escrito, o mais caro. A família 2.5 não aceita o nível (thinking_level) e
+        # desliga pelo orçamento zero; a 3 usa o nível baixo, que basta para escolher cenas e descrever imagens
+        pensamento = (types.ThinkingConfig(thinking_budget=0) if nome.startswith("gemini-2")
+                      else types.ThinkingConfig(thinking_level=str(raciocinio or cfg.get("raciocinio", "low")).upper()))
+        return types.GenerateContentConfig(
+            system_instruction=instrucoes,
+            temperature=cfg.get("temperatura", 0.3) if temperatura is None else temperatura,
+            response_mime_type="application/json",
+            response_json_schema=esquema,
+            max_output_tokens=cfg.get("max_tokens", 16000),
+            thinking_config=pensamento,
+        )
     def mimo(motivo):
         # nunca esperar cota: o Gemini que não responde agora passa a vez para o MiMo na hora
         from . import openrouter_local
+        if na_cadeia:
+            raise openrouter_local.RotaIndisponivel(f"Gemini: {motivo}")
         return openrouter_local.pelo_mimo(projeto, etapa, instrucoes, pedido, esquema, log=log, imagens=imagens,
                                           temperatura=temperatura, motivo=motivo)
 
@@ -101,12 +134,14 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     while tentativa < cfg.get("tentativas", 6):
         modelo = modelos[0]
         try:
-            resposta = cliente.models.generate_content(model=modelo, contents=partes, config=config)
+            resposta = cliente.models.generate_content(model=modelo, contents=partes, config=config_de(modelo))
         except errors.APIError as e:
             codigo = getattr(e, "code", 0)
             if codigo in (401, 403):
                 return mimo("a GEMINI_API_KEY foi recusada")
             if codigo == 404:
+                if na_cadeia:
+                    return mimo(f"o modelo {modelo} não existe para a sua chave")
                 raise RuntimeError(f"O modelo {modelo} não existe para a sua chave.")
             if codigo == 429 and "PerDay" in str(e):
                 log(f"  a cota diária do {modelo} acabou (plano gratuito do Google)")

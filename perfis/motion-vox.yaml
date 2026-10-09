@@ -1,0 +1,28 @@
+# Vídeo todo em Motion IA no estilo Vox de colagem de acervo: jornal envelhecido com manchas, anel de café, mapa de fundo
+# e vinheta; folhas e notas de papel com fita e alfinete; carimbo vermelho, barbante vermelho ligando as peças e foto
+# em meio-tom (motion_estilo.py e motion_colagem.py). Peças entram em degraus, a câmera fica travada, sem zoom.
+# Mesmo motor do perfil motion-ai; só muda o visual.
+base: base-documentario.yaml
+
+nome: Motion IA Vox (colagem de papel)
+
+motion_ia:
+  ativo: true
+  tudo: true
+  demonstracao: livre         # o modelo inventa a demonstração de cada cena (guiado pela orquestradora), sem desenhos prontos
+  tentativas: 4
+  estilo: colagem
+  critica:
+    ativa: true
+    nota: 8
+    aceitavel: 3
+    rodadas: 2
+  repetir_no_maximo: 10
+
+diretrizes: >-
+  Este é um vídeo explicativo todo em motion graphics de colagem, sem fotos nem filmagens. Escreva o roteiro como
+  quem explica com infográficos: uma ideia por frase, cada número com o que ele mede, comparações com os dois lados
+  ditos, causa e consequência em sequência.
+
+animacoes:
+  ativo: false

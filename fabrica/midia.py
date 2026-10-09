@@ -2021,8 +2021,8 @@ def cenas_repetidas(projeto) -> list[int]:
     vistas_chave, vistas_arquivo, vistas_impressao, repetidas = {}, {}, [], []
     for c in sorted(projeto.ler_json("cenas.json").get("cenas", []), key=lambda x: x["n"]):
         m = c.get("midia") or {}
-        if not m.get("arquivo"):
-            continue
+        if not m.get("arquivo") or m.get("fonte") == "motion_ia":
+            continue  # clipe de motion não é foto: as capas têm o mesmo fundo creme e pareciam repetidas (31 de 96 trocadas por foto)
         chave = f"{m.get('fonte')}:{m.get('id')}" if m.get("fonte") and m.get("id") else None
         caminho = _imagem_de_comparar(projeto, m)
         h = _impressao(caminho) if caminho else None
