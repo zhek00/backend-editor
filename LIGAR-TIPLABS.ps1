@@ -17,7 +17,7 @@
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$PASTA  = 'E:\fabrica-para-amigo'
+$PASTA  = $PSScriptRoot   # a pasta onde este arquivo esta: serve em qualquer computador
 $PORTA  = 8080
 $PAINEL = 'https://editor-video-dark.vercel.app'
 $LOG    = Join-Path $PASTA 'fabrica.log'
@@ -51,6 +51,8 @@ if (-not $uv) { $uv = "$env:USERPROFILE\.local\bin\uv.exe" }
 # Sobe o MCP escondido, se ele nao estiver de pe. Ele usa a mesma pasta da
 # fabrica, entao os dois estao sempre na mesma versao.
 function LigarMcp {
+    # o MCP so sobe em quem vende (tem os tokens dos clientes); na fabrica de um amigo ele fica desligado
+    if (-not (Test-Path (Join-Path $PASTA 'clientes_mcp.json'))) { return }
     if (Get-NetTCPConnection -LocalPort $PORTA_MCP -State Listen -ErrorAction SilentlyContinue) {
         Passo "  MCP: ja estava rodando ($URL_MCP)" Green
         return

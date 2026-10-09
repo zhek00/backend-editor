@@ -6,7 +6,7 @@
 # Pedido do usuario em 2026-10-09: "deve rodar o mcp sem travar".
 # O DESLIGAR-TIPLABS para o vigia antes de desligar o resto (senao ele religaria tudo).
 
-$PASTA     = 'E:\fabrica-para-amigo'
+$PASTA     = $PSScriptRoot
 $PORTA     = 8080
 $PORTA_MCP = 8092
 $URL_MCP   = 'https://mcp.bbnews.cc'
@@ -64,6 +64,9 @@ $servicos = @(
     @{ Nome = 'fabrica'; Porta = $PORTA;     Url = "http://localhost:$PORTA/api/projetos"; Ligar = ${function:LigarFabrica}; Falhas = 0 },
     @{ Nome = 'MCP';     Porta = $PORTA_MCP; Url = "http://127.0.0.1:$PORTA_MCP/mcp";      Ligar = ${function:LigarMcp};     Falhas = 0 }
 )
+
+# o MCP so e vigiado em quem vende (tem os tokens dos clientes)
+if (-not (Test-Path (Join-Path $PASTA 'clientes_mcp.json'))) { $servicos = @($servicos[0]) }
 
 Anotar 'vigia ligado'
 while ($true) {
