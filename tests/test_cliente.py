@@ -1,3 +1,4 @@
+import anyio
 """Modelo do cliente: as decisões da fábrica respondidas pelo Claude de quem usa o MCP (cliente.py, mcp_servidor.py)."""
 import base64
 import threading
@@ -18,7 +19,8 @@ def fila_limpa(monkeypatch):
 
 
 def _projeto(nome="video", modelo="cliente"):
-    return SimpleNamespace(nome=nome, dados={"modelo": modelo}, config={}, pasta=None)
+    # o modo antigo, com o Claude do cliente respondendo a fila (mcp.pelo_cliente: true)
+    return SimpleNamespace(nome=nome, dados={"modelo": modelo}, config={"mcp": {"pelo_cliente": True}}, pasta=None)
 
 
 def _em_paralelo(funcao):
@@ -145,10 +147,10 @@ def test_tarefas_separadas_em_roteiro_e_visual():
         mcp_servidor._PRODUCOES["video"] = {"estado": "produzindo", "log": [], "inicio": "2026-10-07T10:00:00",
                                             "fim": None, "erro": None}
     try:
-        assert mcp_servidor.esperar("video", 1) == "tarefas: roteiro 1, visual 1"
+        assert anyio.run(mcp_servidor.esperar, "video", 1) == "tarefas: roteiro 1, visual 1"
         [so_roteiro] = cliente.proximas("video", 5, tipo="roteiro")
         assert so_roteiro["etapa"] == "roteirista: cenas"
-        assert mcp_servidor.esperar("video", 1) == "tarefas: roteiro 0, visual 1"
+        assert anyio.run(mcp_servidor.esperar, "video", 1) == "tarefas: roteiro 0, visual 1"
     finally:
         cliente.cancelar("video")
         mcp_servidor._PRODUCOES.pop("video", None)
@@ -161,9 +163,12 @@ def test_comando_tiplabs_so_pede_o_roteiro():
     from fabrica import mcp_servidor
     arquivo = mcp_servidor.instalar_tiplabs()
     assert "~/.claude/commands/tiplabs.md" in arquivo and "$ARGUMENTS" in arquivo and "argument-hint:" in arquivo
-    assert "estimativa" not in arquivo.split("AJUDANTE:")[0] and "perfil" not in arquivo.split("AJUDANTE:")[0]
+    assert "estimativa" not in arquivo and "perfil" not in arquivo
+    # desde 2026-10-09 a fábrica pensa tudo pelo Gemini: o comando só cria, acompanha e baixa, sem operador
+    assert "model: haiku" in arquivo and "Agent" not in arquivo and "proximas_tarefas" not in arquivo
     pronto = mcp_servidor.comando_tiplabs("roteiro.txt")
-    assert "Roteiro: roteiro.txt" in pronto and '"sonnet"' in pronto and "$ARGUMENTS" not in pronto
+    assert "Roteiro: roteiro.txt" in pronto and "acompanhar" in pronto and "entregar_video" in pronto
+    assert "$ARGUMENTS" not in pronto
 
 
 def test_nome_automatico_e_o_mesmo_roteiro_continua_o_video(tmp_path, monkeypatch):
@@ -189,7 +194,7 @@ def _projeto_com_cenas(tmp_path, feitas, total=10):
         (tmp_path / "midia" / "escolha" / f"cena_{n:04d}.json").write_text("{}", encoding="utf-8")
     cenas = {"cenas": [{"n": n} for n in range(1, total + 1)]}
     return SimpleNamespace(nome=f"video-{feitas}", dados={"modelo": "cliente"}, pasta=tmp_path,
-                           config={"cliente": {"espera_reserva": 0.2}},
+                           config={"cliente": {"espera_reserva": 0.2}, "mcp": {"pelo_cliente": True}},
                            existe=lambda nome: nome == "cenas.json", ler_json=lambda nome: cenas)
 
 
@@ -250,7 +255,7 @@ def test_com_visao_pela_fabrica_as_imagens_saem_do_claude_do_cliente(monkeypatch
     # pedido do usuário em 2026-10-09: o Gemini descreve e escolhe as imagens e o Jev julga; o cliente fica com o texto
     from fabrica import openrouter_local
     p = _projeto()
-    p.config = {"mcp": {"visao_pela_fabrica": True, "modelos_visao": ["gemini:gemini-3.1-flash-lite", "qwen/qwen3.7-flash"]}}
+    p.config = {"mcp": {"pelo_cliente": True, "visao_pela_fabrica": True, "modelos_visao": ["gemini:gemini-3.1-flash-lite", "qwen/qwen3.7-flash"]}}
     assert not cliente.atende(p, "escolha das fotos")
     assert not cliente.atende(p, "conferir cenas") and not cliente.atende(p, "julgar mídia")
     assert not cliente.atende(p, "motion IA: revisão visual", imagens=True)
@@ -296,11 +301,70 @@ def test_acompanhar_devolve_a_porcentagem_so_quando_muda(monkeypatch):
     from fabrica import mcp_servidor
     monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-z", {"estado": "produzindo", "log": ["Cenas"],
                                                              "inicio": "2026-10-09T10:00:00", "fim": None})
-    linha = mcp_servidor.acompanhar("video-z")
+    linha = anyio.run(mcp_servidor.acompanhar, "video-z")
     assert linha.rsplit(" · ", 1)[1].count("min") == 1  # o tempo real de produção vai junto
     assert linha.startswith("Dividindo em cenas · ") and "etapa 3 de 7" in linha
     pct = int(linha.split("· ")[1].split("%")[0])
-    assert mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1) == "SEM MUDANÇA"
+    assert anyio.run(lambda: mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1)) == "SEM MUDANÇA"
     monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-z", {"estado": "pronto", "log": [],
                                                              "inicio": "2026-10-09T10:00:00", "fim": "2026-10-09T10:18:40"})
-    assert mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1) == "PRONTO · 100% · 18min40s"
+    assert anyio.run(lambda: mcp_servidor.acompanhar("video-z", ultima=pct, segundos=1)) == "PRONTO · 100% · 18min40s"
+
+
+def test_mcp_pensado_pela_fabrica_pelo_gemini(monkeypatch):
+    # pedido do usuário em 2026-10-09: o MCP não usa mais a assinatura do cliente; o Gemini pensa tudo na fábrica
+    from fabrica import openrouter_local, roteirista
+    p = SimpleNamespace(nome="video", dados={"modelo": "cliente"}, pasta=None, config={"mcp": {
+        "modelos_roteiro": ["gemini:gemini-3.8-flash", "deepseek/deepseek-v4-flash"],
+        "modelos_texto": ["gemini:gemini-3.1-flash-lite", "qwen/qwen3.7-flash"],
+        "modelos_visao": ["gemini:gemini-3.1-flash-lite"]}})
+    assert cliente.pela_fabrica(p) and not cliente.pelo_cliente(p)
+    for etapa in ("roteirista: cenas", "trilha", "escolha das fotos", "conferir cenas", "motion IA: modelo"):
+        assert not cliente.atende(p, etapa)
+    assert openrouter_local.visao(p) == ["gemini:gemini-3.1-flash-lite"]
+    assert roteirista._modelo_agente(p).lista == ["gemini:gemini-3.8-flash", "deepseek/deepseek-v4-flash"]
+    rotas = []
+
+    def rota(projeto, etapa, instrucoes, pedido, esquema, log, r, imagens, temperatura, cadeia=False, raciocinio=None):
+        rotas.append(r)
+        return {"escolhas": [1]}
+
+    monkeypatch.setattr(openrouter_local, "uma_rota", rota)
+    # o modelo pedido por quem chamou não vale: no MCP o texto vai ao Gemini
+    assert openrouter_local.perguntar(p, "trilha", "r", "p", ESQUEMA, log=lambda *a: None,
+                                      modelo="typesafe/jev-router") == {"escolhas": [1]}
+    assert rotas == ["gemini:gemini-3.1-flash-lite"] and cliente.pendentes() == 0
+    fora = SimpleNamespace(nome="x", dados={}, pasta=None, config=p.config)
+    assert cliente.modelos_do_mcp(fora, "trilha") == []  # fora do MCP nada muda
+
+
+def test_mcp_retoma_sozinho_o_video_que_estava_em_producao(tmp_path, monkeypatch):
+    # pedido do usuário em 2026-10-09, "deve rodar o mcp sem travar": o MCP caiu no meio do vídeo e, ao subir de novo,
+    # o vídeo volta a andar, com o tempo contado desde o começo; falha no meio tenta de novo, cancelado não volta
+    import json
+    from fabrica import mcp_servidor
+    monkeypatch.setattr(mcp_servidor, "PROJETOS", tmp_path)
+    monkeypatch.setattr(mcp_servidor, "_tentativas", lambda: 3)
+    monkeypatch.setattr(mcp_servidor.time, "sleep", lambda s: None)
+    chamadas = []
+
+    def tudo(opcoes):
+        chamadas.append(opcoes.nome)
+        if opcoes.nome == "video-a" and len(chamadas) == 1:
+            raise RuntimeError("o provedor caiu")
+
+    monkeypatch.setattr(mcp_servidor.cli, "cmd_tudo", tudo)
+    for nome, estado in (("video-a", "produzindo"), ("video-b", "pronto"), ("video-c", "cancelado")):
+        (tmp_path / nome).mkdir()
+        (tmp_path / nome / mcp_servidor.ARQUIVO_DO_ESTADO).write_text(
+            json.dumps({"estado": estado, "inicio": "2026-10-09T10:00:00"}), encoding="utf-8")
+    mcp_servidor._PRODUCOES.clear()
+    assert mcp_servidor.retomar_producoes(log=lambda *a: None) == ["video-a"]
+    for _ in range(100):
+        if mcp_servidor._PRODUCOES["video-a"]["estado"] != "produzindo":
+            break
+        threading.Event().wait(0.05)  # o time.sleep está trocado acima
+    assert chamadas ==["video-a", "video-a"]  # falhou uma vez e continuou de onde parou
+    assert mcp_servidor._estado_no_disco("video-a")["estado"] == "pronto"
+    assert mcp_servidor._PRODUCOES["video-a"]["inicio"] == "2026-10-09T10:00:00"
+    mcp_servidor._PRODUCOES.clear()

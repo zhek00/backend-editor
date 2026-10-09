@@ -198,6 +198,10 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
         except cliente.Reserva:
             pass
     cfg = projeto.config.get("openrouter") or {}
+    do_mcp = [] if cadeia_de else cliente.modelos_do_mcp(projeto, etapa)
+    if do_mcp:
+        # projeto do MCP pensado pela fábrica: o Gemini no lugar do Claude do cliente, seja qual for o modelo pedido
+        cadeia_de, modelo = do_mcp, do_mcp[0]
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     cadeia = cadeia_de or principais(projeto)
     rotas = cadeia[cadeia.index(modelo):] if modelo in cadeia else [modelo]
@@ -256,6 +260,15 @@ def ve_imagem(projeto, rota) -> bool:
     return not any(rota.startswith(p) for p in so_texto)
 
 
+def _raciocinio_gemini(projeto, etapa):
+    """O roteiro pensa um pouco (mcp.raciocinio_roteiro); ver imagens e o resto, sem pensar (mcp.raciocinio_gemini)."""
+    from . import cliente
+    cfg = projeto.config.get("mcp") or {}
+    if cliente.grupo(etapa) == cliente.ROTEIRO:
+        return cfg.get("raciocinio_roteiro") or cfg.get("raciocinio_gemini")
+    return cfg.get("raciocinio_gemini")
+
+
 def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura, cadeia=False,
              raciocinio=None):
     """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
@@ -273,7 +286,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
         from . import gemini_local
         resposta = gemini_local.perguntar(projeto, etapa, instrucoes + REGRA_DO_ALFABETO, pedido, esquema, log=log,
                                           modelo=rota[7:], imagens=imagens, temperatura=temperatura, na_cadeia=True,
-                                          raciocinio=(projeto.config.get("mcp") or {}).get("raciocinio_gemini"))
+                                          raciocinio=_raciocinio_gemini(projeto, etapa))
         faltam = [k for k in (esquema or {}).get("required", []) if not isinstance(resposta, dict) or k not in resposta]
         if faltam:
             raise RotaIndisponivel(f"o Gemini não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")

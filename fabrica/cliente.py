@@ -88,17 +88,42 @@ def em_reserva(projeto) -> bool:
 _DE_IMAGEM = ("escolha das fotos", "conferir cenas", "julgar mídia", "descri", "revisão do vídeo")
 
 
+def _mcp(projeto) -> dict:
+    return (getattr(projeto, "config", None) or {}).get("mcp") or {}
+
+
+def pelo_cliente(projeto) -> bool:
+    """O Claude do cliente ainda pensa o projeto do MCP? Desde 2026-10-09, a pedido do usuário, não: o MCP não usa mais
+    a assinatura do cliente, e a fábrica pensa tudo pelo Gemini (mcp.modelos_roteiro e mcp.modelos_texto). O cliente
+    só manda o roteiro, acompanha e recebe o vídeo. mcp.pelo_cliente: true volta ao jeito antigo (a fila de tarefas)."""
+    return ativo(projeto) and bool(_mcp(projeto).get("pelo_cliente", False))
+
+
+def pela_fabrica(projeto) -> bool:
+    """Projeto do MCP pensado pela fábrica, pelo Gemini: o contrário de pelo_cliente."""
+    return ativo(projeto) and not pelo_cliente(projeto)
+
+
+def modelos_do_mcp(projeto, etapa) -> list:
+    """A cadeia do projeto do MCP pensado pela fábrica: o roteiro (mapa, cenas, diretor, orquestradora) pelo
+    mcp.modelos_roteiro, o resto do texto pelo mcp.modelos_texto. Vazio fora do MCP."""
+    if not pela_fabrica(projeto):
+        return []
+    chave = "modelos_roteiro" if grupo(etapa) == ROTEIRO else "modelos_texto"
+    return [m for m in (_mcp(projeto).get(chave) or []) if m]
+
+
 def visao_pela_fabrica(projeto) -> bool:
     """Projeto do MCP em que a fábrica olha as imagens (pedido do usuário em 2026-10-09): o Gemini Flash descreve e
     escolhe as fotos e o Jev julga a descrição, para tirar do Claude do cliente o trabalho mais pesado, o de ver
     imagens (no ouro-serra-1min, 63% do consumo). O cliente segue com o roteiro e as decisões de texto."""
-    return ativo(projeto) and bool(((getattr(projeto, "config", None) or {}).get("mcp") or {}).get("visao_pela_fabrica"))
+    return pela_fabrica(projeto) or (ativo(projeto) and bool(_mcp(projeto).get("visao_pela_fabrica")))
 
 
 def atende(projeto, etapa, imagens=False) -> bool:
     """Esta etapa vai para o Claude do cliente? Projeto do MCP, menos as etapas visuais enquanto a reserva está ligada
     (ela desliga quando o cliente volta a responder) e, com visao_pela_fabrica, menos o que olha ou julga imagens."""
-    if not ativo(projeto):
+    if not pelo_cliente(projeto):
         return False
     if visao_pela_fabrica(projeto) and (imagens or any(p in str(etapa).lower() for p in _DE_IMAGEM)):
         return False

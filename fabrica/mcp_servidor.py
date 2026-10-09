@@ -20,6 +20,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import tempfile
 import unicodedata
@@ -30,6 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+import anyio
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.mcpserver import Image, MCPServer
@@ -38,15 +40,17 @@ from . import cli, cliente, clientes_mcp, custos, pacote
 from .config import RAIZ, carregar_perfil
 from .projeto import PROJETOS, Projeto
 
-INSTRUCOES_DO_SERVIDOR = """Fábrica de vídeos narrados. Você é quem toma as decisões criativas do vídeo; a fábrica faz
-narração, busca nos bancos de imagem e render.
+INSTRUCOES_DO_SERVIDOR = """Fábrica de vídeos narrados. A fábrica pensa e produz o vídeo inteiro sozinha: roteiro em
+cenas, narração, imagens, animações e render.
 
 O usuário só manda o roteiro e recebe o vídeo: estilo, voz e nome são decididos pela fábrica, e ele não aprova nada.
-O jeito certo de produzir é o comando /tiplabs: ele cria o vídeo, responde as tarefas num operador em segundo plano e
-mostra ao usuário só a porcentagem (acompanhar), sem o maquinário. Se o usuário ainda não tem o /tiplabs, chame instalar_tiplabs e grave o arquivo
-que ela devolve no caminho indicado (uma vez só).
+O jeito certo de produzir é o comando /tiplabs: ele cria o vídeo, mostra ao usuário só a porcentagem (acompanhar) e
+baixa o vídeo no fim. Se o usuário ainda não tem o /tiplabs, chame instalar_tiplabs e grave o arquivo que ela devolve
+no caminho indicado (uma vez só).
 
-Sem o comando:
+Sem o comando: criar_video(roteiro), depois repita acompanhar(nome) até PRONTO e chame entregar_video(nome).
+
+Só se a fábrica estiver no modo antigo (o Claude de quem usa responde as tarefas), sem o comando:
 1. criar_video(roteiro) começa a produção e devolve o nome do vídeo. Mandar o mesmo roteiro de novo continua o vídeo
    que parou, sem começar outro.
 2. Repita esperar(nome) e, quando houver tarefas, proximas_tarefas -> responder cada uma. Cada tarefa traz instruções,
@@ -239,26 +243,90 @@ def criar_video(roteiro: str, nome: str = "", confirmar: bool = True, voz_do_com
         clientes_mcp.registrar_producao(_cliente(), nome)
         p.dados["producao_contada"] = True
         p.salvar_json("projeto.json", p.dados)
-    with _TRAVA:
-        if (_PRODUCOES.get(nome) or {}).get("estado") == "produzindo":
-            return f"{nome} já está em produção. Siga com esperar('{nome}')."
-        _PRODUCOES[nome] = {"estado": "produzindo", "log": [], "inicio": datetime.now().isoformat(timespec="seconds"),
-                            "fim": None, "erro": None}
-    threading.Thread(target=_produzir, args=(nome,), daemon=True, name=f"producao-{nome}").start()
+    if not _comecar(nome):
+        return f"{nome} já está em produção. NOME: {nome}."
     return f"Vídeo começou. NOME: {nome} (as outras ferramentas pedem este nome)."
 
 
-def _produzir(nome):
-    _local.nome = nome
+# O estado da produção também fica no disco (projetos/NOME/mcp_producao.json): se o MCP cair ou o computador
+# reiniciar, rodar() retoma sozinho os vídeos que estavam sendo feitos, com o tempo contado desde o começo de verdade.
+# Pedido do usuário em 2026-10-09: "deve rodar o mcp sem travar"; antes o vídeo parava e o cliente via "PAROU".
+ARQUIVO_DO_ESTADO = "mcp_producao.json"
+
+
+def _estado_no_disco(nome: str) -> dict:
     try:
-        cli.cmd_tudo(_Opcoes(nome=nome, sim=True))
-        estado, erro = "pronto", None
-    except cliente.Cancelada:
-        estado, erro = "cancelado", None
-    except BaseException as e:  # SystemExit da fábrica também para a produção, com o motivo
-        estado, erro = "erro", f"{e}\n{traceback.format_exc()[-1500:]}"
+        return json.loads((PROJETOS / nome / ARQUIVO_DO_ESTADO).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _gravar_estado(nome: str, **campos):
+    arquivo = PROJETOS / nome / ARQUIVO_DO_ESTADO
+    if not arquivo.parent.is_dir():
+        return
+    dados = {**_estado_no_disco(nome), **campos}
+    temporario = arquivo.with_suffix(".tmp")
+    temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporario, arquivo)
+
+
+def _comecar(nome: str, inicio: str = "") -> bool:
+    """Põe a produção para andar numa thread. False se ela já está andando."""
     with _TRAVA:
-        _PRODUCOES[nome].update(estado=estado, erro=erro, fim=datetime.now().isoformat(timespec="seconds"))
+        if (_PRODUCOES.get(nome) or {}).get("estado") == "produzindo":
+            return False
+        inicio = inicio or datetime.now().isoformat(timespec="seconds")
+        _PRODUCOES[nome] = {"estado": "produzindo", "log": [], "inicio": inicio, "fim": None, "erro": None}
+    _gravar_estado(nome, estado="produzindo", inicio=inicio, fim=None, erro=None)
+    threading.Thread(target=_produzir, args=(nome,), daemon=True, name=f"producao-{nome}").start()
+    return True
+
+
+def _tentativas() -> int:
+    from .config import config_geral
+    return max(1, int((config_geral().get("mcp") or {}).get("tentativas_producao", 4)))
+
+
+def _produzir(nome):
+    """Produz até o fim. Uma falha no meio (um provedor fora do ar, a rede caindo) não para o vídeo: a fábrica espera um
+    pouco e roda o mesmo `tudo` de novo, que continua de onde parou sem pagar de novo o que já foi feito."""
+    _local.nome = nome
+    tentativas = _tentativas()
+    for tentativa in range(1, tentativas + 1):
+        try:
+            cli.cmd_tudo(_Opcoes(nome=nome, sim=True))
+            estado, erro = "pronto", None
+            break
+        except cliente.Cancelada:
+            estado, erro = "cancelado", None
+            break
+        except BaseException as e:  # SystemExit da fábrica também para a produção, com o motivo
+            estado, erro = "erro", f"{e}\n{traceback.format_exc()[-1500:]}"
+            if _estado_no_disco(nome).get("estado") == "cancelado" or tentativa == tentativas:
+                break
+            _log_da_producao(f"  a produção falhou ({str(e)[:200]}); tentando de novo em {60 * tentativa} s, "
+                             f"de onde parou ({tentativa + 1} de {tentativas})")
+            time.sleep(60 * tentativa)
+    if _estado_no_disco(nome).get("estado") == "cancelado":
+        estado, erro = "cancelado", None
+    fim = datetime.now().isoformat(timespec="seconds")
+    with _TRAVA:
+        _PRODUCOES[nome].update(estado=estado, erro=erro, fim=fim)
+    _gravar_estado(nome, estado=estado, erro=(erro or "")[:1500] or None, fim=fim)
+
+
+def retomar_producoes(log=print) -> list:
+    """Os vídeos do MCP que estavam sendo feitos quando o MCP parou voltam a andar sozinhos."""
+    retomados = []
+    for arquivo in sorted(PROJETOS.glob(f"*/{ARQUIVO_DO_ESTADO}")):
+        nome = arquivo.parent.name
+        estado = _estado_no_disco(nome)
+        if estado.get("estado") == "produzindo" and _comecar(nome, estado.get("inicio") or ""):
+            retomados.append(nome)
+    if retomados:
+        log(f"Retomando {len(retomados)} vídeo(s) do MCP que estavam em produção: {', '.join(retomados)}")
+    return retomados
 
 
 def _minutos(segundos: float) -> str:
@@ -345,7 +413,7 @@ def _linha_de_progresso(e: dict, tempo: str = "") -> str:
 
 
 @servidor.tool(structured_output=False)
-def acompanhar(nome: str, ultima: int = -1, segundos: int = 50) -> str:
+async def acompanhar(nome: str, ultima: int = -1, segundos: int = 50) -> str:
     """O andamento do vídeo para mostrar ao usuário, numa linha pronta, com o tempo real de produção até agora:
     "Escolhendo as imagens · 45% (etapa 4 de 7) · 6min12s", "PRONTO · 100% · 18min40s", "PAUSADO · ..." ou "PAROU · ...". Espera no servidor (até `segundos`, no máximo 55) o andamento
     avançar desde a porcentagem `ultima` que você já mostrou: uma etapa nova ou 5% a mais. Se nada mudou, devolve
@@ -362,11 +430,13 @@ def acompanhar(nome: str, ultima: int = -1, segundos: int = 50) -> str:
             return _linha_de_progresso(e, _tempo_de_producao(nome))
         if time.time() >= fim:
             return "SEM MUDANÇA"
-        time.sleep(2)
+        # espera sem segurar uma thread: as ferramentas síncronas dividem 40, e com 40 clientes acompanhando o vídeo
+        # ao mesmo tempo o MCP inteiro travava
+        await anyio.sleep(2)
 
 
 @servidor.tool(structured_output=False)
-def esperar(nome: str, segundos: int = 50) -> str:
+async def esperar(nome: str, segundos: int = 50) -> str:
     """Espera (até `segundos`, no máximo 55) a fábrica precisar de você ou terminar, e devolve uma linha: "pronto",
     "erro: ...", "cancelado", "tarefas: roteiro N, visual M" ou "trabalhando" (chame de novo). Use no lugar de dormir
     e de chamar andamento em ciclo: não gasta nada enquanto espera."""
@@ -377,7 +447,7 @@ def esperar(nome: str, segundos: int = 50) -> str:
         estado = _estado_curto(nome)
         if estado != "trabalhando" or time.time() >= fim:
             return estado
-        time.sleep(2)
+        await anyio.sleep(2)
 
 
 @servidor.tool(structured_output=False)
@@ -481,6 +551,7 @@ def cancelar(nome: str) -> str:
     if not _e_meu(nome):
         return NAO_ACHEI
     soltas = cliente.cancelar(nome)
+    _gravar_estado(nome, estado="cancelado")
     return f"Cancelado: {soltas} tarefa(s) soltas. O que já foi feito fica salvo."
 
 
@@ -498,7 +569,27 @@ Repita:
    - "pronto", "erro ..." ou "cancelado": pare.
 2. No fim, devolva uma linha só: a última linha do esperar ("pronto", "erro ..." ou "cancelado")."""
 
+# Desde 2026-10-09 a fábrica pensa tudo pelo Gemini (mcp.pelo_cliente: false): o comando só cria, acompanha e baixa,
+# sem operador, e quase não gasta a assinatura do cliente
 COMANDO = """Produza um vídeo com a fábrica TipLabs (MCP fabrica). O usuário só mandou o roteiro e quer receber o vídeo:
+não mostre a ele ferramentas nem detalhes técnicos, e não pergunte nada. A fábrica faz o vídeo inteiro sozinha.
+{argumentos}
+
+1. Se o roteiro acima for o caminho de um arquivo, leia o arquivo; senão ele é o próprio texto. Chame
+   criar_video(roteiro=<o texto>) e guarde o NOME que ele devolve. Se o mesmo roteiro já estava em produção, ele
+   devolve o mesmo nome e o vídeo continua de onde parou.
+2. Diga ao usuário só: "Seu vídeo está sendo produzido. Vou mostrando o andamento aqui."
+3. Repita acompanhar(nome, ultima=<a última porcentagem que você mostrou, ou -1 na primeira vez>):
+   - "SEM MUDANÇA": chame de novo, sem escrever nada.
+   - Uma linha de andamento ("Escolhendo as imagens · 45% (etapa 4 de 7) · 6min12s"): mostre ao usuário exatamente
+     essa linha, sozinha, sem comentário, e chame de novo com a porcentagem nova.
+   - "PRONTO · 100% · <tempo>": guarde o tempo e siga para o passo 4.
+   - "PAUSADO · ..." ou "PAROU · ...": mostre a frase ao usuário, diga que basta mandar o mesmo roteiro de novo com
+     /tiplabs para continuar, e pare.
+4. Chame entregar_video(nome), baixe o vídeo e o pacote do projeto para a pasta atual (curl -L -o ARQUIVO LINK) e diga
+   ao usuário, em uma ou duas linhas, que o vídeo está pronto, em quanto tempo foi produzido e onde ficou o arquivo."""
+
+COMANDO_COM_OPERADOR = """Produza um vídeo com a fábrica TipLabs (MCP fabrica). O usuário só mandou o roteiro e quer receber o vídeo:
 não mostre a ele ferramentas, tarefas nem detalhes técnicos, e não pergunte nada.
 {argumentos}
 
@@ -532,23 +623,27 @@ def texto_do_comando(roteiro="") -> str:
     else:
         argumentos = ("Roteiro: $ARGUMENTS\n(o caminho de um arquivo de texto ou o próprio texto do roteiro; se vier "
                       "vazio, peça só o roteiro ao usuário)")
-    return COMANDO.format(argumentos=argumentos, ajudante=AJUDANTE.format(nome="<o nome que o criar_video devolveu>"))
+    from .config import config_geral
+    if (config_geral().get("mcp") or {}).get("pelo_cliente"):
+        return COMANDO_COM_OPERADOR.format(argumentos=argumentos,
+                                           ajudante=AJUDANTE.format(nome="<o nome que o criar_video devolveu>"))
+    return COMANDO.format(argumentos=argumentos)
 
 
-# model: sonnet. Quem coordena só espera a fábrica e lança subagentes: no teste do ouro-serra-1min o coordenador no
-# Opus custou US$ 0,83 (equivalente em API) de US$ 2,22 sem tomar nenhuma decisão do vídeo
+# model: haiku. O comando só chama criar_video, acompanhar e entregar_video e baixa com curl: nenhuma decisão do vídeo
+# (no teste do ouro-serra-1min, só o coordenador no Opus custou US$ 0,83 em equivalente de API)
 ARQUIVO_DO_COMANDO = """---
 description: Produz um vídeo narrado com a fábrica TipLabs, do roteiro ao MP4
 argument-hint: <roteiro.txt ou o texto do roteiro>
-model: sonnet
+model: haiku
 ---
 {texto}
 """
 
 
 @servidor.prompt(name="tiplabs", title="TipLabs: produzir um vídeo",
-                 description="Produz o vídeo do roteiro até o fim, com as tarefas em subagentes (Opus no roteiro, "
-                             "Sonnet nas imagens). Argumento: o roteiro (arquivo ou texto).")
+                 description="Produz o vídeo do roteiro até o fim e baixa o MP4. Argumento: o roteiro "
+                             "(arquivo ou texto).")
 def comando_tiplabs(roteiro: str) -> str:
     return texto_do_comando(roteiro)
 
@@ -593,6 +688,9 @@ def progresso(nome: str) -> dict:
     if prod.get("estado") in ("erro", "cancelado"):
         return {"estado": prod["estado"], "etapa": 0, "total": total, "titulo": "Produção interrompida",
                 "porcentagem": 0, "frase": "A produção parou. Mande o mesmo roteiro de novo para continuar."}
+    if not prod and _estado_no_disco(nome).get("estado") == "produzindo":
+        return {"estado": "produzindo", "etapa": 1, "total": total, "titulo": ETAPAS[0][0], "porcentagem": 0,
+                "frase": "Retomando a produção…"}
     if not prod:
         return {"estado": "desconhecido", "etapa": 0, "total": total, "titulo": "Aguardando", "porcentagem": 0,
                 "frase": "Este vídeo não está em produção agora. Mande o roteiro de novo para continuar."}
@@ -643,6 +741,8 @@ def rodar(host="127.0.0.1", porta=8092, url_publica=""):
     """Sem url_publica, o MCP de teste na mesma máquina, sem senha. Com ela (https://mcp.exemplo.com), cada chamada
     precisa do token de um cliente (fabrica mcp-cliente criar NOME), e só o Host da URL é aceito."""
     global _URL_PUBLICA
+    _URL_PUBLICA = url_publica.rstrip("/") if url_publica else ""
+    retomar_producoes()
     if not url_publica:
         servidor.run(transport="streamable-http", host=host, port=porta)
         return

@@ -78,9 +78,10 @@ def estimar(projeto) -> dict:
     agente = 0.0 if projeto.existe("cenas.json") else agente["cenas"] + (0.0 if projeto.existe("roteiro_mapa.json") else agente["mapa"])
     from . import cliente
 
-    pelo_cliente = cliente.ativo(projeto)
+    pelo_cliente = cliente.pelo_cliente(projeto)
     if pelo_cliente:
-        # projeto do MCP: o roteiro, a escolha das fotos e o julgamento saem da assinatura do Claude do cliente
+        # projeto do MCP no modo antigo: o roteiro, a escolha das fotos e o julgamento saem da assinatura do Claude do
+        # cliente. No modo de agora (mcp.pelo_cliente: false) a fábrica paga os modelos, e a estimativa conta
         agente = correcao = claude = escolha = 0.0
     return {
         "pelo_cliente": pelo_cliente,

@@ -294,6 +294,18 @@ mcp:
   # pesado (no ouro-serra-1min, ver imagens foi 63% do consumo dele). Chave: GEMINI_API_KEY no .env (faturamento do
   # AI Studio). Sem a chave, ou com o Gemini fora, a cadeia passa para o Qwen 3.7 Flash pago.
   visao_pela_fabrica: true
+  # Desde 2026-10-09 o MCP não usa mais o Claude do cliente para nada: a fábrica pensa tudo sozinha. O cliente manda o
+  # roteiro, acompanha a porcentagem e recebe o vídeo, quase sem gastar a assinatura. pelo_cliente: true volta à fila
+  # de tarefas respondida pelo Claude dele.
+  pelo_cliente: false
+  # mapa, cenas, diretor e a orquestradora do Motion IA: vazio segue o caminho de sempre da fábrica, pelo OpenRouter e
+  # pelas APIs gratuitas do .env (roteirista.modelos: Nemotron Ultra gratuito, DeepSeek de reserva, depois a cadeia de
+  # principais com o Groq). Pedido do usuário em 2026-10-09: o Gemini fica só para ver as imagens.
+  modelos_roteiro: []
+  raciocinio_roteiro: low
+  modelos_texto:                   # trilha, contexto dos blocos, buscas novas e o resto do texto
+    - gemini:gemini-3.1-flash-lite
+    - qwen/qwen3.7-flash
   raciocinio_gemini: minimal    # sem pensar: o pensamento é cobrado como escrita (108 tokens contra 0, mesma resposta)
   modelos_visao:
     - gemini:gemini-3.1-flash-lite   # o mais barato do Google que responde (US$ 0,25 e 1,50 por milhão de tokens; o

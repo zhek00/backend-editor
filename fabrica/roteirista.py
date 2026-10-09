@@ -252,6 +252,12 @@ def _modelo_agente(projeto):
     from . import gemini_local, groq_local, openrouter_local
     from .cenas import _ComReserva, _modelo
 
+    from . import cliente
+
+    do_mcp = cliente.modelos_do_mcp(projeto, "roteirista")
+    if do_mcp:
+        # projeto do MCP: o Gemini (mcp.modelos_roteiro) no lugar do Claude do cliente
+        return _PelaCadeia(do_mcp)
     cfg = projeto.config.get("roteirista") or {}
     provedor = cfg.get("provedor", "mimo")
     principal = ("modelo principal", openrouter_local, openrouter_local.principal(projeto))

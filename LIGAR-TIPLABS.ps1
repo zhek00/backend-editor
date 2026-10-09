@@ -72,6 +72,15 @@ function LigarMcp {
     Passo "  O MCP nao subiu. Veja $LOG_MCP.erros" Red
 }
 
+# Sobe o vigia escondido (VIGIA-TIPLABS.ps1): a cada minuto ele confere a fabrica e o MCP e religa o que cair ou
+# travar. Se ja houver um vigia, o novo sai sozinho.
+function LigarVigia {
+    Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', (Join-Path $PASTA 'VIGIA-TIPLABS.ps1')) `
+        -WindowStyle Hidden
+    Passo '  Vigia ligado: religa a fabrica e o MCP se cairem.' Green
+}
+
 # ---------------------------------------------------------------
 # 1. Tunel
 # ---------------------------------------------------------------
@@ -100,6 +109,7 @@ if ($emUso -and (FabricaResponde)) {
     Passo '  [2/3] Fabrica: ja estava rodando' Green
     Passo '  [3/3] Nada a fazer' Green
     LigarMcp
+    LigarVigia
     Write-Host ''
     Passo "  Abrindo $PAINEL" Cyan
     Start-Process $PAINEL
@@ -148,6 +158,7 @@ Write-Host ''
 if ($pronta) {
     Passo '  Fabrica no ar (rodando escondida, sem janela).' Green
     LigarMcp
+    LigarVigia
     Write-Host ''
     Passo "  Abrindo $PAINEL" Cyan
     Start-Process $PAINEL

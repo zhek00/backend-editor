@@ -396,6 +396,25 @@ quebrada" trazendo cânion). Sem rede e sem custo. Toda regra nova da captura ga
 próprio Claude Code, e as decisões saem da assinatura dele. `fabrica mcp --porta 8092` sobe o MCP em
 `http://127.0.0.1:8092/mcp` (biblioteca `mcp` 2.x: `MCPServer`, não `FastMCP`).
 
+- **Desde 2026-10-09 o MCP não usa mais a assinatura do cliente: a fábrica pensa tudo pelo Gemini** (pedido do
+  usuário; `mcp.pelo_cliente: false`, `cliente.pela_fabrica`). O roteiro (mapa, cenas, diretor, orquestradora) segue
+  o caminho de sempre, pelo OpenRouter e pelas APIs gratuitas do `.env` (`mcp.modelos_roteiro` vazio: Nemotron Ultra
+  gratuito, DeepSeek de reserva, cadeia de principais; uma lista ali põe outros modelos na frente), o resto
+  do texto pelo `mcp.modelos_texto` (3.1 Flash-Lite, Qwen 3.7 Flash de reserva) e as imagens pelo
+  `mcp.modelos_visao`, seja qual for o modelo que a etapa pediu (`cliente.modelos_do_mcp`, em
+  `openrouter_local.perguntar` e `roteirista._modelo_agente`). O Jev julga como sempre. Nada vai para a fila, a
+  reserva dos 60% não entra, e o `/tiplabs` (Haiku) só chama `criar_video`, `acompanhar` e `entregar_video`, sem
+  operador. Tudo o que vem abaixo sobre a fila e o Claude do cliente vale só com `mcp.pelo_cliente: true`
+  (`COMANDO_COM_OPERADOR`).
+- **O MCP não trava** (pedido do usuário em 2026-10-09): o estado de cada produção fica no disco
+  (`projetos/NOME/mcp_producao.json`) e `retomar_producoes`, ao subir o MCP, põe de novo para andar os vídeos que
+  estavam sendo feitos, com o tempo desde o começo de verdade. Falha no meio do vídeo tenta de novo sozinha, de onde
+  parou (`mcp.tentativas_producao`, 4, esperando 1, 2 e 3 min); cancelado não volta. `acompanhar` e `esperar` são
+  `async` e esperam com `anyio.sleep`: as ferramentas síncronas dividem 40 threads, e 40 clientes acompanhando ao mesmo
+  tempo travariam o MCP inteiro. O **vigia** (`VIGIA-TIPLABS.ps1`, ligado escondido pelo LIGAR-TIPLABS e desligado
+  primeiro pelo DESLIGAR, um só por vez) confere a cada minuto a fábrica e o MCP, religa o que caiu e reinicia o que
+  ficou duas vezes sem responder; anota em `vigia.log`. Desligar o computador ainda pede o LIGAR-TIPLABS ao ligar.
+
 - **Projeto do MCP** (`"modelo": "cliente"` no `projeto.json`, `cliente.ativo`): todo pedido a modelo de linguagem
   (`openrouter_local.perguntar` e `uma_rota`, e o Jev, que nesse modo julga pelo caminho do modelo principal) vira uma
   tarefa na fila de `cliente.py`, com o mesmo texto, as mesmas imagens e o mesmo esquema; a produção espera a

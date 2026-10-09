@@ -9,6 +9,15 @@ Write-Host ''
 Write-Host '  TipLabs - desligando a fabrica' -ForegroundColor Cyan
 Write-Host ''
 
+# o vigia sai primeiro, senao ele religaria a fabrica e o MCP
+$pidVigia = Join-Path 'E:\fabrica-para-amigo' 'vigia.pid'
+if (Test-Path $pidVigia) {
+    $idVigia = (Get-Content $pidVigia -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($idVigia) { Stop-Process -Id ([int]$idVigia) -Force -ErrorAction SilentlyContinue }
+    Remove-Item $pidVigia -Force -ErrorAction SilentlyContinue
+    Write-Host '  Vigia desligado.' -ForegroundColor Green
+}
+
 # o MCP (porta 8092) desliga junto
 $mcp = Get-NetTCPConnection -LocalPort 8092 -State Listen -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique
