@@ -177,6 +177,9 @@ midia:
     # foto entre as que o Claude aceitou: qwen3.7-flash 78% a US$ 0,00008 por folha, qwen3-vl-32b 64% a US$ 0,00026,
     # qwen3.8-flash 62% a US$ 0,00033. O 3.7 quase sempre escolhe alguma foto quando nada serve (3 de 10 recusas
     # certas); a conferência do Jev, depois do download, troca a que mostra outra coisa
+    # Desde 2026-10-09, a pedido do usuário, o pago de reserva é o Gemini 3.1 Flash-Lite (o mesmo do MCP), no lugar
+    # do Qwen 3.7 Flash; o Qwen fica só para o Gemini fora do ar, para a escolha nunca parar.
+    - gemini:gemini-3.1-flash-lite
     - qwen/qwen3.7-flash
   raciocinio_visao:
     dots-studio/: nenhum

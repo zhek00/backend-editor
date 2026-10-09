@@ -674,7 +674,7 @@ escreveu na escolha **não é pedida de novo** (o `_completar_vejo` saiu em 2026
 1.570 chamadas da escolha no nunca-deve-ter-dentro-de-casa-parte-2, US$ 0,97 no Qwen pago); o escolhido passa sem o
 Jev antes do download e a conferência depois do download julga a cena, que não foi aprovada na captura. Os gratuitos têm 1.000 chamadas por dia na conta: um vídeo de 30 min
 usa umas 600 na escolha, então o segundo vídeo grande do dia cai no Qwen sem raciocínio.
-**MiMo e Gemini não são mais usados** em nenhuma etapa; o Groq voltou como rota gratuita. O Jev continua sendo o juiz.
+**O MiMo não é mais usado.** O Gemini 3.1 Flash-Lite (`gemini:`, pela GEMINI_API_KEY) é o pago de reserva da cadeia de visão desde 2026-10-09, no lugar do Qwen 3.7 Flash, que fica só para o Gemini fora do ar; o Groq voltou como rota gratuita. O Jev continua sendo o juiz.
 
 **Voz grátis: Fish Audio** (`fabrica/fish.py`, `voz.provedor: fish`), no lugar do Edge-TTS, pelo OpenRouter
 (`fish-audio/s2.1-pro-free:free`); as vozes são as da biblioteca pública da Fish (`GET /api/vozes/fish`, com amostra),
@@ -690,7 +690,7 @@ funcionando; no editor ele aparece como Fish e regerar troca a voz.
 | Agente de roteiro (mapa e cenas) e diretor | `roteirista.modelos` em cadeia: Nemotron Ultra 550B gratuito, DeepSeek V4 Flash pago de reserva, e depois a cadeia de principais |
 | Contexto dos blocos | cadeia de principais (Groq primeiro) |
 | Buscas das reprovadas | cadeia de principais (Groq primeiro) |
-| Escolha das fotos e vídeos do acervo (olha as miniaturas) | cadeia de visão: Qwen 27B do Groq, Dots, Gemma e `openrouter/free` gratuitos; Qwen Flash pago sem raciocínio de reserva |
+| Escolha das fotos e vídeos do acervo (olha as miniaturas) | cadeia de visão: Qwen 27B do Groq, Dots, Gemma e `openrouter/free` gratuitos; Gemini 3.1 Flash-Lite pago sem raciocínio de reserva (Qwen 3.7 Flash se o Gemini cair) |
 | Descrição das imagens para a conferência e revisão do vídeo pronto | cadeia de visão (a mesma) |
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
 | Imagens de IA | GPT-5.4 Image 2 em qualidade baixa pelo OpenRouter (`openai/gpt-5.4-image-2`), padrão do perfil base |
