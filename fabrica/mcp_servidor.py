@@ -563,7 +563,7 @@ def instalar_tiplabs() -> str:
 
 
 # A produção em macro-etapas, na linguagem de quem faz vídeo (pedido do usuário em 2026-10-09: o cliente não vê o
-# maquinário, só o andamento). Cada etapa começa quando a fábrica escreve um destes títulos no log; a narração e a
+# maquinário, só o andamento, dentro do próprio Claude Code, pela ferramenta acompanhar). Cada etapa começa quando a fábrica escreve um destes títulos no log; a narração e a
 # leitura do roteiro correm juntas, e vale a etapa mais adiantada.
 ETAPAS = (
     ("Lendo o roteiro", ("Mapa do roteiro", "JSON de cenas")),
@@ -574,37 +574,6 @@ ETAPAS = (
     ("Montando o vídeo", ("Render",)),
     ("Revisão final", ("Revisão do vídeo pronto",)),
 )
-_LINKS_DE_ACOMPANHAR = "acompanhar.json"
-
-
-def _arquivo_de_links() -> Path:
-    return pacote.ENTREGAS / _LINKS_DE_ACOMPANHAR
-
-
-def _link_de_acompanhar(nome: str) -> str:
-    """O link da página de acompanhamento do vídeo (o mesmo enquanto o vídeo existir): o código é o segredo dele."""
-    arquivo = _arquivo_de_links()
-    with _TRAVA:
-        try:
-            links = json.loads(arquivo.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            links = {}
-        codigo = next((c for c, n in links.items() if n == nome), None)
-        if not codigo:
-            codigo = secrets.token_urlsafe(12)
-            links[codigo] = nome
-            arquivo.parent.mkdir(parents=True, exist_ok=True)
-            arquivo.write_text(json.dumps(links, ensure_ascii=False, indent=2), encoding="utf-8")
-    return f"{(_URL_PUBLICA or 'http://127.0.0.1:8092').rstrip('/')}/acompanhar/{codigo}"
-
-
-def _nome_do_codigo(codigo: str) -> str:
-    try:
-        return json.loads(_arquivo_de_links().read_text(encoding="utf-8")).get(codigo) or ""
-    except (OSError, ValueError):
-        return ""
-
-
 def _video_pronto(nome: str):
     for caminho in (pacote.ENTREGAS / nome / "final.mp4", PROJETOS / nome / "final.mp4"):
         if caminho.is_file():
@@ -649,79 +618,6 @@ def progresso(nome: str) -> dict:
                          "novo com /tiplabs e o vídeo continua daqui."}
     return {"estado": "produzindo", "etapa": etapa + 1, "total": total, "titulo": titulo, "porcentagem": porcentagem,
             "frase": f"{titulo}…"}
-
-
-PAGINA = r"""<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TipLabs · seu vídeo</title>
-<style>
-:root{--fundo:#f7f6f2;--texto:#1c1c1a;--suave:#6b6a64;--trilho:#e4e2da;--cor:#2f6f4f;--cartao:#fff}
-@media (prefers-color-scheme:dark){:root{--fundo:#151513;--texto:#ecebe6;--suave:#a3a199;--trilho:#2b2a26;--cor:#6fbf8f;--cartao:#1e1d1a}}
-*{box-sizing:border-box}body{margin:0;background:var(--fundo);color:var(--texto);font:16px/1.5 system-ui,sans-serif;
-display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px}
-.cartao{background:var(--cartao);border-radius:18px;padding:32px 28px;max-width:560px;width:100%;box-shadow:0 8px 30px rgba(0,0,0,.08)}
-.marca{font-weight:700;letter-spacing:.04em;color:var(--cor);font-size:13px;text-transform:uppercase}
-h1{font-size:24px;margin:6px 0 4px}.frase{color:var(--suave);margin:0 0 22px}
-.trilho{height:10px;background:var(--trilho);border-radius:99px;overflow:hidden}
-.barra{height:100%;width:0;background:var(--cor);border-radius:99px;transition:width .8s ease}
-.pct{font-variant-numeric:tabular-nums;color:var(--suave);font-size:14px;margin-top:8px}
-ol{list-style:none;padding:0;margin:24px 0 0}li{display:flex;gap:10px;align-items:center;padding:6px 0;color:var(--suave)}
-li .p{width:20px;height:20px;border-radius:50%;border:2px solid var(--trilho);flex:none}
-li.feita{color:var(--texto)}li.feita .p{background:var(--cor);border-color:var(--cor)}
-li.agora{color:var(--texto);font-weight:600}li.agora .p{border-color:var(--cor);animation:pulso 1.4s infinite}
-@keyframes pulso{50%{box-shadow:0 0 0 6px rgba(47,111,79,.18)}}
-a.botao{display:none;margin-top:24px;background:var(--cor);color:#fff;text-decoration:none;padding:12px 18px;
-border-radius:12px;font-weight:600;text-align:center}
-</style></head><body><main class="cartao">
-<div class="marca">TipLabs</div><h1 id="titulo">Preparando…</h1><p class="frase" id="frase"></p>
-<div class="trilho"><div class="barra" id="barra"></div></div><div class="pct" id="pct">0%</div>
-<ol id="etapas">__ETAPAS__</ol><a class="botao" id="baixar" href="video" download>Baixar o vídeo</a>
-</main><script>
-async function olhar(){
-  try{
-    const r=await fetch(location.pathname.replace(/\/$/,'')+'/estado',{cache:'no-store'});const e=await r.json();
-    document.getElementById('titulo').textContent=e.titulo;document.getElementById('frase').textContent=e.frase;
-    document.getElementById('barra').style.width=e.porcentagem+'%';document.getElementById('pct').textContent=e.porcentagem+'%';
-    document.querySelectorAll('#etapas li').forEach((li,i)=>{li.className=(i+1<e.etapa||e.estado==='pronto')?'feita':(i+1===e.etapa?'agora':'')});
-    const b=document.getElementById('baixar');b.href=location.pathname.replace(/\/$/,'')+'/video';
-    b.style.display=e.estado==='pronto'?'block':'none';if(e.estado==='pronto')return;
-  }catch(_){}
-  setTimeout(olhar,5000);
-}
-olhar();
-</script></body></html>"""
-
-
-@servidor.custom_route("/acompanhar/{codigo}", methods=["GET"])
-async def pagina_acompanhar(request):
-    """A página do cliente: só a barra de progresso em macro-etapas, sem o maquinário."""
-    from starlette.responses import HTMLResponse, PlainTextResponse
-
-    if not _nome_do_codigo(request.path_params["codigo"]):
-        return PlainTextResponse("Link inválido.", status_code=404)
-    itens = "".join(f'<li><span class="p"></span>{titulo}</li>' for titulo, _ in ETAPAS)
-    return HTMLResponse(PAGINA.replace("__ETAPAS__", itens))
-
-
-@servidor.custom_route("/acompanhar/{codigo}/estado", methods=["GET"])
-async def acompanhar_estado(request):
-    from starlette.responses import JSONResponse
-
-    nome = _nome_do_codigo(request.path_params["codigo"])
-    if not nome:
-        return JSONResponse({"erro": "link inválido"}, status_code=404)
-    return JSONResponse(progresso(nome), headers={"Cache-Control": "no-store"})
-
-
-@servidor.custom_route("/acompanhar/{codigo}/video", methods=["GET"])
-async def acompanhar_video(request):
-    from starlette.responses import FileResponse, PlainTextResponse
-
-    nome = _nome_do_codigo(request.path_params["codigo"])
-    video = _video_pronto(nome) if nome else None
-    if video is None:
-        return PlainTextResponse("O vídeo ainda não está pronto.", status_code=404)
-    return FileResponse(video, filename=f"{nome}.mp4")
 
 
 class _Verificador:

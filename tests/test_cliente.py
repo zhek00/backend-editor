@@ -292,15 +292,6 @@ def test_andamento_em_linguagem_de_producao(monkeypatch):
     assert mcp_servidor.progresso("video-x")["porcentagem"] == 100
 
 
-def test_link_de_acompanhar_e_sempre_o_mesmo(tmp_path, monkeypatch):
-    from fabrica import mcp_servidor, pacote
-    monkeypatch.setattr(pacote, "ENTREGAS", tmp_path)
-    link = mcp_servidor._link_de_acompanhar("video-y")
-    assert link == mcp_servidor._link_de_acompanhar("video-y")
-    assert mcp_servidor._nome_do_codigo(link.rsplit("/", 1)[1]) == "video-y"
-    assert mcp_servidor._nome_do_codigo("inventado") == ""
-
-
 def test_acompanhar_devolve_a_porcentagem_so_quando_muda(monkeypatch):
     from fabrica import mcp_servidor
     monkeypatch.setitem(mcp_servidor._PRODUCOES, "video-z", {"estado": "produzindo", "log": ["Cenas"],
