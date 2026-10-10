@@ -1,6 +1,9 @@
 # TipLabs - liga tudo o que o sistema precisa, num clique.
 #
 # Faz, nesta ordem:
+#   0. baixa a ultima versao do GitHub (git pull) e, se chegou versao nova com a fabrica
+#      ja ligada, pergunta se pode reiniciar: o programa que esta rodando so pega o codigo
+#      novo quando sobe de novo
 #   1. confere o tunel da Cloudflare (servico do Windows, costuma subir sozinho)
 #   2. mata processo velho travado na porta, se houver
 #   3. sobe a fabrica sem janela visivel, com a saida gravada num arquivo de log
@@ -82,6 +85,126 @@ function LigarVigia {
         -WindowStyle Hidden
     Passo '  Vigia ligado: religa a fabrica e o MCP se cairem.' Green
 }
+
+# Roda o git nesta pasta e devolve o que ele escreveu (saida e erro juntos, em texto).
+function RodarGit { (& git -C $PASTA @args 2>&1 | ForEach-Object { "$_" } | Out-String).Trim() }
+
+# Para o processo que escuta na porta e os de cima dele que sao da fabrica (o fabrica.exe e o python do .venv
+# ficavam vivos quando so o de baixo morria).
+function PararPorta($porta) {
+    $ids = Get-NetTCPConnection -LocalPort $porta -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique
+    foreach ($id in $ids) {
+        $topo = $id
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+        while ($proc) {
+            $pai = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.ParentProcessId)" -ErrorAction SilentlyContinue
+            if (-not $pai -or $pai.CommandLine -notmatch 'fabrica') { break }
+            $topo = $pai.ProcessId
+            $proc = $pai
+        }
+        & taskkill /T /F /PID $topo 2>&1 | Out-Null
+    }
+}
+
+# Desliga vigia, MCP e fabrica, como o DESLIGAR-TIPLABS, para subirem de novo ja na versao nova.
+function DesligarTudo {
+    $pidVigia = Join-Path $PASTA 'vigia.pid'
+    if (Test-Path $pidVigia) {
+        $idVigia = (Get-Content $pidVigia -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($idVigia) { Stop-Process -Id ([int]$idVigia) -Force -ErrorAction SilentlyContinue }
+        Remove-Item $pidVigia -Force -ErrorAction SilentlyContinue
+    }
+    PararPorta $PORTA_MCP
+    PararPorta $PORTA
+    Start-Sleep -Seconds 2
+}
+
+# Baixa a ultima versao do GitHub. Devolve $true se chegou versao nova.
+# Pedido do usuario em 2026-10-10: o PC de um amigo seguia com uma versao antiga (o Haiku julgando as fotos, que a
+# fabrica deixou de fazer em 09/10), porque ninguem dava git pull. Mudanca local em arquivo do Git (o e-mail do
+# Wikimedia no config.yaml) e guardada antes e posta de volta depois; se ela bater com a versao nova, o arquivo fica
+# na versao nova e a mudanca fica guardada no git stash. Sem internet, sem RodarGit ou com commit local que o GitHub nao
+# tem, segue com a versao de agora: atualizar nunca impede de ligar.
+function Atualizar {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue) -or -not (Test-Path (Join-Path $PASTA '.git'))) {
+        Passo '  Atualizacao: esta pasta nao veio do GitHub (sem o Git), seguindo com a versao atual' Yellow
+        return $false
+    }
+    $env:GIT_TERMINAL_PROMPT = '0'   # sem senha guardada, falha na hora em vez de ficar esperando
+    $saida = RodarGit fetch --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Passo '  Atualizacao: nao consegui falar com o GitHub, seguindo com a versao atual' Yellow
+        Passo "        $(($saida -split "`r?`n")[-1])" DarkGray
+        return $false
+    }
+    $novos = RodarGit rev-list --count 'HEAD..@{u}'
+    if ($LASTEXITCODE -ne 0) {
+        Passo '  Atualizacao: este ramo nao segue nenhum ramo do GitHub, seguindo com a versao atual' Yellow
+        return $false
+    }
+    if ($novos -eq '0') {
+        Passo '  Atualizacao: ja esta na ultima versao' Green
+        return $false
+    }
+
+    Passo "  Atualizacao: $novos mudanca(s) nova(s) no GitHub, baixando..." Yellow
+    $antes = RodarGit rev-parse HEAD
+    $guardou = $false
+    if (RodarGit status --porcelain --untracked-files=no) {
+        RodarGit stash push --quiet -m 'LIGAR-TIPLABS: mudancas locais antes de atualizar' | Out-Null
+        $guardou = ($LASTEXITCODE -eq 0)
+    }
+    $saida = RodarGit merge --ff-only --quiet '@{u}'
+    $atualizou = ($LASTEXITCODE -eq 0)
+    if ($guardou) {
+        RodarGit stash pop --quiet | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            # a mudanca local bate com a versao nova: o arquivo fica na versao nova, a mudanca fica no stash
+            $conflitos = @((RodarGit diff --name-only --diff-filter=U) -split "`r?`n" | Where-Object { $_ })
+            RodarGit reset --quiet | Out-Null
+            foreach ($arquivo in $conflitos) { RodarGit checkout HEAD '--' $arquivo | Out-Null }
+            Passo "        sua mudanca em $($conflitos -join ', ') bateu com a versao nova: o arquivo ficou na versao nova" Yellow
+            Passo '        e a sua mudanca ficou guardada (git stash list). Confira se precisa refazer.' Yellow
+        }
+    }
+    if (-not $atualizou) {
+        Passo '        nao deu para atualizar (esta pasta tem commit que o GitHub nao tem), seguindo com a versao atual' Red
+        Passo "        $(($saida -split "`r?`n")[-1])" DarkGray
+        return $false
+    }
+
+    (RodarGit log --oneline --no-decorate "$antes..HEAD" -n 8) -split "`r?`n" | ForEach-Object { Passo "        $_" DarkGray }
+    # dependencia nova (pyproject.toml ou uv.lock): instala antes de subir; o MCP sobe com --no-sync
+    if (RodarGit diff --name-only $antes HEAD '--' pyproject.toml uv.lock) {
+        Passo '        dependencias mudaram, instalando...' Yellow
+        & $uv sync --directory $PASTA 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Passo '        o uv sync falhou: rode "uv sync" nesta pasta com a fabrica desligada' Red }
+    }
+    Passo '        fabrica atualizada' Green
+    return $true
+}
+
+# ---------------------------------------------------------------
+# 0. Atualizacao
+# ---------------------------------------------------------------
+if (Atualizar) {
+    $ligada = (Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue) -or
+              (Get-NetTCPConnection -LocalPort $PORTA_MCP -State Listen -ErrorAction SilentlyContinue)
+    if ($ligada) {
+        Write-Host ''
+        Passo '  A fabrica ja estava ligada, com a versao antiga. Ela so usa a nova depois de reiniciar.' Yellow
+        Passo '  Um video sendo criado pelo site para (retome pelo editor); os do MCP voltam sozinhos.' DarkGray
+        $resposta = Read-Host '  Reiniciar agora? (S/n)'
+        if ($resposta -notmatch '^\s*n') {
+            DesligarTudo
+            Passo '  Fabrica desligada, subindo de novo na versao nova.' Green
+        } else {
+            Passo '  Seguindo com a versao antiga ligada. Para usar a nova: DESLIGAR e LIGAR de novo.' Yellow
+        }
+    }
+}
+Write-Host ''
 
 # ---------------------------------------------------------------
 # 1. Tunel
