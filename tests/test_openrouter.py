@@ -207,3 +207,54 @@ def test_qualidade_conta_a_nota_da_captura_e_a_ia_de_cena_de_foto(tmp_path):
                               imagem=lambda n: tmp_path / "imagens" / f"{n:04d}.png")
     r = qualidade.calcular(projeto)
     assert r["boas"] == 1 and r["sem_conferencia"] == [2] and r["origem"] == {"escolhida": 1, "IA": 1}
+
+
+def _projeto_da_visao_rapida():
+    return SimpleNamespace(dados={}, config={
+        "openrouter": {"confirmar_pago": False},
+        "midia": {"modelos_visao": ["groq:qwen/qwen3.8-27b", "google/gemini-2.5-flash-lite", "qwen/qwen3.7-flash"],
+                  "visao_gratuitos": ["groq:qwen/qwen3.8-27b", "dots-studio/dots-3-note-preview:free"],
+                  "espera_pelo_gratis": 0, "raciocinio_visao": {"google/": "nenhum"}}})
+
+
+def test_so_gratuitos_usa_a_lista_dos_gratuitos_lentos(monkeypatch):
+    # pedido do usuário em 2026-10-10: a escolha vai do Groq direto ao Gemini 2.5 pago; as thumbnails e o Motion IA,
+    # que só podem usar grátis, continuam com o Dots e os outros gratuitos lentos
+    chamadas = []
+    monkeypatch.setattr(openrouter_local, "perguntar", lambda *a, **k: chamadas.append(k) or {"ok": True})
+    projeto = _projeto_da_visao_rapida()
+    openrouter_local.VISAO.perguntar(projeto, "thumbnail", "i", "p", {}, imagens=["f.jpg"], so_gratuitos=True)
+    openrouter_local.VISAO.perguntar(projeto, "escolha", "i", "p", {}, imagens=["f.jpg"])
+    assert chamadas[0]["cadeia_de"] == ["groq:qwen/qwen3.8-27b", "dots-studio/dots-3-note-preview:free"]
+    assert chamadas[1]["cadeia_de"] == ["groq:qwen/qwen3.8-27b", "google/gemini-2.5-flash-lite", "qwen/qwen3.7-flash"]
+    assert chamadas[1]["espera"] == 0
+
+
+def test_groq_no_limite_do_minuto_vai_direto_ao_pago_rapido_sem_esperar(monkeypatch):
+    # antes a cadeia esperava até 60 s o Groq voltar; na escolha das fotos isso travava a fila. Com
+    # midia.espera_pelo_gratis 0, vai na hora para o Gemini 2.5 Flash-Lite
+    openrouter_local._FORA_DO_AR.clear()
+    rotas = []
+
+    def uma_rota(projeto, etapa, i, p, e, log, rota, imagens, t, cadeia=False, raciocinio=None):
+        rotas.append(rota)
+        if rota.startswith("groq:"):
+            openrouter_local._fora_do_ar(rota, 0.5, "Groq: limite do minuto em todas as chaves")
+        return {"cenas": []}
+
+    monkeypatch.setattr(openrouter_local, "uma_rota", uma_rota)
+    monkeypatch.setattr(openrouter_local.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("esperou")))
+    resposta = openrouter_local.VISAO.perguntar(_projeto_da_visao_rapida(), "escolha", "i", "p", {}, log=lambda *a: None,
+                                                imagens=["f.jpg"])
+    assert resposta == {"cenas": []}
+    assert rotas == ["groq:qwen/qwen3.8-27b", "google/gemini-2.5-flash-lite"]
+    openrouter_local._FORA_DO_AR.clear()
+
+
+def test_cota_do_dia_do_gemini_fica_de_lado_ate_voltar():
+    # o plano grátis do Google tem 500 pedidos por dia no 3.1 Flash-Lite: acabou, o aviso diz quando volta, e a
+    # descrição não tenta de novo a cada cena (perdia 1,5 s em cada uma)
+    from fabrica import gemini_local
+    assert gemini_local._volta_em("Please retry in 4h27m37.44898427s.") == pytest.approx(4 * 3600 + 27 * 60 + 37.449, 0.01)
+    assert gemini_local._volta_em("Please retry in 20.5s.") == 20.5
+    assert gemini_local._volta_em("sem aviso") == 0

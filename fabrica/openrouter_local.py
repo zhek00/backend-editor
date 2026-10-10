@@ -154,18 +154,22 @@ class _Visao:
     @staticmethod
     def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
                   so_gratuitos=False):
-        """so_gratuitos=True: só as rotas gratuitas da cadeia, sem o pago de reserva (a crítica do Motion IA, que é
-        custo zero). Sem nenhuma, levanta RuntimeError."""
+        """so_gratuitos=True: só as rotas gratuitas, sem o pago de reserva (a crítica do Motion IA e as thumbnails,
+        que são custo zero), pela lista midia.visao_gratuitos: os gratuitos lentos (Dots, Gemma, Nemotron,
+        openrouter/free) saíram de modelos_visao em 2026-10-10 para a escolha ir do Groq direto ao pago rápido. Sem
+        nenhuma, levanta RuntimeError."""
+        cfg_midia = projeto.config.get("midia") or {}
         lista = visao(projeto)
         if so_gratuitos:
-            lista = [r for r in lista if gratuita(r) and (not imagens or ve_imagem(projeto, r))]
+            lista = [r for r in (cfg_midia.get("visao_gratuitos") or lista)
+                     if gratuita(r) and (not imagens or ve_imagem(projeto, r))]
             if not lista:
-                raise RuntimeError("nenhum modelo de visão gratuito em midia.modelos_visao")
+                raise RuntimeError("nenhum modelo de visão gratuito em midia.visao_gratuitos")
         cfg = projeto.config.get("openrouter") or {}
-        raciocinio = {**(cfg.get("raciocinio_por_modelo") or {}),
-                      **((projeto.config.get("midia") or {}).get("raciocinio_visao") or {})}
+        raciocinio = {**(cfg.get("raciocinio_por_modelo") or {}), **(cfg_midia.get("raciocinio_visao") or {})}
         return perguntar(projeto, etapa, instrucoes, pedido, esquema, log=log, modelo=lista[0], imagens=imagens,
-                         temperatura=temperatura, cadeia_de=lista, raciocinio=raciocinio)
+                         temperatura=temperatura, cadeia_de=lista, raciocinio=raciocinio,
+                         espera=cfg_midia.get("espera_pelo_gratis"))
 
 
 VISAO = _Visao()
@@ -176,10 +180,13 @@ def gratuita(rota) -> bool:
     return rota.endswith(":free") or rota == "openrouter/free" or rota.startswith(("groq:", "stealth/"))
 
 
-def _espera_pelo_gratis(projeto, rotas):
+def _espera_pelo_gratis(projeto, rotas, limite=None):
     """Segundos até a primeira rota gratuita da cadeia voltar, se ela está fora só por pouco (o limite do minuto);
-    None se não há gratuita para esperar, ou se ela demora mais que openrouter.espera_pelo_gratis (60 s)."""
-    limite = float((projeto.config.get("openrouter") or {}).get("espera_pelo_gratis", 60))
+    None se não há gratuita para esperar, ou se ela demora mais que openrouter.espera_pelo_gratis (60 s). limite
+    no lugar dele: a cadeia de visão usa midia.espera_pelo_gratis (0, vai direto ao pago rápido)."""
+    if limite is None:
+        limite = (projeto.config.get("openrouter") or {}).get("espera_pelo_gratis", 60)
+    limite = float(limite)
     agora = time.time()
     voltas = [_FORA_DO_AR[r] - agora for r in rotas if gratuita(r) and _FORA_DO_AR.get(r, 0) > agora]
     if not voltas or min(voltas) > limite:
@@ -188,7 +195,7 @@ def _espera_pelo_gratis(projeto, rotas):
 
 
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
-              cadeia_de=None, raciocinio=None, _esperas=0):
+              cadeia_de=None, raciocinio=None, _esperas=0, espera=None):
     """imagens é uma lista de caminhos de JPG enviados junto do pedido.
 
     Com um modelo da cadeia de principais (ou de cadeia_de), quem não atender passa a vez para o seguinte na hora
@@ -228,10 +235,10 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                     # antes de pagar: se os gratuitos estão fora só pelo limite do minuto, espera uns segundos por
                     # eles. No nunca-deve-ter-dentro-de-casa-parte-2 um pico da conferência (Groq e gratuitos do
                     # OpenRouter no limite do minuto ao mesmo tempo) mandou 27 descrições para o Qwen pago em 1 minuto
-                    espera = _espera_pelo_gratis(projeto, rotas)
-                    if espera is not None:
-                        log(f"  os gratuitos estão no limite do minuto: esperando {espera:.0f} s em vez de pagar o {rota}")
-                        time.sleep(espera)
+                    segundos = _espera_pelo_gratis(projeto, rotas, espera)
+                    if segundos is not None:
+                        log(f"  os gratuitos estão no limite do minuto: esperando {segundos:.0f} s em vez de pagar o {rota}")
+                        time.sleep(segundos)
                         _esperas += 1
                         de_novo = True
                         break

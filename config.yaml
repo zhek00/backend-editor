@@ -61,6 +61,9 @@ corrigir:
   modelo_descricao: mimo   # quem descreve as imagens para o Jev: openrouter.modelo_principal
   modelo_descricao_reserva: gemini  # entra sozinho quando o MiMo e a cota do Groq falham
   cenas_por_descricao: 1   # cenas por chamada ao descrever. Mais que 1 e o modelo troca as legendas entre elas
+  paralelo: 16             # descrições ao mesmo tempo (eram 4, o gargalo: 152 cenas de um vídeo de 10 min levavam
+                           # 1,5 min no Gemini 3.1; com 16, uns 25 s). O que o Gemini recusar pelo limite vai para a
+                           # cadeia de visão (Groq, Gemini 2.5), pedido do usuário em 2026-10-10
   cenas_por_chamada: 5    # cenas conferidas numa chamada só. 1 gasta mais, porque repete as instruções
   automatico: true         # roda sozinho no "tudo", depois do acervo e antes das imagens de IA
   rodadas: 3               # vezes que tenta outro material real numa cena que não combina
@@ -161,7 +164,9 @@ roteirista:
                              # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas
   esforco_claude: medium     # low, medium ou high: quanto o Claude pensa em cada lote de cenas
   cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
-  paralelo: 4                # blocos do roteiro decididos ao mesmo tempo. Cada pedido ao MiMo leva uns 20 segundos
+  paralelo: 8                # blocos do roteiro decididos ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10: o
+                             # Nemotron Ultra grátis leva 1,5 a 4 min por lote, e no teste-frango a busca esperou 9,5 min
+                             # pelas cenas. O limite do OpenRouter grátis (20 por minuto) aguenta folgado
 
 claude:
   via: assinatura           # assinatura usa o Claude Code do Mac. api usa créditos da ANTHROPIC_API_KEY
@@ -178,32 +183,39 @@ midia:
   # imagem primeiro, o pago só de reserva e sem raciocínio. Pedido do usuário em 2026-10-05: a escolha das fotos do
   # nunca-deve-ter-dentro-de-casa-parte-2 (30 min) caiu toda no Qwen pago e custou US$ 2,44. Medido na cena 7 do
   # natureza-teste-1min: o Dots sem raciocínio escolhe em 25 s, de graça; o Qwen sem raciocínio, uns US$ 0,001
+  # Pedido do usuário em 2026-10-10: o Groq grátis primeiro e, quando ele lota, direto para o pago mais rápido, sem
+  # passar pelos gratuitos lentos. Medido em 4 cenas do 11-animais-do-brasil, por escolha (folha de 12 candidatos):
+  # Groq 4 s; Gemini 2.5 Flash-Lite pelo OpenRouter 6 s e US$ 0,0008; Qwen 3.7 Flash 28 s e US$ 0,0002; Dots 18 s;
+  # openrouter/free 20 a 153 s; Nemotron Nano Omni 5 s a 12 min (falhou). Num vídeo de 10 min (198 escolhas, 16 ao
+  # mesmo tempo), o Gemini 2.5 escolhe tudo em 1,2 min por US$ 0,16. Qualquer gratuito na lista vem antes dos pagos
+  # (openrouter_local.perguntar), por isso os lentos saíram daqui e ficaram em visao_gratuitos.
   modelos_visao:
-    - groq:qwen/qwen3.8-27b     # 11 chaves do Groq, 1,1 s por folha de candidatos
+    - groq:qwen/qwen3.8-27b          # grátis: 11 chaves do Groq, 4 s por folha
+    - google/gemini-2.5-flash-lite   # o pago mais rápido com bom custo: US$ 0,10 e 0,40 por milhão de tokens
+    - qwen/qwen3.7-flash             # reserva: o pago mais barato (lento na escolha, 28 s), para nunca parar
+  # quem só pode usar grátis (as thumbnails e o Motion IA, VISAO.perguntar com so_gratuitos): os lentos ficam aqui
+  visao_gratuitos:
+    - groq:qwen/qwen3.8-27b
     - dots-studio/dots-3-note-preview:free
     - google/gemma-4-31b-it:free
     - google/gemma-4-26b-a4b-it:free
-    - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free   # descreve bem; na escolha às vezes não escolhe nada
+    - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
     - openrouter/free
-    # o pago de reserva: teste de bancada de 2026-10-07 (98 folhas do mcp-cafe-5min contra a escolha do Claude), a 1ª
-    # foto entre as que o Claude aceitou: qwen3.7-flash 78% a US$ 0,00008 por folha, qwen3-vl-32b 64% a US$ 0,00026,
-    # qwen3.8-flash 62% a US$ 0,00033. O 3.7 quase sempre escolhe alguma foto quando nada serve (3 de 10 recusas
-    # certas); a conferência do Jev, depois do download, troca a que mostra outra coisa
-    # Desde 2026-10-09, a pedido do usuário, o pago de reserva é o Gemini 3.1 Flash-Lite (o mesmo do MCP), no lugar
-    # do Qwen 3.7 Flash; o Qwen fica só para o Gemini fora do ar, para a escolha nunca parar.
-    - gemini:gemini-3.1-flash-lite
-    - qwen/qwen3.7-flash
+  espera_pelo_gratis: 0      # com o Groq no limite do minuto, vai direto para o pago em vez de esperar até 60 s por ele
   raciocinio_visao:
     dots-studio/: nenhum
     qwen/: nenhum
     nvidia/: nenhum
+    google/: nenhum
   reserva: gemini          # entra sozinho quando a cota de 24 horas do Groq acaba no meio da escolha
   conferir_na_captura: true  # o Jev confere cada candidato antes de baixar, pela frase que o modelo escreveu do que vê nele.
                            # Sem custo de visão a mais: a frase sai da mesma chamada da escolha. false volta ao jeito antigo
   nota_minima_captura: 30    # abaixo disso o candidato é descartado e o próximo da lista é testado
   candidatos_conferidos: 3   # quantos candidatos testar por cena. Se nenhum passar, fica o de maior nota, sob suspeita
   contato: "jonathansantost99@gmail.com"   # o Wikimedia só libera buscas com um contato no pedido
-  processos: 4               # cenas buscando material real ao mesmo tempo
+  processos: 8               # cenas buscando material real ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10
+                           # para acelerar: no teste-frango (5,5 min) a busca levou uns 20 dos 43 min da criação. Banco
+                           # no limite fica de lado e a busca segue com os outros (Buscador, LimiteAtingido)
   escolhas_ao_mesmo_tempo: 4 # lotes de 6 cenas escolhidos e conferidos ao mesmo tempo pelo modelo principal e pelo Jev
   candidatos: 12             # fotos ou vídeos mostrados ao modelo por cena (com 9 bancos, 8 era pouco)
   cenas_por_escolha: 6       # cenas mostradas ao Claude em cada rodada de escolha
@@ -226,6 +238,8 @@ render:
   processos: 0               # 0 usa metade dos núcleos do Mac
 
 jev:
+  processos: 12               # julgamentos ao mesmo tempo na conferência (eram 6). Pedido do usuário em 2026-10-10: no
+                              # teste-frango foram 385 julgamentos para 100 cenas
   julgar_com: jev             # jev: o juiz da TypeSafe pelo OpenRouter (pago, uns US$ 0,00005 por cena).
                               # principal: o modelo principal julga as mesmas perguntas (hoje gratuito). Para usar
                               # só num processo, sem mexer no servidor no ar: FABRICA_JULGAR_COM=principal
@@ -357,9 +371,8 @@ mcp:
   voz: ""                     # vazio: a voz do perfil (GenAIPro, centavos); "fish": a voz grátis da Fish Audio
   perfis: [documentario, documentario-vox]
   # As imagens que o vídeo captura (escolha das fotos, descrição, conferência, revisão) são vistas pela fábrica, não
-  # pelo Claude do cliente: o Gemini descreve e escolhe, e o Jev julga a descrição. Tira do cliente o trabalho mais
-  # pesado (no ouro-serra-1min, ver imagens foi 63% do consumo dele). Chave: GEMINI_API_KEY no .env (faturamento do
-  # AI Studio). Sem a chave, ou com o Gemini fora, a cadeia passa para o Qwen 3.7 Flash pago.
+  # pelo Claude do cliente: os gratuitos escolhem (modelos_visao, abaixo), o Gemini descreve (seção descricao) e o Jev
+  # julga a descrição. Tira do cliente o trabalho mais pesado (no ouro-serra-1min, ver imagens foi 63% do consumo dele).
   visao_pela_fabrica: true
   # Desde 2026-10-09 o MCP não usa mais o Claude do cliente para nada: a fábrica pensa tudo sozinha. O cliente manda o
   # roteiro, acompanha a porcentagem e recebe o vídeo, quase sem gastar a assinatura. pelo_cliente: true volta à fila
@@ -374,7 +387,7 @@ mcp:
     - gemini:gemini-3.1-flash-lite
     - qwen/qwen3.7-flash
   raciocinio_gemini: minimal    # sem pensar: o pensamento é cobrado como escrita (108 tokens contra 0, mesma resposta)
-  modelos_visao:
-    - gemini:gemini-3.1-flash-lite   # o mais barato do Google que responde (US$ 0,25 e 1,50 por milhão de tokens; o
-                                     # 2.5-flash-lite aparece na lista mas recusa gerar; o 3.8-flash, US$ 0,75 e 3,75)
-    - qwen/qwen3.7-flash
+  # Quem olha as imagens no TipLabs (escolha das fotos, revisão; a descrição tem a seção descricao). Vazio: a mesma
+  # cadeia do site (midia.modelos_visao: o Groq grátis, depois o Gemini 2.5 Flash-Lite e o Qwen 3.7 Flash), pedido do
+  # usuário em 2026-10-10 para valer no TipLabs e no site. Uma lista aqui vale só para o TipLabs.
+  modelos_visao: []

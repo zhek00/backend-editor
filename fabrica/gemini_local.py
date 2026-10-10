@@ -13,7 +13,20 @@ from datetime import datetime
 
 MODELO_PADRAO = "gemini-3.8-flash"
 _trava = threading.Lock()
-_esgotados = set()  # modelos cuja cota do dia já acabou nesta execução
+_esgotados = {}  # modelo -> até quando a cota dele está esgotada (time.time())
+
+
+def _esgotado(modelo) -> bool:
+    return _esgotados.get(modelo, 0) > time.time()
+
+
+def _volta_em(texto) -> float:
+    """Segundos até a cota voltar, pelo "Please retry in 4h27m37.4s" do Google (ou "retry in 20s"); 0 sem o aviso."""
+    achado = re.search(r"retry in ((?:\d+h)?(?:\d+m)?(?:[\d.]+s)?)", str(texto), re.I)
+    if not achado or not achado.group(1):
+        return 0
+    partes = dict((u, float(v)) for v, u in re.findall(r"([\d.]+)([hms])", achado.group(1)))
+    return partes.get("h", 0) * 3600 + partes.get("m", 0) * 60 + partes.get("s", 0)
 
 
 def _cliente():
@@ -133,7 +146,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
         return mimo(f"Gemini indisponível ({str(e)[:90]})")
 
     # se a cota do dia de um modelo acaba, tenta o próximo da lista de reserva em vez de esperar até amanhã
-    modelos = [m for m in [modelo] + list(cfg.get("modelos_reserva", ["gemini-3.1-flash-lite"])) if m not in _esgotados]
+    modelos = [m for m in [modelo] + list(cfg.get("modelos_reserva", ["gemini-3.1-flash-lite"])) if not _esgotado(m)]
     if not modelos:
         return mimo("a cota diária dos modelos Gemini acabou")
     ultimo_erro = ""
@@ -150,9 +163,12 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                 if na_cadeia:
                     return mimo(f"o modelo {modelo} não existe para a sua chave")
                 raise RuntimeError(f"O modelo {modelo} não existe para a sua chave.")
-            if codigo == 429 and "PerDay" in str(e):
+            volta = _volta_em(e)
+            if codigo == 429 and ("PerDay" in str(e) or volta > 120):
+                # a cota do dia (500 pedidos no plano grátis) acabou: fica de lado até ela voltar, em vez de cada
+                # descrição tentar de novo e perder 1,5 s (pedido do usuário em 2026-10-10, para acelerar)
                 log(f"  a cota diária do {modelo} acabou (plano gratuito do Google)")
-                _esgotados.add(modelos.pop(0))
+                _esgotados[modelos.pop(0)] = time.time() + (volta or 3600)
                 if not modelos:
                     return mimo("a cota diária de todos os modelos Gemini acabou")
                 log(f"  usando o {modelos[0]}")
