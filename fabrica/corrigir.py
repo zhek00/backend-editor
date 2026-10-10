@@ -174,7 +174,7 @@ def conferiveis(projeto, numeros=None) -> list[dict]:
     return [c for c in projeto.ler_json("cenas.json")["cenas"]
             if (numeros is None or c["n"] in numeros)
             and c.get("tipo") in midia.TIPOS_REAIS and c.get("midia")
-            and (c.get("midia") or {}).get("fonte") != "motion_ia"  # o clipe de motion é abstrato de propósito
+            and (c.get("midia") or {}).get("fonte") not in ("motion_ia", "animation_ai")  # o clipe de motion é abstrato de propósito
             and (c.get("texto") or "").strip()]
 
 

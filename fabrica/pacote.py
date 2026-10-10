@@ -33,7 +33,7 @@ ENTREGAS = RAIZ / "entregas"
 # pastas inteiras que a fábrica refaz de graça (o render, as prévias, as cópias de segurança das trocas)
 _PASTAS_FORA = {"render", "render_vertical", "_previas", "antigas", "conferir", "revisao_video"}
 # nestas pastas só os JSON vão (a receita); o resto (MOV, HTML, WAV, fontes) sai da receita
-_SO_JSON = {"animacoes", "trilha", "motion_ia", "cenas_lotes"}
+_SO_JSON = {"animacoes", "trilha", "motion_ia", "animation_ai", "cenas_lotes", "shorts"}
 # na raiz, o que sai do resto: o vídeo pronto (entregue à parte), a narração aberta, as legendas e a página de revisão
 _RAIZ_FORA = {"final.mp4", "final_vertical.mp4", "narracao.wav", "narracao_editor.mp3", "revisao.html"}
 _COMPRIMIDOS = {".jpg", ".jpeg", ".png", ".webp", ".mp3", ".mp4", ".webm", ".mov", ".zip"}

@@ -269,6 +269,49 @@ motion_ia:
 revisao_video:
   ativo: true
 
+# Conferência da narração (fabrica/conferir_voz.py): cada bloco gravado é ouvido pelo Whisper do Groq (grátis) e
+# conferido com o roteiro: palavra comida, trecho repetido e pronúncia dos termos de pronuncia.json. Com problema, o
+# bloco é gravado de novo e fica a melhor gravação. Sem Groq, a narração segue sem a conferência.
+conferencia_voz:
+  ativo: true
+  regravar: 2          # vozes grátis (Fish, Edge): quantas vezes gravar de novo um bloco com problema
+  regravar_paga: 1     # GenAIPro: uns US$ 0,004 por bloco regravado
+  modelo: whisper-large-v3-turbo
+
+# Cenas animadas de modelos prontos (fabrica/animation_ai.py): COMPLEMENTO das fotos, como o Motion IA. Onde a fala
+# tem lista, datas, número, comparação, citação ou documento, o modelo gratuito dá a nota de utilidade e monta a cena
+# (19 tipos), com cada item entrando na palavra falada. Roda depois do motion (passo 6b da criação, etapa_motion no
+# tudo) ou com fabrica animation-ai NOME. Falhou, a cena fica com a foto.
+animation_ai:
+  ativo: true
+  tema: noite            # noite (escuro), editorial (creme) ou misterio (preto e vermelho); cores: {acc: "#..."} por cima
+  limiar: 70             # nota de utilidade mínima (0 a 100)
+  maximo_do_video: 0.12  # no máximo 12% da duração em cenas animadas (contando os clipes do Motion IA)
+  intervalo_minimo: 20   # segundos entre uma cena animada e outra (ou um clipe de motion)
+  duracao_maxima: 12     # a frase mais longa que vira uma cena animada
+  trechos_por_lote: 6    # frases por pedido ao modelo
+  paralelo: 2
+  volume_sons_db: -20
+
+# Shorts cortados do vídeo pronto (fabrica/shorts.py), depois de cada render, grátis.
+shorts:
+  ativo: true
+  quantidade: 3
+  duracao_minima: 20
+  duracao_maxima: 58     # o Shorts aceita até 60 s
+  palavras_por_legenda: 3
+
+# Publicação no YouTube (fabrica/youtube_publicar.py). O agendamento é do próprio YouTube (publishAt).
+youtube:
+  fuso_horas: -3         # a hora do canal (Brasília); o Brasil não tem horário de verão desde 2019
+  categoria: "22"        # 22 Pessoas e blogs, 27 Educação, 28 Ciência e tecnologia, 24 Entretenimento
+  shorts_intervalo_horas: 24   # cada short sai um dia depois do anterior, a partir do vídeo agendado
+  idioma: pt-BR
+
+# Kit de publicação (fabrica/publicacao.py): publicacao.json e PUBLICACAO.md depois do render, grátis.
+publicacao:
+  aviso_voz_sintetica: true   # "A narração deste vídeo é feita com voz sintética." no fim da descrição
+
 # Versão em pé (9:16) para Reels e Shorts: fabrica render NOME --vertical (ou "Formato" na janela de renderizar).
 # Sai em final_vertical.mp4, com pastas próprias (render_vertical); o vídeo deitado não muda.
 vertical:

@@ -40,6 +40,12 @@ uv run fabrica trilha NOME        # o modelo compõe a trilha e o código toca (
 uv run fabrica render NOME        # monta o vídeo
 uv run fabrica render NOME --vertical   # versão em pé (9:16) para Reels e Shorts, em final_vertical.mp4
 uv run fabrica revisar-video NOME # o modelo olha o vídeo pronto e aponta problemas (grátis)
+uv run fabrica conferir-voz NOME  # ouve a narração e aponta palavra comida, repetida ou mal pronunciada (grátis)
+uv run fabrica publicacao NOME    # título, descrição com capítulos, tags e legenda para o YouTube (grátis)
+uv run fabrica thumbs NOME        # 3 thumbnails e a prancha do celular (grátis); --escolher N troca a capa
+uv run fabrica shorts NOME        # até 3 shorts cortados do vídeo pronto, com legenda palavra por palavra (grátis)
+uv run fabrica publicar NOME --simular   # o que subiria para o YouTube; sem --simular, publica (pede confirmação)
+uv run fabrica animation-ai NOME  # onde a fala tem lista, datas ou comparação, cena animada no lugar da foto (grátis)
 uv run fabrica revisar NOME       # abre a página com todas as cenas
 uv run fabrica refazer NOME 12 31 # troca o que aparece nessas cenas
 uv run fabrica custo NOME         # estimativa e consumo do Claude
@@ -71,6 +77,22 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - Conferência na captura (`midia.conferir_na_captura`, ligada por padrão): o modelo que escolhe (o modelo principal) escreve uma frase do que vê em cada candidato e o Jev julga antes do download. Abaixo de `nota_minima_captura` (30) o candidato cai e o próximo é testado, até `candidatos_conferidos`. Se nenhum passar, fica o de maior nota e a cena ganha `captura.suspeita`. No passo `conferir`, abaixo de `corrigir.nota_para_trocar` (20) a fábrica troca sozinha, e entre isso e `nota_minima` (40) só aponta.
 - **Foto com pessoa nunca perde o rosto** (`fabrica/rostos.py`). O OpenCV acha os rostos com o YuNet (modelo de 230 KB, licença MIT, em `recursos/rostos`; no próprio computador, grátis), guardados em `.rostos.json` na pasta da foto. Foto que preenche a tela era recortada pelo meio: quando isso cortaria um rosto, `render._foto_na_tela` recorta pelos rostos (centro deles a 40% da altura); na versão em pé, o recorte lateral também segue o rosto. A prévia do editor (`render.quadro_da_foto`) é montada igual ao vídeo, com a moldura do retrato e o recorte pelo rosto: antes ela era a foto esticada pelo meio, e o retrato do jogador da cena 16 do virou-filme-em-1996 aparecia só com o tronco. Só os clipes dessas fotos mudam de nome (`_enquadramento`); os outros não renderizam de novo. O detector clássico (Haar) foi testado e descartado: errou 10 de 12 fotos (folha, abutre, mapa, manuscrito). OpenCV fica na versão 4 (a 5 tirou o detector clássico e o projeto fixa `<5`).
 - **JAMAIS repetir imagem, conferido na imagem em si.** Toda foto baixada ganha uma impressão digital visual (`midia._impressao`, dHash de 64 pontos) e é recusada (`ImagemRepetida`) se for igual ou quase igual a outra do vídeo, mesmo vinda de outro banco ou com outro número; a mesma foto do mesmo banco também é recusada. No fim da conferência e no fim da criação, `midia.tirar_repetidas` varre o vídeo e troca qualquer repetida por imagem nova. A checagem antiga, por nome de arquivo, deixou passar a mesma foto nas cenas 75 e 77 do lince2.
+- **JAMAIS material de edição no vídeo** (`midia.FundoDeChroma`, 2026-10-09): fundo verde de chroma key, botão de
+  inscrição animado, terço inferior, overlay. No leite, a cena "se inscreve, e nos vemos no próximo vídeo" pegou do
+  Pexels a "subscribe animation on green background" e o vídeo pronto mostrou 4 s de tela verde com um botão
+  SUBSCRIBED. Barrado em três lugares: pelo nome e pelas tags no banco (`midia.de_edicao`; azul só pelo nome, porque
+  céu limpo também é azul liso), pela imagem baixada (`midia.fundo_de_chroma`: um quarto ou mais da imagem num verde
+  puro e LISO, variação de brilho abaixo de 7 e de tom abaixo de 1,5; na capa e num quadro do meio do vídeo) e na
+  varredura do fim (`soltar_repetidas` solta também `cenas_de_chroma`). Medido em 1.522 fotos dos projetos: o chroma
+  tem 94% a 96% de verde liso (brilho variando 0,3 a 3,6); a foto real mais verde, cobra na grama, 67% mas com o brilho
+  variando 19 a 29. Nenhum falso positivo em 7 projetos.
+- **A chamada do canal mostra o assunto do vídeo** (`cenas._chamada_mostra_o_assunto`, no fim de `planejar` e de
+  `atualizar_tempos`, e regra no pedido do agente): fala de like, inscrição, sininho, comentários ou próximo vídeo
+  cujo pedido é de interface (YouTube, botão, ícone, celular com rede social) passa a pedir a âncora do bloco no
+  mapa, com a âncora do tema do vídeo como segunda busca, `exato` VAZIO (sem o campo, a busca deduz um nome próprio
+  da âncora, "Ontario", e recusa todos os candidatos) e sem a marca `sem_midia_real` do pedido antigo. O pedido do
+  agente fica em `pedido_chamada`; a escolha da pessoa fica. No leite, as três chamadas (logo do YouTube num celular,
+  botão em chroma) viraram vídeos de compra de leite no mercado.
 - **Nenhuma cena fica vazia, buraco se completa COM O ASSUNTO, e NUNCA se repete imagem.** Com `ia.ativa: false`, a cena que o acervo não resolveu recebe, nesta ordem (`_preencher_vazias` em `fabrica/midia.py`): um candidato da própria cena cujas tags citam o assunto; uma busca maior por todos os nomes do mesmo assunto (busca, alternativa, animal, sujeito, contexto e âncora do bloco); por último, uma imagem NOVA pelo assunto do bloco e do vídeo. Cena que terminou a conferência mostrando outra coisa (`corrigir._tirar_outra_coisa`) busca imagem nova, com a reprovada em `rejeitadas`. **Nunca copiar a imagem de outra cena**: isso já foi feito e encheu o lince2 de repetição (19 imagens repetidas). O agente não reaproveita cena (`reusar_cena` sempre 0) e fatia de IA não copia a imagem da vizinha. Toda cena preenchida ganha `captura.suspeita` e `captura.preenchida`.
 - **Tapa-buraco com filtro de verdade** (`midia._preencher_vazias`, regras de 2026-10-03, do virou-filme-em-1996, onde 118 de 130 cenas vieram do tapa-buraco e quase todas mostravam outra coisa):
   - **O bicho é o substantivo, não o lugar** (`_cabeca_do_animal`): em "maneless Tsavo lion" vale "lion". Antes valia a primeira palavra e qualquer uma bastava: zebra, elefante, girafa e galinha "de Tsavo" passaram por leão. Em cena de animal o bicho é obrigatório (`exigido_da_cena`), e o nome do lugar no `exato` não conta.
@@ -346,6 +368,55 @@ roteiro onde o motion vale a pena** (antes, só em cena abstrata).
   começo do clipe: a frase da cena 5 do natureza-teste-1min, com o véu escuro, cobria o clipe da cena 6), e ele não vai para os créditos. No editor a cena mostra o selo
   **"Motion IA"** na lista e no cartão Origem Visual, e pode ser trocada como qualquer outra.
 
+## animation-ai (cenas animadas de modelo pronto, complemento das fotos)
+
+`fabrica/animation_ai.py`, `fabrica/recursos/animation_ai/motor.js` e `motor.css`, pedido do usuário em 2026-10-09
+depois de estudar o concorrente (Pipeline Canal Dark), que monta o vídeo com 24 modelos de cena animada em HTML.
+**Reimplementado do zero** (a licença dele proíbe copiar o código; não trazer trechos de lá). **É complemento, não o
+vídeo inteiro** (correção do usuário no mesmo dia: "seria complementar como o motion ai"): entra misturado com as
+fotos, logo depois do Motion IA (`etapa_motion` no `tudo`, passo 6c da criação no site, `fabrica animation-ai NOME`).
+Não existe perfil de vídeo todo em animation-ai; não criar de novo.
+
+- **Candidatas** (`frases_do_video` e `estrutura`, grátis): cada frase falada (cenas do mesmo bloco até o ponto, até
+  `duracao_maxima`, 12 s) com algo que um modelo pronto mostra melhor que a foto: itens em sequência (vírgulas, a
+  `enumeracao` da cena ou a mesma palavra dita 3 vezes, "esquenta igual, engrossa igual e queima igual"), duas datas,
+  comparação, citação, definição, documento ou notícia, causa e consequência, número, ou o `visual` que o agente marcou
+  (diagrama, texto na tela, linha do tempo, mapa). Narração pura nem vai ao modelo. Motion IA, personagem, imagem ou
+  prompt da pessoa ficam de fora.
+- **Decisão e plano numa chamada** (`decidir`, grátis pela cadeia de principais): o modelo lê a fala, as vizinhas e o
+  que a foto de hoje mostra (`conferencia.legenda`), dá a nota de utilidade (0 a 100) e, se valer, escolhe um dos 19
+  tipos de conteúdo (`DE_COMPLEMENTO`: numero, lista, checklist, passos, comparar, barras, linha_do_tempo, citacao,
+  definicao, cartoes, destaques, fato, porcentagem, antes_depois, ranking, causa_efeito, proporcao, documento,
+  manchete) e escreve os textos curtos com a `palavra` da fala de cada item. **Nunca HTML.** abertura, capitulo,
+  frase, pergunta e encerramento (texto da fala sobre fundo) só existem nas cenas pedidas com `--cenas`. O código
+  confere (`conferir`): campos, tamanho, número e palavra que a fala não diz (uma de folga), travessão, item de
+  comparar igual ao título do lado; reprovado volta uma vez com os erros. Fica em `animation_ai/decisoes.json` pela
+  fala; mudou as instruções, suba `VERSAO_UTIL`.
+- **Cadência** (`escolher`): nota de `limiar` (70) para cima, as maiores primeiro, até `maximo_do_video` (12% da
+  duração, contando os clipes do Motion IA) e a `intervalo_minimo` (20 s) de outra cena animada ou clipe de motion.
+  No leite (2,9 min), 15 frases candidatas, 3 com nota alta, 1 entrou: a lista de marcas começava colada num clipe de
+  motion e o checklist do fim passava do orçamento.
+- **Tempos** (`resolver_tempos`): o Python acha o segundo de cada palavra no `alinhamento.json` e manda pronto à
+  página, 0,12 s antes da palavra. **A tela nunca fica só com o fundo**: o elemento principal entra em até 1 s
+  (`PRIMEIRO`); com título na tela, o 1º item pode esperar 2,5 s. Os sons (pop, risco, baque, contagem) saem das mesmas
+  entradas (`sons`), num wav por trecho que o render põe (`sons_na_linha`).
+- **Desenho** (`motor.js`): `quadro(t)` é função pura do tempo (câmera que assenta e aproxima 3%, tremor curto no
+  impacto, entradas sobe/esquerda/direita/escala/impacto/risca, contagens, barras, anéis, linhas que se desenham). O
+  HyperFrames grava quadro a quadro por um relógio do GSAP de 0 a dur. Nada de animação em CSS, sorteio sem semente ou
+  relógio. Texto comprido encolhe até caber (`data-fit`), de novo quando as fontes carregam. Área livre de 150 a 1770
+  px e de 100 a 800 px; embaixo, a legenda. Decoração grande é SVG, não texto (o "?" de 1.100 px da pergunta saía da
+  tela e reprovava). Temas em `TEMAS` (noite, editorial, misterio; `cores` por cima); o nome do canal no canto vem de
+  `animation_ai.canal`. O `motor.js` entra na assinatura: mudou o desenho, os trechos são gravados de novo.
+- **Gravação**: `hyperframes check`, MP4, um pedaço por cena (`midia/NNNN_anim.mp4`), `fonte: animation_ai`; a foto
+  fica em `anim_reserva` (`--desfazer` volta e marca `anim_falhou`, que não tenta de novo na mesma fala). Reprovou ou
+  falhou: a cena fica com a foto. Nunca para o vídeo.
+- Tratada como o Motion IA: o Jev não julga, a camada de animação não cobre, fica fora dos créditos e das repetidas,
+  selo "Animation IA" no editor e na nota do vídeo.
+- **Cenas pedidas** (`fabrica animation-ai NOME --cenas N...`, `fazer`): anima essas cenas sem perguntar se vale, com
+  os 24 tipos, em trechos de `duracao_alvo` (8 s); variedade cobrada (frase e pergunta no máximo um terço, o mesmo tipo
+  nunca 3 vezes seguidas), planos em `animation_ai/planos.json`; desenho reprovado vira a frase da fala.
+  `--catalogo` desenha um quadro de cada tipo, grátis.
+
 ## Texto na tela: saiu da fábrica
 
 Desde 2026-10-05, a pedido do usuário, a fábrica **não tem mais o texto na tela desenhado pelo FFmpeg** (destaque,
@@ -530,6 +601,102 @@ o modelo principal recebe um quadro de cada cena do `final.mp4` (a 60% da cena, 
 imagem repetida, marca-d'água e baixa qualidade. **Só aponta, não troca nada.** O resultado (`revisao_video.json`) só
 vale para o `final.mp4` de agora; no editor vira o selo "⚠ revisar" na cena e o cartão Revisão no inspetor. Nunca
 derruba o render.
+
+## Conferência da narração
+
+`fabrica/conferir_voz.py`, ligada por `conferencia_voz.ativo` (pedido do usuário em 2026-10-09, da análise do
+concorrente). Cada bloco gravado é ouvido pelo **Whisper do Groq** (`whisper-large-v3-turbo`, grátis, revezando as
+`GROQ_API_KEY`, uns 2 s por bloco) e conferido com o roteiro **pelo trecho**, não pela nota do bloco inteiro (um bloco
+nosso tem umas 400 palavras e uma palavra comida mal mexe na semelhança): **comeu** (3 ou mais palavras do roteiro não
+ouvidas), **repetiu** (4 ou mais palavras ouvidas a mais, que são do roteiro ali perto; palavra a mais que não é do
+roteiro é invenção do Whisper, como "Amara.org", e não conta), **pronúncia** (termo do glossário não reconhecido) e
+**diferente** (menos de 60% de semelhança). Número escrito e falado por extenso nunca conta.
+
+- Com problema, o bloco é gravado de novo (`regravar`, 2 nas vozes grátis; `regravar_paga`, 1 na GenAIPro, uns
+  US$ 0,004 por bloco) e **fica a melhor gravação** (`gravidade`), não a última.
+- **Glossário de pronúncia**: `pronuncia.json` na raiz e `voz.pronuncia` no perfil (o do perfil vence). `reconhecer`
+  é a expressão procurada na transcrição (minúsculas, sem acento) e `grafias` as escritas mandadas à voz, em ordem: o
+  termo não reconhecido vai com a grafia seguinte. A legenda e as cenas ficam com o termo do roteiro, porque o tempo
+  das palavras é casado com o roteiro e a palavra trocada só é interpolada. O termo vale também dentro de palavra com
+  hífen ("cavalo-de-Przewalski").
+- O resultado fica em `conferencia` no json de cada bloco e em `narracao/conferencia.json`. Bloco reaproveitado do
+  cache não é conferido de novo. `fabrica conferir-voz NOME` confere a narração pronta sem gravar nada.
+- **Nunca para o vídeo**: sem Groq, offline ou com a voz do computador, a narração segue sem a conferência.
+- Primeiro achado real: no virou-filme-em-1996, bloco 2, a voz da Fish trocou "E aqui vem um detalhe que deixa a
+  história ainda mais assustadora: os leões pareciam aprender" por "Mis trabalhadores reagiram como da farira", e o
+  vídeo saiu assim. Em 37 blocos de 5 projetos, nenhum alarme falso.
+
+## Kit de publicação
+
+`fabrica/publicacao.py` (pedido do usuário em 2026-10-09). Depois de cada render deitado (`etapa_render` no terminal,
+`api.iniciar_publicacao` no site, em segundo plano) e em `fabrica publicacao NOME [--forcar]`, grátis:
+`publicacao.json` e `PUBLICACAO.md` com título (até 60 letras), 2 alternativas, a descrição (resumo, **capítulos nos
+tempos reais do final.mp4**, os créditos, o aviso de voz sintética e as hashtags), tags (até 480 letras), comentário
+fixado, `sintetico` (o vídeo tem imagem de IA: declarar no YouTube Studio) e a legenda `legendas_final.srt`.
+`GET /api/projetos/NOME/publicacao` devolve o kit para a janela de publicar no YouTube, e `POST` refaz.
+
+- **Capítulos**: pelos `[TITULO]` do roteiro (2 ou mais); senão pelos blocos do `roteiro_mapa.json` (`inicio_c`
+  vira tempo pelo `alinhamento.json`), mais a abertura (`render/linha.json`). Regras do YouTube: o primeiro em 0:00
+  (fala antes do primeiro título vira "Abertura"), 10 s ou mais cada, pelo menos 3, senão sem capítulos.
+- **Os textos são do modelo, pela cadeia de principais** (`modelo=openrouter_local.principal(projeto)`, Groq
+  primeiro). Sem dizer o modelo, a chamada ia para o `openrouter.modelo` (o Jev) e caiu no DeepSeek pago sem
+  perguntar. O modelo só é chamado de novo se o roteiro ou os capítulos mudarem (`assinatura`). Sem modelo, sai com
+  o título do mapa e os nomes dos blocos.
+
+## Thumbnails
+
+`fabrica/thumbnail.py` (pedido do usuário em 2026-10-09, da análise do concorrente). Depois de cada render (junto com o
+kit, `etapa_capas_e_shorts` no terminal, `api.iniciar_publicacao` no site) e em `fabrica thumbs NOME [--escolher N]`,
+grátis: `thumb_1.jpg` a `thumb_3.jpg`, `thumbnail.jpg` (a escolhida, opção 1 até a pessoa trocar),
+`thumbs_prancha.jpg` (as três grandes e cada uma em 256x144, o tamanho no celular) e `thumbs.json`.
+
+- **Fotos**: as imagens do próprio vídeo de nota maior no Jev (nunca clipe de motion nem cena animada, nada menor que
+  640x360), até 12 numa folha; a cadeia de visão **só nos gratuitos** escolhe as 3 que fazem a melhor capa para o
+  título (sem resposta, as de nota maior).
+- **Texto**: o campo `thumbs` do kit de publicação (3 opções de l1 e l2, até 4 palavras por linha, que completam o
+  título sem repetir, com *destaque*). Kit de antes das thumbnails é pedido de novo.
+- **Desenho** (Pillow, Inter Black da pasta de fontes): `foto_texto`, `painel` e `impacto`, um por opção; recorte pelos
+  rostos (`rostos.recorte`), texto longe do canto de baixo à direita (a duração do YouTube) e do rosto. 1280x720,
+  menos de 2 MB. `GET /api/projetos/NOME/thumbs` e `POST .../thumbs/escolher {"opcao": N}`.
+
+## Shorts cortados do vídeo pronto
+
+`fabrica/shorts.py` (pedido do usuário em 2026-10-09). Depois de cada render e em `fabrica shorts NOME [--forcar]`,
+grátis, sem renderizar as cenas de novo: corta `render/video.mp4` (as cenas montadas, sem a legenda queimada) e
+`render/trilha.wav` (o áudio final), na linha do tempo do `final.mp4`, com a camada de animação que passa ali.
+
+- **Trechos** (`escolher`): as frases (unidades do `alinhamento.json` juntas até o ponto) com tempo e bloco do mapa.
+  O modelo principal (gratuitos primeiro) escolhe até `shorts.quantidade` (3) trechos de 20 a 58 s que se entendem
+  sozinhos, com gancho, sem misturar blocos, e escreve o título-gancho e o título do post. O código confere
+  (`conferir`): duração, bloco, sobreposição, título até 60 letras e com no máximo uma palavra que a fala não diz (o
+  modelo escreveu "O *secreto* do leite"). Sem modelo, a regra (`_por_regra`). Guardado em `shorts/escolha.json` pela
+  assinatura do roteiro.
+- **Imagem**: 1080x1920; o vídeo deitado no meio (y 620) sobre uma cópia dele desfocada e escura; o título-gancho em
+  cima (PNG do Pillow, *destaque* em amarelo); a legenda grande embaixo, 3 palavras por vez com a falada em amarelo
+  (ASS com o tempo de cada palavra, fonte Inter da pasta de fontes); longe da faixa de baixo e da direita, que o app
+  cobre. Saem `shorts/S01.mp4`... e `shorts/shorts.json`. `GET /api/projetos/NOME/shorts`.
+- Diferente do `--vertical` (o vídeo inteiro em pé, renderizado de novo): o short é um corte do deitado.
+
+## Publicar no YouTube
+
+`fabrica/youtube_publicar.py`. A conta é uma só, conectada pelo editor (OAuth do Google, `GOOGLE_CLIENT_ID` e
+`GOOGLE_CLIENT_SECRET` no `.env`). Desde 2026-10-09 (pedido do usuário, da análise do concorrente):
+
+- **Agendar é do próprio YouTube** (`status.publishAt`): o vídeo sobe privado com a data, e o YouTube publica sozinho,
+  mesmo com o computador desligado. O checador em segundo plano ficou só para os agendamentos antigos (sem
+  `pelo_youtube`). Hora na hora do canal (`youtube.fuso_horas`, -3; sem base de fusos no Windows, o deslocamento é
+  fixo), pelo menos 10 min no futuro.
+- **`publicar_projeto`** sobe o pacote: o vídeo com o kit (título, descrição com capítulos, tags, idioma,
+  `containsSyntheticMedia` quando há imagem de IA), a thumbnail escolhida (`thumbnails.set`; o canal precisa estar
+  verificado por telefone), a legenda `legendas_final.srt` (`captions.insert`, escopo youtube.force-ssl: **conta
+  conectada antes de 2026-10-09 precisa reconectar** para a legenda) e, com `com_shorts`, os shorts, cada um
+  `youtube.shorts_intervalo_horas` (24) depois do anterior. O que falhar depois do vídeo vira aviso no youtube.json.
+- **Auditoria do Google**: vídeo enviado pela API por projeto do Google Cloud sem a auditoria da API do YouTube fica
+  travado como privado. Depois de um envio público a fábrica confere a visibilidade e avisa.
+- **Simulação**: `fabrica publicar NOME [--quando "2026-10-12 18:00"] [--privacidade] [--com-shorts] --simular` e
+  `simular: true` no `POST /api/projetos/NOME/youtube/publicar` mostram o que subiria, sem enviar. Sem `--simular` o
+  terminal pede confirmação (`--sim` pula). O comentário fixado a API não faz: o texto vai no youtube.json para o
+  Studio. **Nunca publicar sem a pessoa pedir.**
 
 ## Versão em pé (Reels e Shorts)
 

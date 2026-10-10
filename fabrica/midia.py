@@ -28,7 +28,7 @@ import anthropic
 import httpx
 
 from . import claude_local
-from .util import mmss
+from .util import mmss, rodar
 
 TIPOS_REAIS = ("foto_real", "video_real")
 
@@ -1276,6 +1276,8 @@ class Buscador:
             uteis = [a for a in achados if _cita_o_assunto(assunto, a)]
             if len(uteis) >= 3:
                 break
+        # material de edição (chroma, botão de inscrição animado) nunca entra: nem chega à escolha
+        achados = [a for a in achados if not de_edicao(a)]
         # os que citam o assunto vão na frente, para não ficarem de fora do corte da quantidade
         # e quem cita a própria espécie vem antes de quem cita só o tipo do bicho ("mamba" antes de "snake")
         achados.sort(key=lambda a: (bool(especie) and not _cita_o_assunto(especie, a), not _cita_o_assunto(assunto, a)))
@@ -1952,6 +1954,91 @@ class ImagemRepetida(ValueError):
     """A imagem baixada é igual (ou quase igual) à de outra cena do vídeo: jamais repetir imagem."""
 
 
+class FundoDeChroma(ImagemRepetida):
+    """Material de edição: fundo verde ou azul para recortar (chroma key), botão de inscrição animado, terço
+    inferior. Jamais entra no vídeo. Herda de ImagemRepetida para seguir o mesmo caminho: o candidato cai e a cena
+    busca outro. No leite (2026-10-09) a cena "se inscreve, e nos vemos no próximo vídeo" pegou do Pexels a
+    "subscribe animation on green background", e o vídeo pronto mostrou 4 s de tela verde com um botão SUBSCRIBED."""
+
+
+# o nome e as tags dos bancos entregam o material de edição; azul só pelo nome (céu limpo também é azul liso)
+_DE_EDICAO = re.compile(
+    r"green[\s_-]*screen|greenscreen|chroma|green[\s_-]*(?:background|backdrop)|blue[\s_-]*screen|bluescreen|"
+    r"alpha[\s_-]*channel|transparent[\s_-]*background|fundo[\s_-]*verde|tela[\s_-]*verde|"
+    r"subscribe[\s_-]*(?:button|animation|bell)|like[\s_-]*(?:and|&)[\s_-]*subscribe|lower[\s_-]*third|"
+    r"overlay[\s_-]*(?:effect|template)|motion[\s_-]*template", re.I)
+
+
+def de_edicao(candidato) -> bool:
+    """O nome, a página ou a descrição do candidato dizem que ele é material de edição (chroma, botão, terço)."""
+    texto = " ".join(str(candidato.get(k) or "") for k in ("pagina", "descricao", "titulo", "arquivo"))
+    return bool(_DE_EDICAO.search(texto))
+
+
+def fundo_de_chroma(caminho) -> bool:
+    """A imagem tem fundo verde de chroma: um quarto ou mais dela num verde puro e LISO. Medido em 1.522 fotos dos
+    projetos: o chroma do leite tem 94% a 96% de verde puro com variação de brilho de 0,3 a 3,6; a foto real mais
+    verde (cobra na grama, periquito nas folhas) tem até 67%, mas variação de brilho de 19 a 29 (a textura da folha)."""
+    import statistics
+    from PIL import Image
+
+    try:
+        with Image.open(caminho) as im:
+            hsv = im.convert("RGB").resize((160, 90)).convert("HSV")
+        px = list(hsv.get_flattened_data()) if hasattr(hsv, "get_flattened_data") else list(hsv.getdata())
+    except Exception:  # noqa: BLE001 - imagem que não abre fica para as outras conferências
+        return False
+    verde = [p for p in px if 40 <= p[0] <= 115 and p[1] >= 150 and p[2] >= 110]
+    if len(verde) < 0.25 * len(px):
+        return False
+    return statistics.pstdev(p[2] for p in verde) < 7 and statistics.pstdev(p[0] for p in verde) < 1.5
+
+
+def _quadro_do_meio(video) -> Optional[Path]:
+    """Um quadro do meio do vídeo, para a conferência de chroma (a capa do banco pode ser outro momento)."""
+    destino = Path(video).with_name(Path(video).stem + "_meio.jpg")
+    try:
+        r = rodar(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)])
+        meio = float((r.stdout or "0").strip() or 0) / 2
+        rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{meio:.2f}", "-i", str(video), "-frames:v", "1", str(destino)])
+    except Exception:  # noqa: BLE001
+        return None
+    return destino if destino.exists() else None
+
+
+def material_de_edicao(projeto, midia_info, candidato=None) -> bool:
+    """A mídia da cena é material de edição: pelo nome no banco ou pela imagem (a capa e o meio do vídeo)."""
+    if de_edicao(candidato or midia_info or {}):
+        return True
+    for chave in ("capa", "arquivo"):
+        rel = (midia_info or {}).get(chave)
+        if not rel:
+            continue
+        caminho = projeto.pasta / rel
+        if not caminho.exists():
+            continue
+        if caminho.suffix.lower() in (".mp4", ".mov", ".webm", ".m4v"):
+            quadro = _quadro_do_meio(caminho)
+            if quadro is not None:
+                achou = fundo_de_chroma(quadro)
+                quadro.unlink(missing_ok=True)
+                if achou:
+                    return True
+        elif fundo_de_chroma(caminho):
+            return True
+    return False
+
+
+def cenas_de_chroma(projeto) -> list[int]:
+    """As cenas cuja mídia de banco é material de edição (a varredura do fim)."""
+    saida = []
+    for c in projeto.ler_json("cenas.json").get("cenas", []):
+        m = c.get("midia") or {}
+        if m.get("arquivo") and m.get("fonte") not in ("motion_ia", "animation_ai") and material_de_edicao(projeto, m):
+            saida.append(c["n"])
+    return saida
+
+
 _IMPRESSOES = {}          # (caminho, data do arquivo) -> impressão digital visual
 _TRAVA_IMPRESSOES = threading.Lock()
 DISTANCIA_REPETIDA = 6    # quantos dos 64 pontos podem mudar e a imagem ainda ser "a mesma"
@@ -2021,7 +2108,7 @@ def cenas_repetidas(projeto) -> list[int]:
     vistas_chave, vistas_arquivo, vistas_impressao, repetidas = {}, {}, [], []
     for c in sorted(projeto.ler_json("cenas.json").get("cenas", []), key=lambda x: x["n"]):
         m = c.get("midia") or {}
-        if not m.get("arquivo") or m.get("fonte") == "motion_ia":
+        if not m.get("arquivo") or m.get("fonte") in ("motion_ia", "animation_ai"):
             continue  # clipe de motion não é foto: as capas têm o mesmo fundo creme e pareciam repetidas (31 de 96 trocadas por foto)
         chave = f"{m.get('fonte')}:{m.get('id')}" if m.get("fonte") and m.get("id") else None
         caminho = _imagem_de_comparar(projeto, m)
@@ -2044,14 +2131,16 @@ def tirar_repetidas(projeto, log=print) -> list[int]:
     repetidas = soltar_repetidas(projeto)
     if not repetidas:
         return []
-    log(f"  {len(repetidas)} cena(s) com imagem repetida: buscando imagem nova ({', '.join(map(str, repetidas))})")
+    log(f"  {len(repetidas)} cena(s) com imagem repetida ou material de edição: buscando imagem nova "
+        f"({', '.join(map(str, repetidas))})")
     buscar(projeto, apenas=set(repetidas), log=log)
     return repetidas
 
 
 def soltar_repetidas(projeto) -> list[int]:
-    """A cena com imagem repetida perde a cópia (que entra em rejeitadas) e volta a esperar material, sem buscar."""
-    repetidas = cenas_repetidas(projeto)
+    """A cena com imagem repetida perde a cópia (que entra em rejeitadas) e volta a esperar material, sem buscar.
+    A cena com material de edição (chroma) também: a varredura do fim pega o que entrou antes desta regra."""
+    repetidas = sorted(set(cenas_repetidas(projeto)) | set(cenas_de_chroma(projeto)))
     if not repetidas:
         return []
     dados = projeto.ler_json("cenas.json")
@@ -2106,6 +2195,14 @@ def _baixar_midia(projeto, cena, candidato, http):
         _baixar(http, candidato["arquivo"], arquivo)
         _garantir_jpeg(arquivo)
         capa = arquivo
+    # material de edição (fundo verde de chroma, botão animado) jamais entra: pelo nome e pela imagem baixada
+    registro_previo = {"arquivo": str(arquivo.relative_to(projeto.pasta)),
+                       "capa": str(capa.relative_to(projeto.pasta)) if capa else None}
+    if material_de_edicao(projeto, registro_previo, candidato):
+        for f in {arquivo, capa} - {None}:
+            f.unlink(missing_ok=True)
+        cena.setdefault("rejeitadas", []).append(_chave(candidato))
+        raise FundoDeChroma("é material de edição (fundo de chroma ou botão animado), não uma imagem do assunto")
     # jamais repetir imagem: a mesma foto pode vir de dois bancos (Wikimedia e Pixabay) com números diferentes,
     # ou em duas versões quase iguais. Olha a imagem em si e recusa a que já está em outra cena do vídeo
     comparar = capa if capa and capa.exists() else (arquivo if candidato["tipo"] != "video" else None)
@@ -2176,6 +2273,8 @@ def escrever_creditos(projeto):
     linhas = []
     for c in projeto.ler_json("cenas.json")["cenas"]:
         m = c.get("midia")
+        if m and m.get("fonte") == "animation_ai":
+            continue  # cena animada feita pela fábrica: não tem crédito
         if m and m.get("fonte") == "motion_ia":
             m = c.get("motion_foto")  # a foto de banco que o clipe de motion usa (o bicho na balança)
         if not m or not m.get("fonte"):

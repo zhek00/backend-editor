@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
-from . import custos_reais, pacote, pago, qualidade
+from . import conferir_voz, custos_reais, pacote, pago, publicacao, qualidade, shorts, thumbnail
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
 from .projeto import PROJETOS, Projeto
@@ -266,14 +266,22 @@ def etapa_motion_total(p, a, aprovado=False):
 def etapa_motion(p, a, aprovado=False):
     """Onde a fala traz um dado e o Jev diz que o motion ajuda o roteiro, a cena vira clipe de motion, mesmo com a
     foto aprovada (pedido do usuário em 2026-10-07). Gratuito e sem bloquear: falhou, a cena fica com a foto."""
-    from . import motion_ia
-    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json") or not motion_ia.ligado(p):
+    from . import animation_ai, motion_ia
+    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json"):
         return
-    log("Motion onde ajuda o roteiro")
-    try:
-        motion_ia.nas_uteis(p, log=log)
-    except (Exception, SystemExit) as erro:
-        log(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro}")
+    if motion_ia.ligado(p):
+        log("Motion onde ajuda o roteiro")
+        try:
+            motion_ia.nas_uteis(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro}")
+    # depois do motion, as cenas animadas de modelo pronto onde a fala tem lista, datas ou comparação (complemento)
+    if animation_ai.ligado(p):
+        log("Cenas animadas onde ajudam o roteiro (animation-ai)")
+        try:
+            animation_ai.nas_uteis(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  as cenas animadas falharam, elas seguem com a foto: {erro}")
 
 
 def etapa_animacoes(p, a, aprovado=False):
@@ -329,6 +337,129 @@ def etapa_revisao_video(p, a):
         log(f"  a revisão não rodou ({str(erro)[:120]}); o vídeo está pronto do mesmo jeito")
 
 
+def etapa_publicacao(p, a):
+    """Depois do render, o kit de publicação: título, descrição com capítulos, tags e legenda. Grátis e sem bloquear."""
+    if not p.existe("final.mp4"):
+        return
+    log("Kit de publicação")
+    try:
+        publicacao.gerar(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  o kit de publicação não saiu ({str(erro)[:120]}); o vídeo está pronto do mesmo jeito")
+
+
+def etapa_capas_e_shorts(p, a):
+    """Depois do kit: as 3 thumbnails e os shorts cortados do vídeo pronto. Grátis e sem bloquear."""
+    if not p.existe("final.mp4"):
+        return
+    log("Thumbnails")
+    try:
+        thumbnail.gerar(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  as thumbnails não saíram ({str(erro)[:120]})")
+    if shorts.config(p)["ativo"]:
+        log("Shorts")
+        try:
+            shorts.gerar(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  os shorts não saíram ({str(erro)[:120]})")
+
+
+def cmd_thumbs(a):
+    p = Projeto(a.nome)
+    if a.escolher:
+        dados = thumbnail.escolher(p, a.escolher)
+        log(f"  a thumbnail agora é a opção {dados['escolhida']} ({p.pasta / 'thumbnail.jpg'})")
+        return
+    log("Thumbnails (grátis)")
+    thumbnail.gerar(p, log=log)
+
+
+def cmd_shorts(a):
+    p = Projeto(a.nome)
+    log("Shorts (grátis)")
+    feitos = shorts.gerar(p, log=log, forcar=a.forcar)
+    log(f"  {len(feitos)} short(s) em {p.pasta / 'shorts'}")
+
+
+def cmd_publicar(a):
+    from . import youtube_publicar as yt
+    p = Projeto(a.nome)
+    plano = yt.publicar_projeto(p, quando=a.quando, privacidade=a.privacidade, com_shorts=a.com_shorts, simular=True)
+    v = plano["video"]
+    def local(iso):
+        from datetime import datetime, timedelta, timezone
+        t = datetime.fromisoformat(iso).astimezone(timezone(timedelta(hours=float(yt._config()["fuso_horas"]))))
+        return t.strftime("%d/%m/%Y às %H:%M")
+    quando = f"agendado para {local(v['publicar_em'])}, o YouTube publica sozinho" if v["publicar_em"] else v["privacidade"]
+    log(f"Vai subir para o YouTube: {v['titulo']} ({quando})")
+    log(f"  thumbnail: {v['thumbnail'] or 'não'}; legenda: {v['legenda'] or 'não'}; "
+        f"conteúdo sintético: {'sim' if v['sintetico'] else 'não'}")
+    for sh in plano["shorts"]:
+        log(f"  short {sh['id']}: {sh['titulo']} ({local(sh['publicar_em']) if sh['publicar_em'] else sh['privacidade']})")
+    if a.simular:
+        return
+    if not yt.conectada():
+        raise SystemExit("Conecte a conta do YouTube no editor (Publicar no YouTube) antes de publicar.")
+    if not confirmar(f"Publicar no canal {(yt.conta() or {}).get('canal_nome', '?')}?", a.sim):
+        raise SystemExit("Cancelado.")
+    dados = yt.publicar_projeto(p, quando=a.quando, privacidade=a.privacidade, com_shorts=a.com_shorts, log=log)
+    log(f"  {dados['url']} ({dados['status']})")
+    for aviso in dados["avisos"]:
+        log(f"  ATENÇÃO: {aviso}")
+    if dados.get("comentario_fixado"):
+        log(f"  fixe este comentário no YouTube Studio: {dados['comentario_fixado']}")
+
+
+def cmd_publicacao(a):
+    p = Projeto(a.nome)
+    if not p.existe("alinhamento.json"):
+        raise SystemExit(f"Falta a narração. Rode uv run fabrica tudo {p.nome}")
+    log("Kit de publicação")
+    dados = publicacao.gerar(p, log=log, forcar=a.forcar)
+    log(f"  título: {dados['titulo']}")
+    for c in dados["capitulos"]:
+        log(f"  {c['tempo']} {c['nome']}")
+
+
+def cmd_conferir_voz(a):
+    p = Projeto(a.nome)
+    if not p.existe("alinhamento.json"):
+        raise SystemExit(f"Falta a narração. Rode uv run fabrica narrar {p.nome}")
+    log("Conferência da narração (Whisper do Groq, grátis)")
+    r = conferir_voz.conferir_projeto(p, log=log)
+    if r["com_problema"]:
+        log(f"  blocos com problema: {', '.join(map(str, r['com_problema']))}. Para gravar de novo só esses, apague o "
+            f"narracao/bloco_NNN.json deles e rode uv run fabrica narrar {p.nome} --forcar (só esses blocos são "
+            f"gravados de novo; na GenAIPro, uns US$ 0,004 cada)")
+    else:
+        log(f"  {r['conferidos']} bloco(s) conferido(s), nenhum problema")
+
+
+def cmd_animation_ai(a):
+    from . import animation_ai
+    p = Projeto(a.nome)
+    if a.catalogo:
+        destino = p.pasta / f"catalogo_animation_ai_{a.tema or animation_ai.config(p).get('tema')}.jpg"
+        log("Catálogo das cenas animadas (um quadro de cada tipo, grátis)")
+        log(f"  pronto em {animation_ai.catalogo(p, destino, a.tema, log)}")
+        return
+    if not p.existe("cenas.json") or not p.existe("alinhamento.json"):
+        raise SystemExit(f"Faltam a narração e as cenas. Rode uv run fabrica cenas {p.nome}")
+    if a.desfazer:
+        log(f"  voltaram ao que tinham: {animation_ai.desfazer(p, set(a.cenas or []))}")
+        return
+    if a.tema:
+        p.perfil["animation_ai"] = {**(p.perfil.get("animation_ai") or {}), "tema": a.tema}
+    log("Cenas animadas (animation-ai, grátis)")
+    if a.cenas:
+        cenas_ = [c for c in p.ler_json("cenas.json")["cenas"] if c["n"] in set(a.cenas)]
+        feitas = animation_ai.fazer(p, cenas_, log=log, forcar=a.forcar)
+    else:
+        feitas = animation_ai.nas_uteis(p, log=log)
+    log(f"  {len(feitas)} cena(s) com animação. Entram no próximo render.")
+
+
 def cmd_revisar_video(a):
     p = Projeto(a.nome)
     log("Revisão do vídeo pronto")
@@ -380,6 +511,8 @@ def etapa_render(p, a, aprovado=False):
         return
     final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False))
     log(f"  vídeo pronto em {final} ({mmss(time.time() - inicio)} de render)")
+    etapa_publicacao(p, a)  # os capítulos dependem da abertura deste render
+    etapa_capas_e_shorts(p, a)
     if vertical:
         inicio = time.time()
         log("Render da versão em pé (9:16), para Reels e Shorts")
@@ -998,6 +1131,46 @@ def main():
     s.add_argument("--forcar", action="store_true", help="pede uma partitura nova ao modelo e toca de novo")
     s.add_argument("--efeitos", action="store_true", help="mostra também os efeitos que entram no vídeo")
     s.set_defaults(funcao=cmd_trilha)
+
+    s = sub.add_parser("animation-ai", help="onde a fala tem lista, datas, número ou comparação, troca a foto por "
+                                            "cena animada de modelo pronto, item a item na fala (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--cenas", type=int, nargs="*", help="anima essas cenas sem perguntar se vale (sem dizer: o modelo "
+                                                         "escolhe onde ajuda, no ritmo de um complemento)")
+    s.add_argument("--tema", choices=["noite", "editorial", "misterio"], help="cores e fontes das cenas")
+    s.add_argument("--catalogo", action="store_true", help="só desenha um quadro de cada tipo, para ver o visual")
+    s.add_argument("--desfazer", action="store_true", help="volta as cenas indicadas para a foto que tinham")
+    s.add_argument("--forcar", action="store_true", help="pede um plano novo ao modelo para cada trecho")
+    s.set_defaults(funcao=cmd_animation_ai)
+
+    s = sub.add_parser("thumbs", help="3 opções de thumbnail e a prancha do celular (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--escolher", type=int, help="usa a opção N como a thumbnail do vídeo")
+    s.set_defaults(funcao=cmd_thumbs)
+
+    s = sub.add_parser("shorts", help="corta até 3 shorts do vídeo pronto, com título e legenda palavra por palavra (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--forcar", action="store_true", help="pede os trechos de novo ao modelo")
+    s.set_defaults(funcao=cmd_shorts)
+
+    s = sub.add_parser("publicar", help="sobe o vídeo para o YouTube com o kit, a thumbnail, a legenda e os shorts")
+    s.add_argument("nome")
+    s.add_argument("--quando", help="agenda: \"2026-10-12 18:00\" (hora do canal); o YouTube publica sozinho")
+    s.add_argument("--privacidade", default="public", choices=["public", "unlisted", "private"])
+    s.add_argument("--com-shorts", action="store_true", help="sobe os shorts também (agendados um por dia depois)")
+    s.add_argument("--simular", action="store_true", help="só mostra o que subiria, sem enviar nada")
+    s.add_argument("--sim", action="store_true", help="publica sem perguntar")
+    s.set_defaults(funcao=cmd_publicar)
+
+    s = sub.add_parser("publicacao", help="kit de publicação: título, descrição com capítulos, tags e legenda (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--forcar", action="store_true", help="pede os textos de novo ao modelo")
+    s.set_defaults(funcao=cmd_publicacao)
+
+    s = sub.add_parser("conferir-voz", help="ouve a narração pronta e aponta palavra comida, trecho repetido e "
+                                            "pronúncia errada (grátis, não grava nada)")
+    s.add_argument("nome")
+    s.set_defaults(funcao=cmd_conferir_voz)
 
     s = sub.add_parser("revisar-video", help="o modelo principal olha o vídeo pronto e aponta problemas (grátis)")
     s.add_argument("nome")

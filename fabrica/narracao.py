@@ -19,7 +19,7 @@ import wave
 
 import httpx
 
-from . import custos_reais, fish, genaipro
+from . import conferir_voz, custos_reais, fish, genaipro
 from . import texto as tx
 from .util import duracao_audio, rodar
 
@@ -71,22 +71,84 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
     if por_voz:
         log(f"  a voz mudou: {por_voz} bloco(s) com o mesmo texto vão ser gravados de novo com a voz nova")
 
-    def gravar(i):
+    def gravar_uma_vez(i, falado):
         bloco = blocos[i]
-        bruto, arquivo_alinhamento = arquivos(i)
+        bruto, _ = arquivos(i)
         if projeto.offline or voz.get("provedor") == "computador":
             # "computador": a voz do sistema também fora do modo offline (teste do MCP sem gastar)
-            alinhamento = _voz_do_mac(bloco.texto, voz, bruto)
-        elif voz.get("provedor") == "edge-tts":
-            alinhamento = _edge_tts(bloco.texto, voz, bruto)
-        elif voz.get("provedor") == "fish":
-            alinhamento = _fish(bloco.texto, voz, bruto, log)
+            return _voz_do_mac(bloco.texto, voz, bruto)
+        if voz.get("provedor") == "edge-tts":
+            return _edge_tts(bloco.texto, voz, bruto, falado)
+        if voz.get("provedor") == "fish":
+            alinhamento = _fish(bloco.texto, voz, bruto, log, falado)
             custo = alinhamento.pop("_custo_transcricao", 0)
             if custo:
                 custos_reais.registrar(projeto, "narracao", f"bloco {i + 1}: tempo das palavras da voz da Fish Audio",
                                        custo, detalhes={"provedor": "fish", "transcricao": True})
-        else:
-            alinhamento = _genaipro(bloco.texto, voz, bruto, lambda *_: None)
+            return alinhamento
+        return _genaipro(bloco.texto, voz, bruto, lambda *_: None, falado)
+
+    # cada bloco gravado é ouvido de novo pelo Whisper do Groq (grátis) e conferido com o roteiro: palavra comida,
+    # trecho repetido e nome que o glossário de pronúncia diz como reconhecer (conferir_voz)
+    conferir = conferir_voz.ativa(projeto)
+    ajustes_conferencia = conferir_voz.config(projeto)
+    glossario = conferir_voz.glossario(projeto)
+    voz_paga = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish", "computador")
+    regravar = int(ajustes_conferencia.get("regravar_paga" if voz_paga else "regravar") or 0) if conferir else 0
+
+    def gravar(i):
+        bloco = blocos[i]
+        bruto, arquivo_alinhamento = arquivos(i)
+        termos = conferir_voz.termos_do_texto(bloco.texto, glossario)
+        escolha = {t: 0 for t in termos}
+        mp3 = bruto.with_name(bruto.name.replace("_bruto.wav", ".mp3"))
+        melhor = None  # (gravidade, tentativa, alinhamento, relatório)
+        alinhamento = relatorio = None
+        tentativa = 0
+        for tentativa in range(1 + regravar):
+            alinhamento = gravar_uma_vez(i, conferir_voz.com_grafias(bloco.texto, escolha, glossario))
+            relatorio = None
+            if not conferir:
+                break
+            ouvido = conferir_voz.transcrever(bruto, voz.get("idioma") or "pt",
+                                              ajustes_conferencia.get("modelo", conferir_voz.MODELO), log)
+            if ouvido is None:
+                break
+            relatorio = conferir_voz.problemas(bloco.texto, ouvido, termos, glossario)
+            relatorio["grafias"] = {t: glossario[t][1][k] for t, k in escolha.items()}
+            nota = conferir_voz.gravidade(relatorio)
+            if melhor is None or nota < melhor[0]:
+                # a melhor gravação fica guardada ao lado: a seguinte pode sair pior
+                for arq in (bruto, mp3):
+                    if arq.exists():
+                        shutil.copyfile(arq, arq.with_name(arq.name + ".melhor"))
+                melhor = (nota, tentativa, alinhamento, relatorio)
+            if not relatorio["problemas"] or tentativa == regravar:
+                break
+            # o termo que a voz não disse direito vai com a grafia seguinte do glossário
+            mudou = False
+            for p in relatorio["problemas"]:
+                termo = p.get("termo")
+                if p["tipo"] == "pronuncia" and escolha[termo] + 1 < len(glossario[termo][1]):
+                    escolha[termo] += 1
+                    mudou = True
+            if not mudou and all(p["tipo"] == "pronuncia" for p in relatorio["problemas"]):
+                break  # nenhuma grafia nova para tentar: gravar igual não muda a pronúncia
+            log(f"  bloco {i + 1}: " + "; ".join(conferir_voz.descrever(p) for p in relatorio["problemas"])
+                + ". Gravando de novo")
+        if melhor is not None:
+            if melhor[1] != tentativa:
+                for arq in (bruto, mp3):
+                    guardada = arq.with_name(arq.name + ".melhor")
+                    if guardada.exists():
+                        shutil.copyfile(guardada, arq)
+            alinhamento, relatorio = melhor[2], melhor[3]
+            for arq in (bruto, mp3):
+                arq.with_name(arq.name + ".melhor").unlink(missing_ok=True)
+        if relatorio is not None:
+            alinhamento["conferencia"] = {**relatorio, "conferido": True, "gravacoes": tentativa + 1}
+            if relatorio["problemas"]:
+                log(f"  ATENÇÃO bloco {i + 1}: " + "; ".join(conferir_voz.descrever(p) for p in relatorio["problemas"]))
         alinhamento["texto"] = bloco.texto
         alinhamento["voz"] = assinatura  # a voz que gravou este bloco: trocar a voz grava de novo
         arquivo_alinhamento.write_text(json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8")
@@ -144,6 +206,11 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
         wavs.append(wav)
         deslocamento += duracao + PAUSA_ENTRE_BLOCOS
 
+    if conferir:
+        resumo = conferir_voz.resumo(projeto)
+        if resumo["com_problema"]:
+            log(f"  conferência da voz: blocos com problema que ficaram assim mesmo: "
+                f"{', '.join(map(str, resumo['com_problema']))} (narracao/conferencia.json)")
     narracao = _juntar(projeto, wavs)
     total = duracao_audio(narracao)
     # cada [INSERTO] abre um silêncio do tamanho do clipe fixo, e tudo depois dele anda para frente
@@ -523,22 +590,25 @@ def _registrar_gasto_da_narracao(projeto, blocos, narrados, voz, saldo_antes, lo
     log(f"  narração custou {creditos:.0f} créditos (US$ {creditos * por_credito:.4f}), {como}")
 
 
-def _genaipro(texto, voz, wav, log=print):
-    """Grava o texto na GenAIPro e devolve o tempo de cada letra, montado a partir do tempo de cada palavra."""
+def _genaipro(texto, voz, wav, log=print, falado=None):
+    """Grava o texto na GenAIPro e devolve o tempo de cada letra, montado a partir do tempo de cada palavra.
+
+    falado: o texto que vai para a voz, com a grafia do glossário de pronúncia (conferir_voz); o tempo das palavras
+    é casado com o texto do roteiro, e a palavra trocada só fica interpolada entre as vizinhas."""
     mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") else wav.with_suffix(".mp3")
-    palavras = genaipro.narrar(texto, voz, mp3, log)
+    palavras = genaipro.narrar(falado or texto, voz, mp3, log)
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
     palavras = _encostar_nas_pausas(palavras, _silencios(wav))
     return _alinhar_pelas_palavras(texto, palavras, duracao_audio(wav))
 
 
-def _fish(texto, voz, wav, log=print):
+def _fish(texto, voz, wav, log=print, falado=None):
     """Grava na Fish Audio (OpenRouter, grátis) e mede o tempo de cada palavra pela transcrição.
 
     Sem a transcrição (falta saldo no OpenRouter, ela caiu), o tempo é estimado pelas pausas do áudio: a legenda e
     os cortes ficam um pouco menos precisos, mas o vídeo nunca para por causa disso."""
     mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") else wav.with_suffix(".mp3")
-    fish.narrar(texto, voz, mp3, log)
+    fish.narrar(falado or texto, voz, mp3, log)
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
     duracao = duracao_audio(wav)
     silencios = _pausas_da_voz(wav)
@@ -645,7 +715,7 @@ def _encostar_nas_pausas(palavras, silencios):
     return ajustadas
 
 
-def _edge_tts(texto, voz, wav):
+def _edge_tts(texto, voz, wav, falado=None):
     import asyncio
     import edge_tts
 
@@ -674,7 +744,7 @@ def _edge_tts(texto, voz, wav):
     # dos pontos e parágrafos iam acumulando atraso na legenda e nos cortes das cenas
     async def _falar():
         palavras.clear()
-        c = edge_tts.Communicate(texto, voz_nome, rate=velocidade, pitch=tom, boundary="WordBoundary")
+        c = edge_tts.Communicate(falado or texto, voz_nome, rate=velocidade, pitch=tom, boundary="WordBoundary")
         with open(mp3, "wb") as saida:
             async for pedaco in c.stream():
                 if pedaco["type"] == "audio":

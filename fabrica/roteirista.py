@@ -161,6 +161,9 @@ A fábrica ainda não desenha animações. Por isso TODA cena, de qualquer tipo,
 
 REGRAS DAS BUSCAS (query):
 - A busca procura EXATAMENTE o sujeito e a ação do trecho, escrita do jeito que alguém procuraria essa foto num banco de imagens: o nome mais comum da coisa + o que a narração diz dela (ex.: "cobra snake hood", "hospital intensive care", "hand pressing emergency button", "server room racks").
+- Frase de chamada do canal (deixa o like, se inscreve, ativa o sininho, comenta, nos vemos no próximo vídeo): a
+  cena mostra o ASSUNTO do vídeo (a âncora visual do bloco), nunca tela, logo, botão ou ícone do YouTube, celular com
+  rede social ou mão apertando botão. Jamais peça material de edição (fundo verde, chroma key, botão animado).
 - Se o que a frase cita é específico demais para existir em banco de imagens (o gráfico de um estudo, um documento, uma pessoa anônima), busque uma representação DIRETA do mesmo tipo de coisa (um gráfico, um documento, uma pessoa de costas), nunca uma metáfora.
 - Sempre em inglês, com substantivos concretos, de 2 a 5 palavras. Nunca mais de 6.
 - Só o assunto: nunca palavras de clima, luz ou enquadramento (dark, moody, cinematic, silhouette, glowing, night, close-up, macro). O clima vai no prompt_ia, não na busca.

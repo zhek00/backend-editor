@@ -14,6 +14,8 @@ def _origem(cena, projeto=None) -> str:
         return "da pessoa"
     if (cena.get("midia") or {}).get("fonte") == "motion_ia":
         return "Motion IA"
+    if (cena.get("midia") or {}).get("fonte") == "animation_ai":
+        return "Animation IA"
     if not cena.get("midia") and (cena.get("tipo") == "ia" or (projeto is not None and projeto.imagem(cena["n"]).exists())):
         # a cena que perdeu a foto (repetida, reprovada) e ganhou imagem de IA continua com o tipo de foto: no
         # nunca-deve-ter-dentro-de-casa-parte-2 eram 63 "sem imagem" com 0 vazias
@@ -33,7 +35,7 @@ def _avaliacao(cena):
     if conf.get("nota") is not None:
         return conf
     cap = cena.get("captura") or {}
-    if cap.get("conferida") and cap.get("nota") is not None and not cap.get("motion_ia"):
+    if cap.get("conferida") and cap.get("nota") is not None and not cap.get("motion_ia") and not cap.get("animation_ai"):
         return {"nota": cap["nota"], "sujeito": cap.get("sujeito"), "epoca": cap.get("epoca")}
     return None
 

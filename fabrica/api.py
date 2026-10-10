@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, qualidade, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -477,6 +477,15 @@ def _esteira(nome: str, task_id: str) -> None:
             motion_ia.nas_uteis(p, log=log_w)
         except (Exception, SystemExit) as erro_motion:
             log_w(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro_motion}")
+    # PASSO 6c: onde a fala tem lista, datas, número ou comparação, a cena animada de modelo pronto entra no lugar da
+    # foto, no ritmo de um complemento (animation_ai.py). Gratuito e sem bloquear: falhou, a cena fica com a foto
+    from . import animation_ai
+    if animation_ai.ligado(p):
+        _atualizar(task_id, etapa="motion", progresso_pct=96, mensagem="Procurando onde uma cena animada ajuda o roteiro...")
+        try:
+            animation_ai.nas_uteis(p, log=log_w)
+        except (Exception, SystemExit) as erro_anim:
+            log_w(f"  as cenas animadas falharam, elas seguem com a foto: {erro_anim}")
 
     # PASSO 7: diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames, gratuito). É uma
     # melhoria: a cena que não der para animar continua com a foto, e uma falha aqui nunca para o vídeo
@@ -632,11 +641,21 @@ class SalvarCenasPayload(BaseModel):
 
 
 class PublicarYoutubePayload(BaseModel):
-    titulo: str
-    descricao: str = ""
-    tags: List[str] = []
+    # vazios: valem os do kit de publicação (publicacao.json)
+    titulo: str = ""
+    descricao: Optional[str] = None
+    tags: Optional[List[str]] = None
     privacidade: str = "public"  # "public", "unlisted" ou "private"
-    agendado_para: Optional[str] = None  # ISO 8601; quando vem preenchido, sobe como "private" e agenda a troca
+    # ISO 8601 ("2026-10-12T18:00", na hora do canal, ou com fuso): sobe privado com publishAt e o YouTube publica
+    agendado_para: Optional[str] = None
+    com_shorts: bool = False      # os shorts do projeto sobem também, um por dia depois do vídeo (se agendado)
+    com_thumbnail: bool = True    # a thumbnail escolhida (thumbnail.jpg)
+    com_legenda: bool = True      # a legenda legendas_final.srt
+    simular: bool = False         # só devolve o que subiria, sem enviar nada
+
+
+class EscolherThumbPayload(BaseModel):
+    opcao: int
 
 
 # -----------------------------------------------------------------------------
@@ -788,6 +807,8 @@ def enriquecer_cena(projeto: Projeto, cena: Dict[str, Any], motion: Optional[lis
         origem_badge = tipo_efetivo
     if midia_info and midia_info.get("fonte") == "motion_ia":
         origem_badge = "Motion IA"  # clipe de motion feito pela fábrica no lugar da foto reprovada (motion_ia.py)
+    elif midia_info and midia_info.get("fonte") == "animation_ai":
+        origem_badge = "Animation IA"  # cena animada de modelo pronto (animation_ai.py)
 
     # Efeito sonoro (SFX)
     efeito_url = None
@@ -1708,6 +1729,87 @@ def iniciar_revisao_video(nome: str) -> bool:
     return True
 
 
+_PUBLICANDO = set()
+
+
+def iniciar_publicacao(nome: str, forcar: bool = False) -> bool:
+    """Monta o kit de publicação (publicacao.py) numa linha à parte. Nunca atrapalha o render."""
+    with TAREFAS_LOCK:
+        if nome in _PUBLICANDO:
+            return True
+        _PUBLICANDO.add(nome)
+
+    def trabalhar():
+        # o kit, as 3 thumbnails e os shorts, nessa ordem (as capas usam os textos do kit). Cada um que falhar não
+        # impede os outros
+        try:
+            for etapa, funcao in (("kit de publicação", lambda pr: publicacao.gerar(pr, log=print, forcar=forcar)),
+                                  ("thumbnails", lambda pr: thumbnail.gerar(pr, log=print)),
+                                  ("shorts", lambda pr: shorts.gerar(pr, log=print) if shorts.config(pr)["ativo"] else None)):
+                try:
+                    funcao(Projeto(nome))
+                except (Exception, SystemExit) as erro:
+                    print(f"[{etapa}] {nome}: {str(erro)[:160]}")
+        finally:
+            with TAREFAS_LOCK:
+                _PUBLICANDO.discard(nome)
+
+    threading.Thread(target=trabalhar, daemon=True, name=f"publicacao-{nome}").start()
+    return True
+
+
+@app.get("/api/projetos/{nome}/thumbs")
+def ver_thumbs(nome: str):
+    """As 3 opções de thumbnail, a escolhida e a prancha do celular (arquivos em /arquivos/NOME/...)."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    return {"rodando": nome in _PUBLICANDO, "thumbs": p.ler_json("thumbs.json") if p.existe("thumbs.json") else None}
+
+
+@app.post("/api/projetos/{nome}/thumbs/escolher")
+def escolher_thumb(nome: str, payload: EscolherThumbPayload):
+    """A pessoa escolhe a capa: thumbnail.jpg passa a ser a opção pedida."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    try:
+        return thumbnail.escolher(Projeto(nome), payload.opcao)
+    except SystemExit as erro:
+        raise HTTPException(status_code=400, detail=str(erro))
+
+
+@app.get("/api/projetos/{nome}/shorts")
+def ver_shorts(nome: str):
+    """Os shorts cortados do vídeo pronto (shorts/shorts.json)."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    dados = p.ler_json("shorts/shorts.json") if p.existe("shorts/shorts.json") else {"shorts": []}
+    return {"rodando": nome in _PUBLICANDO, **dados}
+
+
+@app.get("/api/projetos/{nome}/publicacao")
+def ver_publicacao(nome: str):
+    """Kit de publicação do vídeo: título, alternativas, descrição com capítulos, tags, hashtags, comentário fixado,
+    se é conteúdo sintético e a legenda para subir junto. Serve para preencher a janela de publicar no YouTube."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    p = Projeto(nome)
+    dados = p.ler_json("publicacao.json") if p.existe("publicacao.json") else None
+    return {"rodando": nome in _PUBLICANDO, "pronto": dados is not None, "publicacao": dados}
+
+
+@app.post("/api/projetos/{nome}/publicacao")
+def gerar_publicacao(nome: str, forcar: bool = False):
+    """Monta (ou refaz, com forcar) o kit de publicação em segundo plano. Grátis."""
+    if not (PROJETOS / nome).exists():
+        raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
+    if not Projeto(nome).existe("alinhamento.json"):
+        raise HTTPException(status_code=400, detail="O projeto ainda não tem narração.")
+    iniciar_publicacao(nome, forcar)
+    return JSONResponse(status_code=202, content={"sucesso": True})
+
+
 @app.get("/api/projetos/{nome}/revisao-video")
 def ver_revisao_video(nome: str):
     """O que a revisão do vídeo pronto apontou, se ela é do final.mp4 de agora, e se ela está rodando."""
@@ -2158,6 +2260,7 @@ def disparar_render(nome: str, payload: RenderPayload, bg_tasks: BackgroundTasks
             try:
                 if not payload.vertical:  # a revisão olha o final.mp4; a versão em pé tem as mesmas cenas
                     iniciar_revisao_video(nome)  # o modelo olha o vídeo pronto em segundo plano; nunca falha o render
+                    iniciar_publicacao(nome)  # título, descrição com capítulos e tags, grátis e em segundo plano
             except (Exception, SystemExit) as erro_rev:
                 print(f"[revisão do vídeo] {nome}: {str(erro_rev)[:160]}")
         except (Exception, SystemExit) as err:
@@ -2728,10 +2831,18 @@ def youtube_publicar(nome: str, payload: PublicarYoutubePayload, bg_tasks: Backg
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
     if not p.existe("final.mp4"):
         raise HTTPException(status_code=400, detail="Esse projeto ainda não tem um vídeo final renderizado.")
-    if not ytpub.conectada():
-        raise HTTPException(status_code=400, detail="Conecte uma conta do YouTube antes de publicar.")
     if payload.privacidade not in ("public", "unlisted", "private"):
         raise HTTPException(status_code=400, detail="Privacidade precisa ser public, unlisted ou private.")
+    argumentos = dict(quando=payload.agendado_para, privacidade=payload.privacidade, com_shorts=payload.com_shorts,
+                      com_thumbnail=payload.com_thumbnail, com_legenda=payload.com_legenda,
+                      titulo=payload.titulo or None, descricao=payload.descricao, tags=payload.tags)
+    if payload.simular:
+        try:
+            return ytpub.publicar_projeto(p, simular=True, **argumentos)
+        except SystemExit as erro:
+            raise HTTPException(status_code=400, detail=str(erro))
+    if not ytpub.conectada():
+        raise HTTPException(status_code=400, detail="Conecte uma conta do YouTube antes de publicar.")
 
     task_id = f"youtube_{nome}_{datetime.now():%Y%m%d_%H%M%S}"
     with TAREFAS_LOCK:
@@ -2749,24 +2860,9 @@ def youtube_publicar(nome: str, payload: PublicarYoutubePayload, bg_tasks: Backg
                     if task_id in TAREFAS:
                         TAREFAS[task_id]["progresso_pct"] = pct
 
-            privacidade_upload = "private" if payload.agendado_para else payload.privacidade
-            resultado = ytpub.publicar(
-                p.pasta / "final.mp4", payload.titulo, payload.descricao, payload.tags,
-                privacidade_upload, on_progresso=progresso,
-            )
-            video_id = resultado["id"]
-            dados_youtube = {
-                "video_id": video_id,
-                "url": f"https://youtu.be/{video_id}",
-                "titulo": payload.titulo,
-                "descricao": payload.descricao,
-                "tags": payload.tags,
-                "privacidade_alvo": payload.privacidade,
-                "agendado_para": payload.agendado_para,
-                "status": "agendado" if payload.agendado_para else "publicado",
-                "enviado_em": datetime.now().isoformat(timespec="seconds"),
-            }
-            p.salvar_json("youtube.json", dados_youtube)
+            # o vídeo com o kit de publicação, a thumbnail, a legenda e, se pedido, os shorts; o agendamento é do
+            # próprio YouTube (publishAt), sem depender da fábrica ligada na hora
+            dados_youtube = ytpub.publicar_projeto(p, on_progresso=progresso, log=print, **argumentos)
             with TAREFAS_LOCK:
                 if task_id in TAREFAS:
                     TAREFAS[task_id]["status"] = "concluido"

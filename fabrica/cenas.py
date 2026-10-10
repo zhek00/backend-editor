@@ -777,6 +777,9 @@ def planejar(projeto, log=print) -> list[dict]:
     # agente para a frase que ela fala. No natureza-nos-ensina, "e algumas cabem na ponta do seu dedo" (o agente pediu
     # o mosquito) foi juntada com a frase do elefante, dividida de novo e mostrou um elefante; 27 pares assim
     corrigidas = _pedido_pela_fala(projeto, cenas, alinhamento)
+    chamadas = _chamada_mostra_o_assunto(projeto, cenas)
+    if chamadas:
+        log(f"  {chamadas} chamada(s) do canal (like, inscrição) vão mostrar o assunto do vídeo, não o YouTube")
     for c in cenas:
         c.pop("pedido_mudou", None)  # nada foi buscado ainda: não há foto antiga para julgar de novo
     if corrigidas:
@@ -1068,6 +1071,7 @@ def atualizar_tempos(projeto):
             c["ini"], c["fim"] = round(c["ini"], 3), round(c["fim"], 3)
     _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa, escondidas)
     _pedido_pela_fala(projeto, cenas, alinhamento)
+    _chamada_mostra_o_assunto(projeto, cenas)
     # cena com material real e tipo "ia" sem imagem numerada (a junção trouxe o tipo de uma e o material da outra)
     # volta ao tipo do material
     for c in cenas:
@@ -1077,6 +1081,66 @@ def atualizar_tempos(projeto):
     dados["cenas"] = cenas
     _distribuir_simbolos(cenas, alinhamento.get("marcadores") or [], projeto.perfil)
     projeto.salvar_json("cenas.json", dados)
+
+
+# chamada do canal (like, inscrição, sininho, comentários, próximo vídeo) e pedido de interface do YouTube
+_CHAMADA_DO_CANAL = re.compile(
+    r"\b(?:inscrev\w*|deix[ae]\s+(?:o\s+|seu\s+|um\s+)?like|curt[ae]\s+(?:o\s+|esse\s+|este\s+)?v[ií]deo|"
+    r"ativ[ae]\s+o\s+sininho|sininho|coment[áa]rios?|compartilh\w+|pr[óo]ximo\s+v[ií]deo|nos\s+vemos|"
+    r"link\s+na\s+descri[çc][ãa]o)", re.I)
+_INTERFACE_DO_YOUTUBE = re.compile(
+    r"youtube|subscrib|like\s*button|thumbs?[\s-]*up|bell|notification|inscri[çc]|bot[ãa]o|sininho|"
+    r"comment\s*section|play\s*button|social\s*media|smartphone\s*screen|channel", re.I)
+
+
+def _chamada_mostra_o_assunto(projeto, cenas) -> int:
+    """A frase de chamada do canal mostra o assunto do vídeo, nunca a interface do YouTube.
+
+    No leite (2026-10-09) "Se isso te ajudou, deixa o like" e "se inscreve, e nos vemos no próximo vídeo" pediram
+    "hand tapping YouTube like subscribe buttons": entraram o logo do YouTube num celular e um botão SUBSCRIBED em
+    fundo verde de chroma. Pedido do usuário: "ou mostre cenas sobre o assunto do vídeo, ou faça direito". Quando a
+    fala é chamada do canal e o pedido é de interface (YouTube, botão, sininho, notificação), a cena passa a pedir a
+    âncora visual do bloco no mapa, o assunto do vídeo. O pedido do agente fica em pedido_chamada; a escolha da pessoa
+    (busca, imagem ou prompt dela) fica como está. Devolve quantas cenas mudaram."""
+    if not projeto.existe("roteiro_mapa.json"):
+        return 0
+    mapa = projeto.ler_json("roteiro_mapa.json")
+    blocos = {b.get("id"): b for b in mapa.get("blocos") or []}
+    mudaram = 0
+    for c in cenas:
+        if (c.get("busca_manual") or c.get("imagem_da_pessoa") or c.get("prompt_manual") or c.get("personagem")
+                or c.get("pedido_chamada") or not _CHAMADA_DO_CANAL.search(c.get("texto") or "")):
+            continue
+        pedido = " ".join(str(c.get(k) or "") for k in ("busca", "busca_reserva", "busca_alternativa", "mostrar",
+                                                         "sujeito", "exato", "prompt"))
+        if not _INTERFACE_DO_YOUTUBE.search(pedido):
+            continue
+        bloco = blocos.get(c.get("bloco")) or next(iter(blocos.values()), {})
+        ancora = (bloco.get("ancora") or mapa.get("titulo") or "").strip()
+        if not ancora:
+            continue
+        c["pedido_chamada"] = {k: c.get(k) for k in ("busca", "busca_reserva", "busca_alternativa", "mostrar",
+                                                      "sujeito", "exato", "animal", "aceitavel", "prompt")}
+        c["busca" if c.get("tipo") in ("foto_real", "video_real") else "busca_reserva"] = ancora
+        # a segunda busca é o tema do vídeo (a âncora do primeiro bloco): a do bloco pode ser específica demais para os
+        # bancos ("4 litre milk bags in Ontario grocery store fridge" não achou nada para duas das três chamadas do leite)
+        geral = next((str(b.get("ancora") or "").strip() for b in blocos.values()
+                      if str(b.get("ancora") or "").strip() and str(b.get("ancora")).strip() != ancora), "")
+        c["busca_alternativa"] = geral or (bloco.get("contexto") or "").strip()
+        c["sujeito"] = ancora
+        c["mostrar"] = f"o assunto do vídeo: {bloco.get('nome') or ancora}"
+        c["aceitavel"] = "qualquer imagem real do assunto do vídeo, sem tela, logo ou botão do YouTube"
+        # exato vazio (e não ausente): qualquer imagem do assunto serve. Sem o campo, a busca trata a cena como de
+        # projeto antigo, deduz um nome próprio da âncora ("Ontario") e recusa todos os candidatos
+        c["exato"] = ""
+        c.pop("animal", None)
+        c.pop("sem_midia_real", None)  # a busca que não achou nada foi pela interface: o assunto busca de novo
+        if c.get("prompt"):
+            c["prompt"] = f"{ancora}, documentary photograph, natural light"
+        if c.get("midia") or projeto.imagem(c["n"]).exists():
+            c["pedido_mudou"] = True  # a imagem que ela tem foi escolhida para a interface: julgar de novo
+        mudaram += 1
+    return mudaram
 
 
 # o que o agente de roteiro decidiu para a frase: a cena recortada leva o pedido da frase que ela fala

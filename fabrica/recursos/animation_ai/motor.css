@@ -1,0 +1,43 @@
+/* animation-ai (fabrica/animation_ai.py): as cenas animadas desenhadas pela fábrica. As cores e fontes chegam como
+   variáveis do tema (animation_ai.TEMAS); nada aqui anima sozinho: quem move tudo é o quadro(t) do motor.js. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--fundo); }
+#root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--fundo);
+        font-family: var(--f-txt); color: var(--txt); }
+#palco { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 50% 42%; }
+.fundo { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+         background: radial-gradient(1100px 700px at 76% 14%, var(--brilho1), transparent 62%),
+                     radial-gradient(900px 620px at 8% 96%, var(--brilho2), transparent 62%); }
+.pontos { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: .55;
+          background-image: radial-gradient(var(--ponto) 1.6px, transparent 1.7px); background-size: 34px 34px; }
+.vinheta { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none;
+           background: radial-gradient(ellipse at 50% 45%, transparent 58%, var(--vinheta) 100%); }
+.canal { position: absolute; left: 60px; top: 46px; display: flex; gap: 12px; align-items: center; z-index: 5;
+         font: 700 22px var(--f-txt); letter-spacing: 4px; text-transform: uppercase; color: var(--mut); }
+.canal i { width: 12px; height: 12px; border-radius: 3px; background: var(--acc); display: inline-block; }
+/* a legenda queimada é branca: no tema claro, a faixa de baixo escurece só o bastante para ela ser lida */
+.faixa-legenda { position: absolute; left: 0; right: 0; bottom: 0; height: 240px; pointer-events: none;
+                 background: linear-gradient(to bottom, transparent, var(--faixa)); }
+
+.kick { font: 800 26px var(--f-txt); letter-spacing: 6px; text-transform: uppercase; color: var(--acc); }
+.tit { font-family: var(--f-tit); font-weight: var(--peso-tit); line-height: 1.06; letter-spacing: var(--esp-tit);
+       text-transform: var(--caixa); color: var(--txt); }
+.sub { font: 500 38px var(--f-txt); line-height: 1.3; color: var(--txt2); }
+.d { color: var(--acc); font-family: var(--f-d); font-style: var(--estilo-d); font-weight: var(--peso-d); }
+.d2 { color: var(--acc2); }
+.mut { color: var(--mut); }
+.card { position: absolute; background: var(--painel); border: 1px solid var(--linha); border-radius: 26px;
+        box-shadow: 0 30px 70px var(--sombra); }
+.selo { flex: none; width: 78px; height: 78px; border-radius: 20px; background: var(--acc); color: var(--tinta);
+        display: flex; align-items: center; justify-content: center; font: 800 44px var(--f-txt); }
+.trilho { position: absolute; height: 8px; border-radius: 4px; background: var(--linha); }
+.cheio { position: absolute; height: 8px; border-radius: 4px; background: var(--acc); }
+.icone { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.icone svg { width: 100%; height: 100%; overflow: visible; }
+.num { font-family: var(--f-num); font-weight: 800; line-height: 1; letter-spacing: -0.02em;
+       font-variant-numeric: tabular-nums; white-space: nowrap; }
+.linha-svg { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; pointer-events: none; }
+.fonte { font: 500 24px var(--f-txt); color: var(--mut); }
+.papel { background: var(--papel); color: #1E1B16; }
+.carimbo { border: 7px solid var(--verm); color: var(--verm); border-radius: 12px; padding: 8px 26px;
+           font: 900 46px var(--f-txt); letter-spacing: 5px; text-transform: uppercase; }

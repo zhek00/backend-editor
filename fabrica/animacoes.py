@@ -233,7 +233,7 @@ def _cenas_motion_ia(projeto) -> list:
     if not arquivo.exists():
         return []
     return [(c["ini"], c["fim"]) for c in json.loads(arquivo.read_text(encoding="utf-8"))["cenas"]
-            if (c.get("midia") or {}).get("fonte") == "motion_ia"]
+            if (c.get("midia") or {}).get("fonte") in ("motion_ia", "animation_ai")]  # a cena animada do animation-ai também
 
 
 def _fora_do_motion_ia(projeto, itens) -> list:
@@ -314,7 +314,7 @@ def elegivel(projeto, cena, pedida=False) -> bool:
     animada se ela pedir. A imagem da cena não importa: a animação vai por cima de qualquer uma."""
     if (cena.get("animacao") or {}).get("desligada") and not pedida:
         return False
-    if (cena.get("midia") or {}).get("fonte") == "motion_ia":
+    if (cena.get("midia") or {}).get("fonte") in ("motion_ia", "animation_ai"):
         return False  # a cena já é um clipe de motion (motion_ia.py): uma camada por cima embolaria os dois
     return cena.get("visual") in tipos(projeto) and bool((cena.get("texto") or "").strip())
 

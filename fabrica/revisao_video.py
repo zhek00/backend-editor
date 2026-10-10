@@ -96,7 +96,7 @@ def cenas_que_o_cliente_ainda_nao_viu(projeto, cenas) -> set:
         captura, conferencia = c.get("captura") or {}, c.get("conferencia") or {}
         # a imagem de IA (sem midia) só nasce depois da escolha: o cliente nunca a viu. No ouro-serra-1min a cena 15
         # ficou de fora, e a revisão olhou 0 cenas
-        if (not c.get("midia") or c["n"] in debaixo or (c.get("midia") or {}).get("fonte") == "motion_ia"
+        if (not c.get("midia") or c["n"] in debaixo or (c.get("midia") or {}).get("fonte") in ("motion_ia", "animation_ai")
                 or captura.get("suspeita")
                 or captura.get("preenchida") or (conferencia and (conferencia.get("nota") or 0) < 40)
                 or (c.get("midia") and not captura.get("conferida") and not conferencia)):

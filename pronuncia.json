@@ -1,0 +1,4 @@
+{
+  "_como_usar": "Termo que a voz fala errado. 'reconhecer' é uma expressão regular aplicada na transcrição em minúsculas e sem acento (aceite as formas que o Whisper escreve). 'grafias' são as escritas mandadas à voz, na ordem: se a primeira não for reconhecida, o bloco é gravado de novo com a seguinte. Na legenda e nas cenas o termo continua como no roteiro. Um perfil pode ter o próprio glossário em voz.pronuncia, no mesmo formato.",
+  "_exemplo": {"reconhecer": "hubble|rabou|rable", "grafias": ["Hubble", "Rábou"]}
+}
