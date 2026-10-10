@@ -32,3 +32,7 @@ diretrizes: >-
 
 animacoes:
   ativo: false                # as camadas de animação por cima de foto não se aplicam: o clipe já é a cena inteira
+
+# com o Motion IA fora da produção (motion_ia.pausado), o animation-ai faz o vídeo todo no lugar dele
+animation_ai:
+  tema: apple

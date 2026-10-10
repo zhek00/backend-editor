@@ -81,6 +81,8 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
             return _edge_tts(bloco.texto, voz, bruto, falado)
         if voz.get("provedor") == "fish":
             alinhamento = _fish(bloco.texto, voz, bruto, log, falado)
+            from . import consumo  # a voz da Fish é do OpenRouter (grátis): conta como chamada no registro central
+            consumo.registrar(projeto, "voz", f"narração do bloco {i + 1}", fish.modelo(voz))
             custo = alinhamento.pop("_custo_transcricao", 0)
             if custo:
                 custos_reais.registrar(projeto, "narracao", f"bloco {i + 1}: tempo das palavras da voz da Fish Audio",

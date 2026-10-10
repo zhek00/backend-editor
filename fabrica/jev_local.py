@@ -34,6 +34,9 @@ def _registrar(projeto, etapa, uso, modelo):
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
         historico.append(linha)
         arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+    from . import consumo  # o Jev é chamado pelo OpenRouter: entra no registro central
+    consumo.registrar(projeto, "texto", etapa, modelo, linha["tokens_lidos"], linha["tokens_escritos"],
+                      linha["custo_usd"])
 
 
 def resumo_uso(projeto):

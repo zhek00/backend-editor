@@ -237,6 +237,10 @@ animacoes:
 # cita um animal ou nome exato leva a própria foto num card; sem foto certa, segue para a imagem de IA. No .env, JEV_MOTION_FALLBACK_ENABLED
 # (true/false) e JEV_MIN_SCORE_THRESHOLD (de 0 a 10) valem por cima destes
 motion_ia:
+  # FORA DA PRODUÇÃO desde 2026-10-09 (pedido do usuário: "vamos tirar da produção o motion ai até ajustar ele"): nenhuma
+  # entrada automática (antes da imagem de IA, nota baixa no Corrigir, onde ajuda o roteiro, perfis motion-ai e
+  # motion-vox) faz clipe. No lugar dele entra o animation-ai. Para testar o ajuste: fabrica motion NOME --mesmo-pausado
+  pausado: true
   ativo: true
   estilo: ""                  # "" (editorial, cards sobre creme) ou "colagem" (jornal envelhecido, estilo Vox: motion_estilo.py).
                               # Vale para todo clipe do Motion IA, também nas cenas de um documentário comum; o perfil troca por canal
@@ -284,7 +288,7 @@ conferencia_voz:
 # tudo) ou com fabrica animation-ai NOME. Falhou, a cena fica com a foto.
 animation_ai:
   ativo: true
-  tema: noite            # noite (escuro), editorial (creme) ou misterio (preto e vermelho); cores: {acc: "#..."} por cima
+  tema: apple            # apple (o visual do Motion IA: creme, cards brancos, azul), noite, editorial ou misterio
   limiar: 70             # nota de utilidade mínima (0 a 100)
   maximo_do_video: 0.12  # no máximo 12% da duração em cenas animadas (contando os clipes do Motion IA)
   intervalo_minimo: 20   # segundos entre uma cena animada e outra (ou um clipe de motion)
@@ -307,6 +311,11 @@ youtube:
   categoria: "22"        # 22 Pessoas e blogs, 27 Educação, 28 Ciência e tecnologia, 24 Entretenimento
   shorts_intervalo_horas: 24   # cada short sai um dia depois do anterior, a partir do vídeo agendado
   idioma: pt-BR
+
+# Consumo no OpenRouter (fabrica/consumo.py): o endereço público da fábrica (o túnel), por onde o Google Planilhas
+# busca o registro (IMPORTDATA). fabrica consumo --google gera o modelo com esse endereço.
+consumo:
+  url_publica: https://editor.bbnews.cc
 
 # Kit de publicação (fabrica/publicacao.py): publicacao.json e PUBLICACAO.md depois do render, grátis.
 publicacao:

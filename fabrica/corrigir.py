@@ -1037,8 +1037,9 @@ def _conferir_sem_nota(projeto, alvo, nota_minima, log) -> dict:
 def _motion_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
     """Das cenas com nota baixa que ficariam com a foto, as abaixo do limiar do motion IA em que o Jev diz que o
     motion vale a pena."""
-    from . import motion_ia
-    if not numeros or not motion_ia.ligado(projeto):
+    from . import animation_ai, motion_ia
+    no_lugar = motion_ia.pausado(projeto) and animation_ai.ligado(projeto)
+    if not numeros or not (motion_ia.ligado(projeto) or no_lugar):
         return []
     limiar = motion_ia.nota_minima(projeto)
     baixas = []
@@ -1049,6 +1050,10 @@ def _motion_com_nota_baixa(projeto, numeros, melhor, agora, log) -> list:
     baixas = motion_ia.candidatas(projeto, baixas)
     if not baixas:
         return []
+    if no_lugar:
+        # Motion IA pausado: o animation-ai decide antes da imagem de IA (imagens._motion_antes_da_ia, com
+        # como_motion); a que ele não fizer volta para a foto que tinha (motion_so), sem pagar imagem
+        return [c["n"] for c in baixas]
     try:
         tipos = motion_ia.classificar(projeto, baixas, log)
     except (Exception, SystemExit) as erro:

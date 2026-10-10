@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -380,7 +380,13 @@ def _esteira(nome: str, task_id: str) -> None:
         marcar("cenas")
 
     # PASSO 2b: perfil todo em motion: toda cena vira clipe antes de qualquer busca de foto (a busca pula quem já tem)
-    from . import motion_ia
+    from . import animation_ai, motion_ia
+    if motion_ia.pausado(p) and motion_ia.tudo_pedido(p) and animation_ai.ligado(p):
+        _atualizar(task_id, etapa="motion", progresso_pct=40, mensagem="Criando as cenas animadas de todas as cenas...")
+        try:
+            animation_ai.video_todo(p, log=log_w)
+        except (Exception, SystemExit) as erro_anim:
+            log_w(f"  as cenas animadas falharam, as que faltam seguem com foto: {erro_anim}")
     if motion_ia.tudo_em_motion(p):
         _atualizar(task_id, etapa="motion", progresso_pct=40, mensagem="Criando os clipes de motion de todas as cenas...")
         try:
@@ -1756,6 +1762,26 @@ def iniciar_publicacao(nome: str, forcar: bool = False) -> bool:
 
     threading.Thread(target=trabalhar, daemon=True, name=f"publicacao-{nome}").start()
     return True
+
+
+@app.get("/consumo/openrouter.csv")
+def consumo_csv(chave: str = "", desde: Optional[str] = None):
+    """O registro do consumo no OpenRouter, para o IMPORTDATA do Google Planilhas. Fora do /api: a chave aqui é a só
+    de leitura do consumo (CONSUMO_PLANILHA_TOKEN), nunca o token do editor."""
+    from . import consumo
+    if not consumo.chave_confere(chave):
+        raise HTTPException(status_code=401, detail="Chave da planilha de consumo inválida.")
+    return Response(consumo.csv_do_registro(desde), media_type="text/csv; charset=utf-8",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/consumo/oficial.csv")
+def consumo_oficial_csv(chave: str = ""):
+    """O total oficial da conta no OpenRouter (o último consultado), para o Resumo da planilha do Google."""
+    from . import consumo
+    if not consumo.chave_confere(chave):
+        raise HTTPException(status_code=401, detail="Chave da planilha de consumo inválida.")
+    return Response(consumo.csv_oficial(), media_type="text/csv; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/projetos/{nome}/thumbs")

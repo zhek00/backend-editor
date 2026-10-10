@@ -49,6 +49,20 @@ RECURSOS = Path(__file__).parent / "recursos" / "animation_ai"
 _TRAVA_CENAS = threading.Lock()
 
 TEMAS = {
+    # o visual do Motion IA, de produto da Apple (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo
+    # APPLE que o motion ia utilizava"): creme #F7F6F2 com pontos de 24 px, cards brancos de raio 20 sem borda com a
+    # sombra suave e flutuando, título em Inter grafite, destaque em Playfair itálica azul, mola na entrada, sem
+    # tremor, e a câmera que só aproxima 3%. As chaves com _ são o jeito de mexer (motor.js, E)
+    "apple": {"fundo": "#F7F6F2", "painel": "#FFFFFF", "painel2": "#F1EFE9", "linha": "#E7E4DC", "txt": "#1A1A1A",
+              "txt2": "#4A4843", "mut": "#8A867E", "acc": "#2563EB", "acc2": "#EA580C", "verm": "#C2410C",
+              "ok": "#166534", "tinta": "#FFFFFF", "papel": "#FFFFFF", "brilho1": "transparent",
+              "brilho2": "transparent", "ponto": "#d1d0c9", "ponto-r": "1px", "pontos-tam": "24px",
+              "pontos-opac": "1", "sombra": "rgba(0,0,0,.06)", "sombra-card": "0 12px 32px rgba(0,0,0,.06)",
+              "card-borda": "none", "raio-card": "20px", "raio-selo": "16px", "vinheta": "transparent",
+              "faixa": "rgba(26,26,26,.5)", "faixa-altura": "230px", "f-tit": '"Texto"', "peso-tit": "700",
+              "esp-tit": "-0.02em", "caixa": "none", "f-d": '"Titulo"', "estilo-d": "italic", "peso-d": "700",
+              "f-num": '"Texto"', "f-txt": '"Texto"',
+              "_flutuar": True, "_mola": True, "_tremer": False, "_assentar": False},
     # escuro, azul-noite com âmbar: serve para quase tudo
     "noite": {"fundo": "#0E1420", "painel": "#161F2E", "painel2": "#1E2A3D", "linha": "#2B3850", "txt": "#F1F4F8",
               "txt2": "#C5CEDB", "mut": "#8794A8", "acc": "#F5B83D", "acc2": "#4FD1C5", "verm": "#F0575D",
@@ -115,7 +129,7 @@ _PALAVRAS_LIVRES = {"mais", "menos", "como", "para", "pelo", "pela", "pelos", "p
 
 
 def config(projeto) -> dict:
-    padrao = {"ativo": True, "tema": "noite", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
+    padrao = {"ativo": True, "tema": "apple", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
               "limiar": 70, "maximo_do_video": 0.12, "intervalo_minimo": 20, "trechos_por_lote": 6,
               "tentativas": 2, "paralelo": 2, "fps": 30, "canal": "", "sons": True, "volume_sons_db": -20}
     return {**padrao, **(projeto.config.get("animation_ai") or {}),
@@ -624,13 +638,15 @@ def sons(tipo, d) -> list:
 
 def tema(projeto) -> dict:
     cfg = config(projeto)
-    base = TEMAS.get(cfg.get("tema") or "noite", TEMAS["noite"])
+    base = TEMAS.get(cfg.get("tema") or "apple", TEMAS["apple"])
     return {**base, **(cfg.get("cores") or {})}
 
 
 def montar_html(tipo, dados, dur, cores, canal="") -> str:
-    variaveis = "".join(f"--{k}:{v};" for k, v in cores.items())
-    dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal}, ensure_ascii=False)
+    variaveis = "".join(f"--{k}:{v};" for k, v in cores.items() if not k.startswith("_"))
+    estilo = {k[1:]: v for k, v in cores.items() if k.startswith("_")}
+    dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal, "estilo": estilo},
+                          ensure_ascii=False)
     css = (RECURSOS / "motor.css").read_text(encoding="utf-8")
     js = (RECURSOS / "motor.js").read_text(encoding="utf-8")
     return f"""<!doctype html>
@@ -910,8 +926,9 @@ ESQUEMA_UTIL = {
 VERSAO_UTIL = 1  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
 
 
-def instrucoes_util() -> str:
-    linhas = "\n".join(f"- {tipo}: {CATALOGO[tipo][0]}. Campos: {CATALOGO[tipo][1]}" for tipo in DE_COMPLEMENTO)
+def instrucoes_util(tipos=None) -> str:
+    tipos = tipos or DE_COMPLEMENTO
+    linhas = "\n".join(f"- {tipo}: {CATALOGO[tipo][0]}. Campos: {CATALOGO[tipo][1]}" for tipo in tipos)
     return f"""Você é o editor de um documentário do YouTube feito de fotos e vídeos reais. Em alguns momentos, uma cena
 animada de modelo pronto (texto e números na tela, entrando no tempo da fala) explica melhor que a foto. Para CADA
 trecho recebido, decida se vale trocar a foto por uma cena animada e, se valer, monte a cena.
@@ -962,11 +979,12 @@ def _pedido_util(lote, erros) -> str:
     return "\n\n".join(partes)
 
 
-def _marca_util(item) -> str:
-    return hashlib.sha1(json.dumps([VERSAO_UTIL, item["fala"]], ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+def _marca_util(item, tipos=None) -> str:
+    base = [VERSAO_UTIL, item["fala"]] + ([sorted(tipos)] if tipos and list(tipos) != DE_COMPLEMENTO else [])
+    return hashlib.sha1(json.dumps(base, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
-def decidir(projeto, itens, log=print) -> dict:
+def decidir(projeto, itens, log=print, tipos=None) -> dict:
     """{id: {"nota", "tipo", "dados"}}: a nota de utilidade e, se valer, o plano conferido (sem plano: tipo "").
     Fica em animation_ai/decisoes.json pela fala: rodar de novo não pergunta de novo."""
     from . import openrouter_local
@@ -975,14 +993,15 @@ def decidir(projeto, itens, log=print) -> dict:
     limiar = float(cfg.get("limiar", 70))
     arquivo = projeto.pasta / "animation_ai" / "decisoes.json"
     guardadas = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else {}
-    saida = {it["id"]: guardadas[_marca_util(it)] for it in itens if _marca_util(it) in guardadas}
+    tipos = list(tipos or DE_COMPLEMENTO)
+    saida = {it["id"]: guardadas[_marca_util(it, tipos)] for it in itens if _marca_util(it, tipos) in guardadas}
     novos = [it for it in itens if it["id"] not in saida]
     por_lote = max(1, int(cfg.get("trechos_por_lote", 6)))
     for k in range(0, len(novos), por_lote):
         pendentes, erros = novos[k:k + por_lote], {}
         for _ in range(2):
             try:
-                resposta = openrouter_local.perguntar(projeto, "animation-ai: onde ajuda", instrucoes_util(),
+                resposta = openrouter_local.perguntar(projeto, "animation-ai: onde ajuda", instrucoes_util(tipos),
                                                       _pedido_util(pendentes, erros), ESQUEMA_UTIL, log=log,
                                                       modelo=openrouter_local.principal(projeto))
             except (Exception, SystemExit) as erro:
@@ -1002,7 +1021,7 @@ def decidir(projeto, itens, log=print) -> dict:
                 if nota < limiar:
                     saida[it["id"]] = {"nota": nota, "tipo": "", "dados": {}}
                     continue
-                problemas = (["use só os tipos do catálogo deste pedido"] if tipo not in DE_COMPLEMENTO
+                problemas = (["use só os tipos do catálogo deste pedido"] if tipo not in tipos
                              else conferir(tipo, dados, it["fala"], it["extras"], 1, 99))
                 if problemas:
                     erros[it["id"]] = problemas
@@ -1015,7 +1034,7 @@ def decidir(projeto, itens, log=print) -> dict:
                 break
         for it in novos[k:k + por_lote]:
             if it["id"] in saida:
-                guardadas[_marca_util(it)] = saida[it["id"]]
+                guardadas[_marca_util(it, tipos)] = saida[it["id"]]
         arquivo.parent.mkdir(parents=True, exist_ok=True)
         arquivo.write_text(json.dumps(guardadas, ensure_ascii=False, indent=1), encoding="utf-8")
     return saida
@@ -1042,9 +1061,17 @@ def escolher(itens, decisoes, cfg, duracao_video, ocupados=()) -> list:
     return sorted(escolhidos, key=lambda it: it["ini"])
 
 
-def nas_uteis(projeto, log=print) -> list:
+# o que o Motion IA fazia, no lugar dele (motion_ia.pausado): a cena que ia para a imagem de IA ou que tinha nota baixa
+# é decidida sem o filtro de estrutura e sem o ritmo de complemento, com o catálogo inteiro (a ideia abstrata pede frase
+# ou pergunta). abertura e encerramento seguem as regras do conferir
+COMO_MOTION = [t for t in CATALOGO if t not in ("abertura", "encerramento", "capitulo")]
+
+
+def nas_uteis(projeto, log=print, numeros=None, como_motion=False) -> list:
     """Troca a foto pela cena animada nas frases em que ela explica melhor, no ritmo de um complemento. Devolve as
-    cenas feitas; falhou, a cena fica com a foto."""
+    cenas feitas; falhou, a cena fica com a foto. numeros: só as frases que têm alguma dessas cenas. como_motion:
+    no lugar do Motion IA (pausado), para as cenas que iam para a imagem de IA ou tinham nota baixa: sem o filtro de
+    estrutura, sem o ritmo de complemento e com o catálogo inteiro, como o motion fazia."""
     if not ligado(projeto) or not projeto.existe("cenas.json") or not projeto.existe("alinhamento.json"):
         return []
     if not animacoes.node_pronto():
@@ -1056,18 +1083,24 @@ def nas_uteis(projeto, log=print) -> list:
     for g in frases_do_video(todas, cfg):
         if any(e_animada(c) or (c.get("anim_falhou") or {}).get("fala") == _marca_fala(c) for c in g):
             continue  # já animada, falhou ou a pessoa desfez nesta mesma fala
-        if float(g[-1]["fim"]) - float(g[0]["ini"]) >= float(cfg["duracao_minima"]) and estrutura(g):
+        if numeros is not None and not any(c["n"] in numeros for c in g):
+            continue
+        if como_motion or (float(g[-1]["fim"]) - float(g[0]["ini"]) >= float(cfg["duracao_minima"]) and estrutura(g)):
             grupos.append(g)
     if not grupos:
         return []
     itens = _itens_util(projeto, grupos, todas)
     log(f"  animation-ai: {len(itens)} frase(s) com lista, data, número ou comparação; o modelo diz onde a cena "
         f"animada explica melhor que a foto")
-    decisoes = decidir(projeto, itens, log)
+    decisoes = decidir(projeto, itens, log, COMO_MOTION if como_motion else None)
     ocupados = [(float(c["ini"]), float(c["fim"])) for c in todas
                 if (c.get("midia") or {}).get("fonte") in ("motion_ia", FONTE)]
     duracao = float(projeto.ler_json("alinhamento.json").get("duracao") or todas[-1]["fim"])
-    escolhidos = escolher(itens, decisoes, cfg, duracao, ocupados)
+    if como_motion:
+        # sem teto nem intervalo, como o motion: toda frase que tirou a nota entra
+        escolhidos = escolher(itens, decisoes, {**cfg, "maximo_do_video": 10.0, "intervalo_minimo": 0}, duracao)
+    else:
+        escolhidos = escolher(itens, decisoes, cfg, duracao, ocupados)
     if not escolhidos:
         log("  animation-ai: nenhuma frase pediu cena animada")
         return []
@@ -1076,6 +1109,17 @@ def nas_uteis(projeto, log=print) -> list:
     pares = [(it["grupo"], {"tipo": decisoes[it["id"]]["tipo"], "dados": decisoes[it["id"]]["dados"]})
              for it in escolhidos]
     return _gravar_grupos(projeto, pares, log, frase_de_reserva=False)
+
+
+def video_todo(projeto, log=print) -> list:
+    """Perfil de vídeo todo em motion (motion-ai, motion-vox) com o Motion IA pausado: toda cena com fala vira cena
+    animada antes da busca de fotos, como o motion fazia. A que falhar segue para a foto de banco e depois a IA."""
+    todas = projeto.ler_json("cenas.json")["cenas"]
+    cenas = [c for c in todas if not (c.get("midia") or {}).get("arquivo") and not c.get("anim_falhou")]
+    if not cenas:
+        return []
+    log(f"  animation-ai: vídeo todo em cenas animadas (no lugar do motion IA), {len(cenas)} cena(s), de graça")
+    return fazer(projeto, cenas, log)
 
 
 def desfazer(projeto, numeros) -> list:

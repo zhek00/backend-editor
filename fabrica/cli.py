@@ -253,8 +253,17 @@ def etapa_imagens(p, a, aprovado=False):
 
 def etapa_motion_total(p, a, aprovado=False):
     """Perfil todo em motion (motion_ia.tudo): toda cena vira clipe antes da busca de fotos. Gratuito e sem bloquear."""
-    from . import motion_ia
-    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json") or not motion_ia.tudo_em_motion(p):
+    from . import animation_ai, motion_ia
+    if avatar.somente_avatar(p.perfil) or not p.existe("cenas.json"):
+        return
+    if motion_ia.pausado(p) and motion_ia.tudo_pedido(p) and animation_ai.ligado(p):
+        log("Cenas animadas em todas as cenas (no lugar do motion IA)")
+        try:
+            animation_ai.video_todo(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  as cenas animadas falharam, as que faltam seguem com foto: {erro}")
+        return
+    if not motion_ia.tudo_em_motion(p):
         return
     log("Motion em todas as cenas")
     try:
@@ -409,6 +418,23 @@ def cmd_publicar(a):
         log(f"  ATENÇÃO: {aviso}")
     if dados.get("comentario_fixado"):
         log(f"  fixe este comentário no YouTube Studio: {dados['comentario_fixado']}")
+
+
+def cmd_consumo(a):
+    from . import consumo
+    log("Consumo no OpenRouter")
+    if a.importar or not consumo.REGISTRO.exists():
+        consumo.importar_historico(log=log)
+    consumo.gerar_planilha(log=log)
+    if a.google:
+        url = ((p_cfg := config_geral().get("consumo") or {}).get("url_publica") or "https://editor.bbnews.cc")
+        destino = consumo.gerar_modelo_google(url)
+        log(f"  modelo para o Google Planilhas: {destino}")
+        log("  no Google Planilhas: Arquivo > Importar > Fazer upload deste arquivo > Substituir planilha. A chave de "
+            "leitura vai dentro dele: não compartilhe a planilha com quem não deve ver o consumo")
+    linhas = consumo.ler()
+    custo = sum(float(r["custo_usd"] or 0) for r in linhas)
+    log(f"  {len(linhas)} chamada(s) registradas, US$ {custo:.4f}")
 
 
 def cmd_publicacao(a):
@@ -630,6 +656,11 @@ def cmd_motion(a):
         p.perfil["motion_ia"] = {**(p.perfil.get("motion_ia") or {}), "estilo": a.estilo}
     if not p.existe("cenas.json"):
         raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
+    if motion_ia.pausado(p):
+        if not getattr(a, "mesmo_pausado", False):
+            raise SystemExit("O motion IA está fora da produção (motion_ia.pausado no config.yaml). Para testar o "
+                             "ajuste num projeto, rode com --mesmo-pausado.")
+        p.config["motion_ia"] = {**(p.config.get("motion_ia") or {}), "pausado": False}
     if not motion_ia.ligado(p):
         raise SystemExit("O motion IA está desligado (motion_ia.ativo no config.yaml, ou o projeto é offline).")
     cands = motion_ia.candidatas_do_projeto(p, set(a.cenas) if a.cenas else None)
@@ -1137,11 +1168,16 @@ def main():
     s.add_argument("nome")
     s.add_argument("--cenas", type=int, nargs="*", help="anima essas cenas sem perguntar se vale (sem dizer: o modelo "
                                                          "escolhe onde ajuda, no ritmo de um complemento)")
-    s.add_argument("--tema", choices=["noite", "editorial", "misterio"], help="cores e fontes das cenas")
+    s.add_argument("--tema", choices=["apple", "noite", "editorial", "misterio"], help="cores e fontes das cenas")
     s.add_argument("--catalogo", action="store_true", help="só desenha um quadro de cada tipo, para ver o visual")
     s.add_argument("--desfazer", action="store_true", help="volta as cenas indicadas para a foto que tinham")
     s.add_argument("--forcar", action="store_true", help="pede um plano novo ao modelo para cada trecho")
     s.set_defaults(funcao=cmd_animation_ai)
+
+    s = sub.add_parser("consumo", help="planilha do consumo no OpenRouter (relatorios/consumo_openrouter.xlsx)")
+    s.add_argument("--importar", action="store_true", help="traz o histórico dos projetos, sem repetir o que já está")
+    s.add_argument("--google", action="store_true", help="gera o modelo que se atualiza sozinho no Google Planilhas")
+    s.set_defaults(funcao=cmd_consumo)
 
     s = sub.add_parser("thumbs", help="3 opções de thumbnail e a prancha do celular (grátis)")
     s.add_argument("nome")
@@ -1211,6 +1247,8 @@ def main():
     s.add_argument("--sim", action="store_true", help="aprova o gasto do Jev sem perguntar")
     s.add_argument("--estilo", choices=["colagem", "editorial"],
                    help="estilo dos clipes desta rodada: colagem (jornal envelhecido, estilo Vox) ou editorial (padrão)")
+    s.add_argument("--mesmo-pausado", action="store_true",
+                   help="roda mesmo com o motion IA fora da produção (motion_ia.pausado), para testar o ajuste")
     s.set_defaults(funcao=cmd_motion)
 
     s = sub.add_parser("avatar-partes", help="corta a narração nos áudios que vão para o HeyGen")

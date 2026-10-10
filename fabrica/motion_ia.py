@@ -61,8 +61,20 @@ def config(projeto) -> dict:
     return cfg
 
 
+def pausado(projeto) -> bool:
+    """Motion IA fora da produção (motion_ia.pausado no config.yaml, pedido do usuário em 2026-10-09: "vamos tirar da
+    produção o motion ai até ajustar ele"). Vale por cima do perfil: os perfis motion-ai e motion-vox ligam o motion
+    no perfil, e a pausa é da fábrica inteira. No lugar dele entra o animation-ai (animation_ai.py)."""
+    return bool((projeto.config.get("motion_ia") or {}).get("pausado"))
+
+
 def ligado(projeto) -> bool:
-    return bool(config(projeto).get("ativo", True)) and not projeto.offline
+    return not pausado(projeto) and bool(config(projeto).get("ativo", True)) and not projeto.offline
+
+
+def tudo_pedido(projeto) -> bool:
+    """O perfil pede o vídeo todo em motion (motion-ai, motion-vox), esteja o motion pausado ou não."""
+    return bool(config(projeto).get("ativo", True)) and bool(config(projeto).get("tudo")) and not projeto.offline
 
 
 def tudo_em_motion(projeto) -> bool:

@@ -45,6 +45,7 @@ uv run fabrica publicacao NOME    # título, descrição com capítulos, tags e 
 uv run fabrica thumbs NOME        # 3 thumbnails e a prancha do celular (grátis); --escolher N troca a capa
 uv run fabrica shorts NOME        # até 3 shorts cortados do vídeo pronto, com legenda palavra por palavra (grátis)
 uv run fabrica publicar NOME --simular   # o que subiria para o YouTube; sem --simular, publica (pede confirmação)
+uv run fabrica consumo            # planilha do consumo no OpenRouter (relatorios/), refeita a cada consumo
 uv run fabrica animation-ai NOME  # onde a fala tem lista, datas ou comparação, cena animada no lugar da foto (grátis)
 uv run fabrica revisar NOME       # abre a página com todas as cenas
 uv run fabrica refazer NOME 12 31 # troca o que aparece nessas cenas
@@ -159,6 +160,22 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - **Fontes:** Inter e Playfair Display (licença OFL) em `fabrica/recursos/fontes`. Não usar fontes do Windows, que não podem ir para os amigos.
 
 ## Motion IA (cena abstrata reprovada vira clipe de motion)
+
+**FORA DA PRODUÇÃO desde 2026-10-09** (pedido do usuário: "vamos tirar da produção o motion ai até ajustar ele, vamos
+adicionar o animation ai no lugar dele"; o clipe de "o castelo foi demolido entre 2016 e 2017" virou uma curva
+inventada caindo até "demolição"). `motion_ia.pausado: true` no config.yaml, lido em `motion_ia.pausado()` e conferido
+dentro de `ligado()`: vale por cima do perfil (motion-ai e motion-vox ligam o motion no perfil), então nenhuma entrada
+automática faz clipe: antes da imagem de IA, nota baixa no Corrigir, onde ajuda o roteiro (passo 6b) e vídeo todo em
+motion (passo 2b). **O animation-ai faz todos os caminhos dele** (pedido do usuário: "todos os passos, inclusive os
+passos que o motion ia fazia"): (1) a cena que iria para a imagem de IA (`imagens._motion_antes_da_ia` chama
+`animation_ai.nas_uteis(numeros=..., como_motion=True)`: sem o filtro de estrutura, sem o teto de 12% e o intervalo
+de 20 s, com o catálogo inteiro, `COMO_MOTION`; nota de 70 para cima entra, o resto segue para a IA); (2) a nota baixa
+no Corrigir (`_motion_com_nota_baixa` devolve as de nota baixa sem perguntar ao Jev do motion, elas viram `motion_so` e
+o animation-ai decide antes da imagem de IA; a que ele não fizer volta para a foto, sem pagar); (3) onde ajuda o
+roteiro (passo 6b, com o ritmo de complemento, como já fazia); (4) os perfis motion-ai e motion-vox
+(`motion_ia.tudo_pedido` lê o pedido do perfil mesmo pausado, e `animation_ai.video_todo` anima todas as cenas antes da
+busca de fotos). O visual é o do Motion IA (tema `apple`). `fabrica motion NOME --mesmo-pausado` roda o motion para
+testar o ajuste. Ao tirar a pausa, tudo volta como está descrito abaixo.
 
 `fabrica/motion_ia.py`, do `PRD-MOTION.txt`, ligado por `motion_ia.ativo` no `config.yaml` (no `.env`,
 `JEV_MOTION_FALLBACK_ENABLED` e `JEV_MIN_SCORE_THRESHOLD`, de 0 a 10, valem por cima). Decisões do usuário em
@@ -376,6 +393,8 @@ depois de estudar o concorrente (Pipeline Canal Dark), que monta o vídeo com 24
 vídeo inteiro** (correção do usuário no mesmo dia: "seria complementar como o motion ai"): entra misturado com as
 fotos, logo depois do Motion IA (`etapa_motion` no `tudo`, passo 6c da criação no site, `fabrica animation-ai NOME`).
 Não existe perfil de vídeo todo em animation-ai; não criar de novo.
+**No lugar do Motion IA** enquanto ele está fora da produção: a cena que iria para a imagem de IA vira cena animada
+se a frase dela tiver estrutura e nota alta (`imagens._motion_antes_da_ia` com `numeros`), e a imagem nem é paga.
 
 - **Candidatas** (`frases_do_video` e `estrutura`, grátis): cada frase falada (cenas do mesmo bloco até o ponto, até
   `duracao_maxima`, 12 s) com algo que um modelo pronto mostra melhor que a foto: itens em sequência (vírgulas, a
@@ -407,6 +426,13 @@ Não existe perfil de vídeo todo em animation-ai; não criar de novo.
   px e de 100 a 800 px; embaixo, a legenda. Decoração grande é SVG, não texto (o "?" de 1.100 px da pergunta saía da
   tela e reprovava). Temas em `TEMAS` (noite, editorial, misterio; `cores` por cima); o nome do canal no canto vem de
   `animation_ai.canal`. O `motor.js` entra na assinatura: mudou o desenho, os trechos são gravados de novo.
+- **Tema `apple`, o padrão** (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo APPLE que o
+  motion ia utilizava, para ficar elegante e com qualidade"): os valores do esqueleto do Motion IA, creme `#F7F6F2`
+  com pontos de 24 px, cards brancos de raio 20 sem borda com a sombra `0 12px 32px rgba(0,0,0,.06)`, título em Inter
+  grafite, destaque em Playfair itálica azul `#2563EB`, laranja `#EA580C` e verde `#166534`. O jeito de mexer vem do
+  tema (chaves com `_` em `TEMAS`, `E` no motor.js): cards flutuando 5 px fora de fase (pelo `translate` do CSS, que
+  não briga com a entrada), entrada em mola (sobe 40 px e cresce de 0,92 com back.out), o impacto vira mola, sem
+  tremor, e a câmera só aproxima 3%. Os outros temas (noite, editorial, misterio) seguem como eram.
 - **Gravação**: `hyperframes check`, MP4, um pedaço por cena (`midia/NNNN_anim.mp4`), `fonte: animation_ai`; a foto
   fica em `anim_reserva` (`--desfazer` volta e marca `anim_falhou`, que não tenta de novo na mesma fala). Reprovou ou
   falhou: a cena fica com a foto. Nunca para o vídeo.
@@ -890,6 +916,35 @@ entram, porque não geraram cobrança nova. Os modelos de texto gravam os própr
   de mostrar. Diferença de saldo zero ou maior que os caracteres (outra narração ao mesmo tempo) vira estimativa.
 - O Groq é do plano gratuito e conta zero. OpenRouter e Jev informam o custo real de cada
   chamada. O Gemini é calculado pelos preços por milhão de tokens do `config.yaml`.
+
+## Consumo no OpenRouter: registro central e planilha viva
+
+`fabrica/consumo.py`, pedido do usuário em 2026-10-09: "a cada consumo no OpenRouter, deve ser registrado na
+planilha". Antes o consumo só ficava nos uso_*.json de cada projeto, e projeto apagado ou entregue levava o registro
+junto: dos US$ 19,31 que a conta tinha gastado, só US$ 8,02 estavam nos projetos.
+
+- **Toda chamada vira uma linha, na hora**, em `relatorios/openrouter_consumo.csv` (fora dos projetos e do Git):
+  data, projeto, tipo (texto, imagem, transcrição, voz), etapa, modelo, gratuito, tokens e custo. Ganchos:
+  `openrouter_local._registrar` (texto e visão; as rotas da AIMLAPI ficam de fora), `jev_local._registrar`,
+  `custos_reais.registrar` (só imagem e transcrição com provedor OpenRouter; Kie e GenAIPro são outras contas) e a voz
+  grátis da Fish em `narracao`. Nunca para a fábrica.
+- **A planilha** `relatorios/consumo_openrouter.xlsx` se refaz sozinha do registro: `ATRASO` (120 s) depois da última
+  chamada e no fim de cada comando (`atexit`). Aberta no Excel, o Windows trava o arquivo: a fábrica tenta de novo
+  depois (o registro é o CSV, nada se perde). Abas: Resumo (o total oficial da conta pela GET /api/v1/key e /credits,
+  guardado em `openrouter_oficial.json`, e a conciliação), Custo diário, Custo por API, Diário por API, Por etapa, Por
+  projeto e Chamadas. As contas são fórmulas, calculadas por quem abre.
+- `uv run fabrica consumo [--importar]` refaz a planilha; `--importar` traz o histórico dos projetos sem repetir.
+- O detalhe por dia e modelo da própria OpenRouter (/api/v1/activity) pede chave de gerenciamento: a fábrica não tem.
+- **Processo que já estava rodando** (servidor, MCP) só registra depois de reiniciado (DESLIGAR e LIGAR).
+- **Google Planilhas que se atualiza sozinho** (pedido do usuário em 2026-10-09): a fábrica serve o registro em
+  `/consumo/openrouter.csv` e o total oficial em `/consumo/oficial.csv`, pelo túnel (`consumo.url_publica`,
+  editor.bbnews.cc, sem o desafio do Cloudflare), com uma chave **só de leitura e só para isso**
+  (`CONSUMO_PLANILHA_TOKEN` no .env, criada por `consumo.token_da_planilha`; o token do editor não abre, e esta chave
+  não abre o editor). `fabrica consumo --google` gera `relatorios/consumo_openrouter_google.xlsx`, para importar no
+  Google Planilhas (Arquivo > Importar > Substituir planilha): a aba Chamadas é um `IMPORTDATA(url, ",", "en_US")`
+  (o CSV vem com data e hora separadas e números com ponto) e as outras abas são `QUERY` sobre ela, então dia, modelo e
+  etapa novos aparecem sozinhos. O Google busca de novo mais ou menos de hora em hora. A chave vai dentro do arquivo,
+  nunca no chat. O parâmetro `desde=AAAA-MM-DD` corta o CSV se um dia ele ficar grande demais para o IMPORTDATA.
 
 ## Custo real, para calibrar
 

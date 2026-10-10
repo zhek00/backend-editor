@@ -92,6 +92,11 @@ def _registrar(projeto, etapa, uso, modelo_usado):
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
         historico.append(linha)
         arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not str(modelo_usado).startswith("aimlapi:"):
+        # o registro central (consumo.py): fica mesmo depois de o projeto ser apagado ou entregue
+        from . import consumo
+        consumo.registrar(projeto, "texto", etapa, modelo_usado, linha["tokens_lidos"], linha["tokens_escritos"],
+                          linha["custo_usd"])
 
 
 def resumo_uso(projeto):

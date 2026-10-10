@@ -25,3 +25,6 @@ tiplabs-cliente/
 
 vigia.log
 vigia.pid
+
+# consumo no OpenRouter: registro central e a planilha viva (fabrica/consumo.py)
+relatorios/

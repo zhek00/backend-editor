@@ -136,6 +136,8 @@ def registrar(projeto, categoria: str, motivo: str, valor_usd: float, detalhes: 
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
         historico.append(linha)
         arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+    from . import consumo  # imagem e transcrição pelo OpenRouter entram no registro central (Kie e GenAIPro não)
+    consumo.registrar_custo(projeto, categoria, detalhes, valor_usd)
 
 
 def historico(projeto) -> list:

@@ -11,6 +11,9 @@
    Área livre: de 150 a 1770 px na largura e de 100 a 800 px na altura; embaixo fica a legenda queimada. */
 (function () {
   const A = window.AAI, s = A.s || {}, DUR = A.dur;
+  // o jeito de mexer vem do tema (animation_ai.TEMAS, chaves com _): o tema apple é o do Motion IA, com cards que
+  // flutuam, entrada em mola, sem tremor, e a câmera que só aproxima 3% ao longo da cena
+  const E = Object.assign({ flutuar: false, mola: false, tremer: true, assentar: true }, A.estilo || {});
   const root = document.getElementById("root");
   const palco = document.getElementById("palco");
   const entradas = [], passos = [], impactos = [];
@@ -33,8 +36,10 @@
     return e;
   }
   function entra(e, t, jeito, d) {
+    // na mola (tema apple), o impacto vira uma entrada em mola, sem o soco de escala
+    if (E.mola && jeito === "impacto") { jeito = "mola"; d = 0.7; }
     entradas.push({ e, t: T(t, 0.2), jeito: jeito || "sobe", d: d || (jeito === "impacto" ? 0.38 : 0.55) });
-    if (jeito === "impacto") impactos.push(T(t, 0.2));
+    if (jeito === "impacto" && E.tremer) impactos.push(T(t, 0.2));
     return e;
   }
   function conta(e, valor, casas, t, d) {
@@ -120,7 +125,7 @@
 
     pergunta() {
       // o ? de fundo é desenho (SVG), não texto: um ? de 1.100 px saía da tela e a conferência reprovava a cena
-      entra(cria('<div style="position:absolute;left:1380px;top:90px;width:420px;height:700px;opacity:.08"><svg viewBox="0 0 24 40" width="420" height="700"><path d="M4 11a8 8 0 1 1 13 6.3c-2.6 2-4 3.3-4 6.7v2" fill="none" stroke="var(--acc)" stroke-width="5" stroke-linecap="round"/><circle cx="13" cy="35" r="3" fill="var(--acc)"/></svg></div>'), 0, "surge", 1.2);
+      entra(cria('<div style="position:absolute;left:1380px;top:90px;width:420px;height:700px"><svg viewBox="0 0 24 40" width="420" height="700" style="opacity:.08"><path d="M4 11a8 8 0 1 1 13 6.3c-2.6 2-4 3.3-4 6.7v2" fill="none" stroke="var(--acc)" stroke-width="5" stroke-linecap="round"/><circle cx="13" cy="35" r="3" fill="var(--acc)"/></svg></div>'), 0, "surge", 1.2);
       if (s.kicker) entra(cria(`<div class="kick" style="position:absolute;left:160px;top:250px">${rico(s.kicker)}</div>`), T(s.t_kicker, 0.1));
       entra(cria(`<div class="tit" data-fit="1300,470,48" style="position:absolute;left:160px;top:310px;width:1300px;font-size:100px">${rico(s.texto)}</div>`), T(s.t, 0.3), "impacto");
     },
@@ -433,14 +438,21 @@
   function quadro(t) {
     ultimo = t;
     // câmera: chega assentando nos primeiros 0,5 s e aproxima devagar até o fim; treme curto em cada impacto
-    const z = 1 + 0.03 * (t / DUR) + 0.035 * (1 - sai(t / 0.5));
+    const z = E.assentar ? 1 + 0.03 * (t / DUR) + 0.035 * (1 - sai(t / 0.5))
+                         : 1 + 0.03 * (1 - Math.pow(1 - lim(t / DUR), 2));
     let dx = 0, dy = 0;
     for (const ti of impactos) { const k = t - ti; if (k > 0 && k < 0.28) { const a = 7 * (1 - k / 0.28); dx += Math.sin(k * 95) * a; dy += Math.cos(k * 71) * a * 0.6; } }
     palco.style.transform = `translate(${dx.toFixed(2)}px,${dy.toFixed(2)}px) scale(${z.toFixed(4)})`;
     for (const x of entradas) {
       const p = lim((t - x.t) / x.d);
       let o = p, tr = "";
-      if (x.jeito === "sobe") { o = sai(p); tr = `translateY(${((1 - sai(p)) * 38).toFixed(2)}px)`; }
+      if (x.jeito === "mola" || (E.mola && (x.jeito === "sobe" || x.jeito === "escala"))) {
+        // a entrada do Motion IA: sobe 40 px e cresce de 0,92 com back.out(1.7)
+        const q = mola(p);
+        o = lim(p * 1.8);
+        tr = `translateY(${((1 - q) * 40).toFixed(2)}px) scale(${(0.92 + 0.08 * q).toFixed(4)})`;
+      }
+      else if (x.jeito === "sobe") { o = sai(p); tr = `translateY(${((1 - sai(p)) * 38).toFixed(2)}px)`; }
       else if (x.jeito === "desce") { o = sai(p); tr = `translateY(${((1 - sai(p)) * -38).toFixed(2)}px)`; }
       else if (x.jeito === "esquerda") { o = sai(p); tr = `translateX(${((1 - sai(p)) * -70).toFixed(2)}px)`; }
       else if (x.jeito === "direita") { o = sai(p); tr = `translateX(${((1 - sai(p)) * 70).toFixed(2)}px)`; }
@@ -451,8 +463,17 @@
       x.e.style.transform = tr;
     }
     for (const f of passos) f(t);
+    if (E.flutuar) {
+      // cada card flutua 5 px, para cima e para baixo, fora de fase (como o .m-card do Motion IA). Usa o translate do
+      // CSS, que não briga com o transform da entrada
+      cards.forEach((c, i) => {
+        const t0 = 0.15 * i;
+        c.style.translate = `0 ${(t < t0 ? -5 : -5 * Math.cos(Math.PI * (t - t0) / 1.6)).toFixed(2)}px`;
+      });
+    }
   }
 
+  const cards = Array.from(document.querySelectorAll(".card"));
   encaixar();
   quadro(0);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { encaixar(); quadro(ultimo); });

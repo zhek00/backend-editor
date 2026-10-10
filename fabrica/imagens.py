@@ -322,11 +322,16 @@ def _motion_antes_da_ia(projeto, apenas, pendentes, log):
     """Cena abstrata (número, ideia, conclusão, chamada) vira clipe de motion, de graça, no lugar da imagem de IA
     (motion_ia.py). A que só tinha nota baixa (motion_so) e não virou motion volta para a foto que tinha: ela não
     estava errada, e não vale pagar imagem por ela. Nunca para as imagens."""
-    from . import motion_ia
+    from . import animation_ai, motion_ia
     try:
-        feitas = motion_ia.resolver(projeto, pendentes, log)
+        if motion_ia.pausado(projeto):
+            # Motion IA fora da produção: a cena animada de modelo pronto entra no lugar dele, onde a fala tem lista,
+            # data, número ou comparação e o modelo diz que ela explica melhor (e a imagem de IA nem é paga)
+            feitas = animation_ai.nas_uteis(projeto, log, numeros={c["n"] for c in pendentes}, como_motion=True)
+        else:
+            feitas = motion_ia.resolver(projeto, pendentes, log)
     except (Exception, SystemExit) as erro:
-        log(f"  motion IA falhou, as cenas seguem para a imagem de IA: {str(erro)[:160]}")
+        log(f"  as cenas animadas falharam, as cenas seguem para a imagem de IA: {str(erro)[:160]}")
         feitas = []
     sobram = [c for c in pendentes if c["n"] not in feitas]
     so_motion = [c["n"] for c in sobram if c.get("motion_so")]

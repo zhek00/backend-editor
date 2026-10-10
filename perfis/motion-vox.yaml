@@ -26,3 +26,7 @@ diretrizes: >-
 
 animacoes:
   ativo: false
+
+# com o Motion IA fora da produção (motion_ia.pausado), o animation-ai faz o vídeo todo no lugar dele
+animation_ai:
+  tema: apple
