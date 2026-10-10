@@ -884,7 +884,8 @@ funcionando; no editor ele aparece como Fish e regerar troca a voz.
 | Contexto dos blocos | cadeia de principais (Groq primeiro) |
 | Buscas das reprovadas | cadeia de principais (Groq primeiro) |
 | Escolha das fotos e vídeos do acervo (olha as miniaturas) | cadeia de visão: Qwen 27B do Groq, Dots, Gemma e `openrouter/free` gratuitos; Gemini 3.1 Flash-Lite pago sem raciocínio de reserva (Qwen 3.7 Flash se o Gemini cair) |
-| Descrição das imagens para a conferência e revisão do vídeo pronto | cadeia de visão (a mesma) |
+| Descrição das imagens das cenas para o Jev (site e TipLabs) | **Gemini 3.1 Flash-Lite direto** (`descricao` no `config.yaml`, `corrigir._pelo_gemini`, pedido do usuário em 2026-10-10): sem pensar, imagem em resolução baixa, miniatura de 512 px, resposta até 600 tokens. Uns 930 tokens lidos e 150 escritos, US$ 0,00045 por cena, 2,4 s. O 2.5 Flash-Lite o Google não libera para chave nova (404). Sem resposta dele, a cadeia de visão descreve |
+| Revisão do vídeo pronto | cadeia de visão (a mesma da escolha) |
 | Julgamento (a imagem combina com a fala?) | Jev, pelo OpenRouter; se ele cair, o modelo principal julga |
 | Imagens de IA | GPT-5.4 Image 2 em qualidade baixa pelo OpenRouter (`openai/gpt-5.4-image-2`), padrão do perfil base |
 

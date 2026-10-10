@@ -91,10 +91,15 @@ def aprovada(conferencia, nota_minima=NOTA_MINIMA) -> bool:
     return (conferencia["veredito"] == "combina" or conferencia["nota"] >= nota_minima) and not errada(conferencia)
 
 
-def _reduzir(origem, destino):
+def _lado(projeto) -> int:
+    """O maior lado da miniatura que vai para quem descreve (descricao.lado, 512): upload e resposta mais rápidos."""
+    return int((projeto.config.get("descricao") or {}).get("lado") or LADO_MAXIMO)
+
+
+def _reduzir(origem, destino, lado=LADO_MAXIMO):
     with Image.open(origem) as imagem:
         imagem = imagem.convert("RGB")
-        imagem.thumbnail((LADO_MAXIMO, LADO_MAXIMO))
+        imagem.thumbnail((lado, lado))
         imagem.save(destino, quality=85)
 
 
@@ -122,10 +127,10 @@ def _quadros(projeto, cena):
         # cena diferente e as legendas saíam trocadas a partir do primeiro vídeo do lote
         destino = pasta / f"{n:04d}_0.jpg"
         rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{duracao_audio(origem) / 2:.2f}", "-i", origem,
-               "-frames:v", "1", "-vf", f"scale={LADO_MAXIMO}:-2", destino])
+               "-frames:v", "1", "-vf", f"scale={_lado(projeto)}:{_lado(projeto)}:force_original_aspect_ratio=decrease", destino])
         return [destino]
     destino = pasta / f"{n:04d}_0.jpg"
-    _reduzir(origem, destino)
+    _reduzir(origem, destino, _lado(projeto))
     return [destino]
 
 
@@ -419,6 +424,31 @@ def _guardar_legendas(projeto, legendas):
     projeto.salvar_json("cenas.json", dados)
 
 
+def _pelo_gemini(projeto, pedido, imagens, log):
+    """A descrição pelo Gemini Flash-Lite (descricao.modelo), sem pensar, com a imagem em resolução baixa e a resposta
+    curta. Pedido do usuário em 2026-10-10: o Gemini faz todo o trabalho de descrição das imagens das cenas, no site e
+    no TipLabs; antes ele só entrava depois dos gratuitos, e no MCP ia com a imagem inteira e 16 mil tokens de teto.
+    O 2.5 Flash-Lite que ele pediu o Google não libera mais para chave nova (404), por isso o 3.1. Medido numa foto do
+    11-animais-do-brasil: 1,7 s, 856 tokens lidos e 157 escritos, uns US$ 0,0005. Devolve None quando o Gemini não
+    atende (sem chave, fora do ar, resposta quebrada), e a cadeia de visão de sempre descreve."""
+    cfg = projeto.config.get("descricao") or {}
+    modelo = (cfg.get("modelo") or "").strip()
+    if not modelo:
+        return None
+    try:
+        resposta = gemini_local.perguntar(
+            projeto, "descrever imagens", INSTRUCOES_LEGENDA + openrouter_local.REGRA_DO_ALFABETO, pedido,
+            ESQUEMA_LEGENDA, log=log, modelo=modelo, imagens=imagens, temperatura=0, na_cadeia=True,
+            raciocinio=cfg.get("raciocinio", "minimal"), resolucao=cfg.get("resolucao", "baixa"),
+            max_tokens=int(cfg.get("max_tokens", 600)))
+    except (openrouter_local.RotaIndisponivel, RuntimeError) as e:
+        log(f"  o Gemini não descreveu ({str(e)[:100]}): seguindo com a cadeia de visão")
+        return None
+    if not isinstance(resposta, dict) or not isinstance(resposta.get("cenas"), list):
+        return None
+    return openrouter_local._sem_outro_alfabeto(resposta)
+
+
 def _descrever_lote(projeto, lote, log):
     """O modelo de visão só diz o que aparece em cada imagem. Devolve {n: legenda}.
 
@@ -435,8 +465,9 @@ def _descrever_lote(projeto, lote, log):
         imagens.extend(quadros)
     pedido = f"Diga o que você vê nas imagens destas {quantas} cenas, campo a campo.\n\n" + "\n".join(blocos)
     try:
-        resposta = _com_reserva(projeto, "descrever imagens", INSTRUCOES_LEGENDA, pedido, ESQUEMA_LEGENDA,
-                                log=log, imagens=imagens, temperatura=0)
+        resposta = (_pelo_gemini(projeto, pedido, imagens, log)
+                    or _com_reserva(projeto, "descrever imagens", INSTRUCOES_LEGENDA, pedido, ESQUEMA_LEGENDA,
+                                    log=log, imagens=imagens, temperatura=0))
     except RuntimeError as e:
         log(f"  não consegui descrever as imagens das cenas {lote[0][0]['n']} a {lote[-1][0]['n']} ({e})")
         return {}

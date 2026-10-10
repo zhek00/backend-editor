@@ -69,6 +69,18 @@ corrigir:
                            # mesmo. Nos outros provedores, que dão nota de 0 a 100, use 80
   modelo:                  # só nos provedores groq/gemini/openrouter. Vazio usa o modelo de visão do provedor
 
+# Quem descreve as imagens das cenas para o Jev julgar (corrigir._pelo_gemini), no site e no TipLabs. Pedido do usuário
+# em 2026-10-10: o Gemini Flash-Lite faz todo esse trabalho, sem pensar e com miniatura. O 2.5 Flash-Lite o Google não
+# libera mais para chave nova (404), então vai o 3.1 (US$ 0,25 e 1,50 por milhão de tokens): numa foto, 1,7 s, 856
+# tokens lidos e 157 escritos, uns US$ 0,0005. Sem resposta dele, a cadeia de visão (midia.modelos_visao) descreve.
+# modelo vazio volta ao jeito antigo (os gratuitos primeiro).
+descricao:
+  modelo: gemini-3.1-flash-lite
+  raciocinio: minimal      # sem pensar: o pensamento é cobrado como escrita
+  resolucao: baixa         # baixa, media ou alta: na baixa a imagem gasta metade dos tokens (856 contra 1.692)
+  lado: 512                # maior lado da miniatura enviada, em pixels
+  max_tokens: 600          # a resposta de uma cena tem uns 160 tokens
+
 # O OpenRouter serve só para falar com o Jev, que não tem API própria. Todo o resto roda no Groq, com o
 # Gemini de reserva: o roteador jev-router escolhe modelos caros sozinho (já chegou a usar o Claude Sonnet).
 openrouter:

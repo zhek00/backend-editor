@@ -88,12 +88,17 @@ def _partes(types, pedido, imagens):
     return partes
 
 
+RESOLUCOES = {"baixa": "MEDIA_RESOLUTION_LOW", "media": "MEDIA_RESOLUTION_MEDIUM", "alta": "MEDIA_RESOLUTION_HIGH"}
+
+
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
-              na_cadeia=False, raciocinio=None):
+              na_cadeia=False, raciocinio=None, resolucao=None, max_tokens=None):
     """imagens é uma lista de caminhos de imagem enviados junto do pedido.
 
     na_cadeia=True: é uma rota da cadeia de visão ("gemini:MODELO", openrouter_local.uma_rota). Quem não responde
-    levanta RotaIndisponivel e a cadeia passa para o seguinte, em vez de cair no MiMo, que saiu da fábrica."""
+    levanta RotaIndisponivel e a cadeia passa para o seguinte, em vez de cair no MiMo, que saiu da fábrica.
+    resolucao (baixa, media, alta): quantos tokens cada imagem gasta; na baixa, uma miniatura de 640x360 leu 856
+    tokens contra 1.692. max_tokens: o teto da resposta no lugar de gemini.max_tokens."""
     from google.genai import errors, types
 
     cfg = projeto.config.get("gemini") or {}
@@ -104,13 +109,15 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
         # desliga pelo orçamento zero; a 3 usa o nível baixo, que basta para escolher cenas e descrever imagens
         pensamento = (types.ThinkingConfig(thinking_budget=0) if nome.startswith("gemini-2")
                       else types.ThinkingConfig(thinking_level=str(raciocinio or cfg.get("raciocinio", "low")).upper()))
+        extras = {"media_resolution": RESOLUCOES[resolucao]} if resolucao in RESOLUCOES else {}
         return types.GenerateContentConfig(
             system_instruction=instrucoes,
             temperature=cfg.get("temperatura", 0.3) if temperatura is None else temperatura,
             response_mime_type="application/json",
             response_json_schema=esquema,
-            max_output_tokens=cfg.get("max_tokens", 16000),
+            max_output_tokens=max_tokens or cfg.get("max_tokens", 16000),
             thinking_config=pensamento,
+            **extras,
         )
     def mimo(motivo):
         # nunca esperar cota: o Gemini que não responde agora passa a vez para o MiMo na hora
