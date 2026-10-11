@@ -810,6 +810,12 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 
 ## Quem responde cada etapa
 
+**Desde 2026-10-10 o pago entra sozinho** (`openrouter.confirmar_pago: false`, pedido do usuário: "deve ser aprovado o
+consumo automaticamente"): com a cota do Groq cheia, o brasil-selvagem-os-animais-mais-incr-veis-do-brasil (20 min)
+ficou quase 2 h na escolha das fotos esperando o clique no editor, com a barra parada em 65%. Continua só depois de
+TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`). O mecanismo abaixo vale de novo com
+`confirmar_pago: true`.
+
 **Modelo de texto pago só com a confirmação da pessoa, e só depois de TODOS os gratuitos** (`fabrica/pago.py`,
 `openrouter.confirmar_pago`, pedido do usuário em 2026-10-06: o saldo do OpenRouter caiu de US$ 6,10 para US$ 1,97 em
 dois dias, US$ 2,59 deles no Qwen Flash pago escolhendo as fotos do nunca-deve-ter-dentro-de-casa-parte-2, sem ninguém

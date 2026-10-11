@@ -114,9 +114,12 @@ openrouter:
                                 # vale para a conta inteira) ou saem do ar. É o mais barato que enxerga imagem
   espera_pelo_gratis: 60         # antes de pagar, espera até isso (s) por um gratuito que está fora só pelo limite do
                                 # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min
-  confirmar_pago: true           # modelo de texto pago só depois de TODOS os gratuitos esgotarem e com a confirmação
-                                # da pessoa (no editor ou no terminal), liberado por projeto até o fim do dia
-                                # (pago.py). Em 05/10 o Qwen pago escolhendo fotos custou US$ 2,59 sem ninguém saber
+  confirmar_pago: false          # false: o pago entra sozinho, mas sempre depois de TODOS os gratuitos da cadeia. Pedido
+                                # do usuário em 2026-10-10 ("deve ser aprovado o consumo automaticamente"): com a cota
+                                # do Groq cheia, o brasil-selvagem (20 min) ficou quase 2 h na escolha esperando o
+                                # clique no editor. true volta a pedir a confirmação (no editor ou no terminal),
+                                # liberada por projeto até o fim do dia (pago.py). O consumo fica na planilha do
+                                # OpenRouter (fabrica consumo)
   so_texto:                      # quem não enxerga imagem: pedido com imagem pula estes
     - groq:openai/gpt-oss
     - nvidia/nemotron-3-super
