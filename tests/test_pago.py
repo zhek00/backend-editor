@@ -113,3 +113,47 @@ def test_editor_volta_ao_gratuito_quando_ele_volta(projeto, monkeypatch):
     monkeypatch.setattr(openrouter_local, "uma_rota", uma_rota)
     assert _perguntar(projeto, [GROQ, DOTS, PAGO]) == {"ok": GROQ}
     assert PAGO not in chamadas and pago.pendente("x") is None
+
+def _uso(projeto, *custos):
+    import json
+    (projeto.pasta / "uso_openrouter.json").write_text(
+        json.dumps([{"quando": "2026-10-10T10:00:00", "modelo": PAGO, "custo_usd": c} for c in custos]), encoding="utf-8")
+
+
+def _automatico(projeto, minutos=None):
+    projeto.config["openrouter"].update(confirmar_pago=False, teto_pago_por_minuto=0.06, teto_pago_minimo=0.5)
+    if minutos:
+        (projeto.pasta / "alinhamento.json").write_text(f'{{"unidades": [{{"fim": {minutos * 60}}}]}}', encoding="utf-8")
+
+
+def test_pago_automatico_segue_sem_perguntar(projeto, monkeypatch):
+    # pedido do usuário em 2026-10-10: "a edição jamais deve parar, exceto se tiver alto consumo de tokens". O
+    # brasil-selvagem (20 min) ficou quase 2 h esperando o clique com a cota do Groq cheia
+    _automatico(projeto, minutos=20)
+    _uso(projeto, 0.30, 0.20)  # US$ 0,50, abaixo do teto de 20 x 0,06 = US$ 1,20
+    chamadas = _rotas(monkeypatch, falham={GROQ, DOTS})
+    assert _perguntar(projeto, [GROQ, DOTS, PAGO]) == {"ok": PAGO}
+    assert chamadas[-1] == PAGO
+
+
+def test_consumo_alto_para_sem_gastar(projeto, monkeypatch):
+    # o Qwen pago pensando escolheu as fotos do nunca-deve-ter-dentro-de-casa-parte-2: US$ 2,59 num vídeo de 30 min
+    _automatico(projeto, minutos=30)
+    _uso(projeto, 2.59)  # acima do teto de 30 x 0,06 = US$ 1,80
+    chamadas = _rotas(monkeypatch, falham={GROQ, DOTS})
+    with pytest.raises(pago.GratisEsgotado, match="onsumo alto"):
+        _perguntar(projeto, [GROQ, DOTS, PAGO])
+    assert PAGO not in chamadas
+
+
+def test_consumo_alto_liberado_segue(projeto, monkeypatch):
+    _automatico(projeto, minutos=30)
+    _uso(projeto, 2.59)
+    pago.liberar(projeto)
+    _rotas(monkeypatch, falham={GROQ, DOTS})
+    assert _perguntar(projeto, [GROQ, DOTS, PAGO]) == {"ok": PAGO}
+
+
+def test_teto_minimo_para_video_curto(projeto):
+    _automatico(projeto, minutos=2)
+    assert pago.teto(projeto) == 0.5  # 2 x 0,06 = 0,12 seria pouco para um vídeo curto

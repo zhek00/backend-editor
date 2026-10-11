@@ -816,6 +816,17 @@ ficou quase 2 h na escolha das fotos esperando o clique no editor, com a barra p
 TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`). O mecanismo abaixo vale de novo com
 `confirmar_pago: true`.
 
+**A produção jamais para, exceto com consumo alto** (pedido do usuário em 2026-10-10):
+- **Teto de gasto por vídeo** (`pago.consumo_alto`, `openrouter.teto_pago_por_minuto` 0,06 vezes a duração do vídeo,
+  no mínimo `teto_pago_minimo` 0,50): o gasto do vídeo em modelo de texto e visão pago (`uso_openrouter.json`) acima
+  do teto faz a cadeia pausar, sem gastar, e pedir a confirmação no editor ("consumo alto: US$ X acima do teto de
+  US$ Y"); enquanto espera, segue com os gratuitos que voltarem. Liberado, vale até o fim do dia. Jev, narração e
+  imagens de IA ficam fora da conta. Um vídeo normal gasta US$ 0,02 a 0,04 por minuto com os gratuitos esgotados; o
+  Qwen pago pensando de 05/10 gastou US$ 0,09.
+- **Etapa da esteira nunca desiste** (`api._etapa`): 6 tentativas rápidas (5 a 60 s) e depois de 5 em 5 min
+  (`ESPERA_LONGA`), sem limite. Antes, uma queda de uns 2 min de um serviço derrubava a criação. Só param o erro que
+  esperar não resolve (`_ERRO_PERMANENTE`: chave, crédito) e o projeto apagado pelo × do editor.
+
 **Modelo de texto pago só com a confirmação da pessoa, e só depois de TODOS os gratuitos** (`fabrica/pago.py`,
 `openrouter.confirmar_pago`, pedido do usuário em 2026-10-06: o saldo do OpenRouter caiu de US$ 6,10 para US$ 1,97 em
 dois dias, US$ 2,59 deles no Qwen Flash pago escolhendo as fotos do nunca-deve-ter-dentro-de-casa-parte-2, sem ninguém

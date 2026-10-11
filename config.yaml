@@ -120,6 +120,13 @@ openrouter:
                                 # clique no editor. true volta a pedir a confirmação (no editor ou no terminal),
                                 # liberada por projeto até o fim do dia (pago.py). O consumo fica na planilha do
                                 # OpenRouter (fabrica consumo)
+  # "A edição jamais deve parar, exceto se tiver alto consumo de tokens" (pedido do usuário em 2026-10-10): com o
+  # gasto do vídeo em modelo de texto e visão pago acima do teto, a fábrica pausa, sem gastar, e pede a confirmação no
+  # editor. Teto = teto_pago_por_minuto vezes a duração do vídeo, no mínimo teto_pago_minimo. Um vídeo normal gasta uns
+  # US$ 0,02 a 0,04 por minuto com os gratuitos esgotados; o Qwen pago pensando (05/10) gastou US$ 0,09 por minuto.
+  # O Jev, a narração e as imagens de IA não entram na conta.
+  teto_pago_por_minuto: 0.06    # US$ por minuto de vídeo: 20 min = US$ 1,20
+  teto_pago_minimo: 0.50        # US$, para vídeo curto
   so_texto:                      # quem não enxerga imagem: pedido com imagem pula estes
     - groq:openai/gpt-oss
     - nvidia/nemotron-3-super

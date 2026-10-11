@@ -174,7 +174,7 @@ TAREFAS_LOCK = threading.Lock()
 
 ARQ_CRIACAO = "criacao.json"
 CRIACOES_ATIVAS: set = set()
-TENTATIVAS_POR_ETAPA = 6              # falha que não é de chave: tenta de novo em segundos antes de desistir
+TENTATIVAS_POR_ETAPA = 6              # falha que não é de chave: tenta de novo em segundos, depois de 5 em 5 min
 RODADAS_PARA_COMPLETAR = 3
 
 # erros que esperar não resolve: a pessoa precisa mexer em chave, crédito ou configuração
@@ -183,6 +183,7 @@ _ERRO_PERMANENTE = re.compile(
     r"adicione saldo|saldo de créditos insuficiente|credits insufficient|não achei o claude|não está conectado|defina voz|está vazio|só aceita|desconhecid|herda de",
     re.I)
 _ESPERAS = [5, 10, 20, 30, 45, 60]   # segundos: parado é pior, então nunca espera muito
+ESPERA_LONGA = 300                    # depois das tentativas rápidas, de 5 em 5 minutos, sem desistir
 
 
 class ParadaPrecisaDeVoce(Exception):
@@ -237,19 +238,28 @@ def _log_tarefa(task_id: str, msg) -> None:
 
 
 def _etapa(task_id: str, rotulo: str, funcao):
-    """Roda uma etapa até dar certo, tentando de novo em segundos. A etapa continua de onde parou."""
-    for tentativa in range(TENTATIVAS_POR_ETAPA):
+    """Roda uma etapa até dar certo, tentando de novo em segundos. A etapa continua de onde parou.
+
+    Nunca desiste sozinha (pedido do usuário em 2026-10-10: "a edição jamais deve parar, exceto se tiver alto consumo
+    de tokens"): depois das TENTATIVAS_POR_ETAPA rápidas, tenta de novo a cada ESPERA_LONGA. Antes, uma queda de uns 2
+    minutos de um serviço derrubava a criação. Só param o erro que esperar não resolve (chave, crédito), o projeto
+    apagado pelo × do editor e o teto de gasto (pago.py, que espera a confirmação sem derrubar a etapa)."""
+    with TAREFAS_LOCK:
+        nome = (TAREFAS.get(task_id) or {}).get("projeto")
+    tentativa = 0
+    while True:
         try:
             return funcao()
         except (Exception, SystemExit) as err:
             msg = str(err) or err.__class__.__name__
             if _ERRO_PERMANENTE.search(msg):
                 raise ParadaPrecisaDeVoce(msg) from None
-            if tentativa == TENTATIVAS_POR_ETAPA - 1:
-                raise
-            espera = _ESPERAS[min(tentativa, len(_ESPERAS) - 1)]
+            if nome and not (PROJETOS / nome / "projeto.json").exists():
+                raise  # o projeto foi apagado: não há o que continuar
+            espera = _ESPERAS[tentativa] if tentativa < min(TENTATIVAS_POR_ETAPA, len(_ESPERAS)) else ESPERA_LONGA
+            tentativa += 1
             _log_tarefa(task_id, f"  {rotulo}: {msg}")
-            _log_tarefa(task_id, f"  tentando de novo em {espera}s, de onde parou (tentativa {tentativa + 2})")
+            _log_tarefa(task_id, f"  tentando de novo em {espera}s, de onde parou (tentativa {tentativa + 1})")
             _atualizar(task_id, mensagem=f"{rotulo}: um serviço falhou, tentando de novo em {espera}s...")
             time.sleep(espera)
             _atualizar(task_id, mensagem=f"{rotulo}: retomando...")
