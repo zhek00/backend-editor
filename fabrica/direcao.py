@@ -815,14 +815,11 @@ def _trecho_da_cena(projeto, n):
     c = por_n.get(n)
     if not c or not animation_ai.e_animada(c):
         raise SystemExit(f"A cena {n} não é uma cena animada. Rode: uv run fabrica direcao {projeto.nome} --cenas {n}")
-    trecho = c.get("anim_trecho") or [n]
-    grupo = []
-    for k in trecho:
-        if k in por_n and animation_ai.e_animada(por_n[k]) and (not grupo or k == grupo[-1]["n"] + 1):
-            grupo.append(por_n[k])
-        elif grupo:
-            break
-    return grupo
+    # pelo trecho que a cena carrega, não pelos números: depois de renumerar, eles são os velhos
+    for _, grupo in animation_ai.trechos_animados(cenas):
+        if c in grupo:
+            return grupo
+    return [c]
 
 
 def refinar(projeto, n, instrucao, log=print) -> dict:

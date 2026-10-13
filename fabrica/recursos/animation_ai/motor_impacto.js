@@ -42,6 +42,8 @@
   // entradas: chega desacelerando, de maior, de baixo ou do lado, com desfoque de movimento
   const JEITOS = {
     sobe: { y: 70, autoAlpha: 0, filter: "blur(12px)" },
+    // dentro de cartão: os 70 px do sobe passavam da borda de baixo (cenas 94 e 224 do brasil-selvagem)
+    curto: { y: 26, autoAlpha: 0, filter: "blur(8px)" },
     soco: { scale: 1.3, autoAlpha: 0, filter: "blur(16px)" },
     esquerda: { x: -240, autoAlpha: 0, filter: "blur(14px)" },
     direita: { x: 240, autoAlpha: 0, filter: "blur(14px)" },
@@ -119,7 +121,7 @@
     o = o || {};
     const c = src
       ? el(`<div class="card" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><img alt="" src="${esc(src)}" style="object-position:${o.pos || "50% 45%"}">${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai)
-      : el(`<div class="card vazio" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai);
+      : el(`<div class="card vazio" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${s.fundo ? `<img class="textura" alt="" src="${esc(s.fundo)}">` : ""}${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai);
     if (src && o.kb) tl.fromTo(c.querySelector("img"), { scale: 1.16 }, { scale: 1.0, duration: Math.max(0.5, DUR - o.kb), ease: "none" }, o.kb);
     return c;
   }
@@ -252,17 +254,21 @@
     const marca = { errado: "✕", alerta: "!", estrela: "★", certo: "✓" }[s.marca] || (TIPO === "checklist" ? "✓" : null);
     const POS = ["50% 40%", "30% 50%", "70% 45%", "50% 70%", "20% 30%", "80% 60%"];
     const pilha = [];
+    // com foto própria em algum item, o cartão sem foto fica sem: a foto da cena é a de outro item, e o nome
+    // embaixo dela mentiria (o "bichos-preguiça" sobre o macaco-prego)
+    const proprias = itens.some(it => it.foto);
     const topo = s.titulo ? 180 : 150;  // com título, o baralho desce para não cobrir o título
     itens.forEach((it, i) => {
       const t = T(it.t, 0.4 + i * 0.8);
       const emb = el(`<div class="embrulho" ${PERMITE} style="left:460px;top:${topo}px;width:1000px;height:560px"></div>`);
-      const foto = it.foto || s.fundo || null;
+      const foto = it.foto || (proprias ? null : s.fundo) || null;
       const c = carta(foto, 0, 0, 1000, 560, { sombra: true, kb: t, pos: it.foto ? "50% 45%" : POS[i % POS.length], pai: emb });
       emb.pelicula = el(`<i class="pelicula" ${PERMITE}></i>`, c);
       const caixa = el(`<div class="bloco" ${PERMITE} style="left:54px;bottom:60px"></div>`, c);
+      emb.caixa = caixa;
       const nome = texto(caixa, "gigante sombra-txt", "font-size:112px", 890, 250, 44);
-      escreve(nome, it.titulo || it.texto, t + 0.08, { passo: 0.06 });
-      if (it.titulo && it.texto) escreve(texto(caixa, "serif", "font-size:46px;margin-top:10px;color:#fff", 890, 120, 26), limpo(it.texto), t + 0.4, { passo: 0.05 });
+      escreve(nome, it.titulo || it.texto, t + 0.08, { passo: 0.06, jeito: "curto" });
+      if (it.titulo && it.texto) escreve(texto(caixa, "serif", "font-size:46px;margin-top:10px;color:#fff", 890, 120, 26), limpo(it.texto), t + 0.4, { passo: 0.05, jeito: "curto" });
       const simbolo = numerado ? String(i + 1) : marca;
       if (simbolo) {
         const selo = el(`<div class="selo" ${PERMITE} style="left:-34px;top:-34px">${esc(simbolo)}</div>`, emb);
@@ -272,11 +278,14 @@
       entra(emb, Math.max(0, t - 0.1), "baixo", 0.5);
       pilha.forEach((ant, j) => {
         const fundo_ = pilha.length - j;
-        const leva = { scale: 1 - 0.06 * fundo_, x: -60 * fundo_, y: 14 * fundo_, rotation: -2.5 * fundo_,
+        const leva = { scale: 1 - 0.06 * fundo_, x: -110 * fundo_, y: 14 * fundo_, rotation: -2.5 * fundo_,
                        duration: 0.45, ease: "power3.out" };
         if (fundo_ > 3) leva.autoAlpha = 0;
         tl.to(ant, leva, Math.max(0, t - 0.1));
         tl.to(ant.pelicula, { opacity: Math.min(0.7, 0.24 * fundo_), duration: 0.45, ease: "power3.out" }, Math.max(0, t - 0.1));
+        // o texto do cartão de trás some: sob a película, a caixa amarela escurecia e o texto escuro dela sumia
+        // (contraste 1,1:1, cena 43 do brasil-selvagem); quem fala é o cartão da frente
+        if (fundo_ === 1) tl.to(ant.caixa, { autoAlpha: 0, duration: 0.3, ease: "power2.out" }, Math.max(0, t - 0.1));
       });
       pilha.push(emb);
     });
@@ -291,13 +300,13 @@
     const colunas = lados.map((lado, k) => {
       const col = el(`<div class="embrulho" ${PERMITE} style="left:${k ? 1010 : 90}px;top:70px;width:820px"></div>`);
       const dentro = el(`<div ${PERMITE}></div>`, col);
-      const foto = lado.foto || s.fundo || null;
+      const foto = lado.foto || (lados.some(l => l.foto) ? null : s.fundo) || null;  // como no baralho
       const c = carta(foto, 0, 0, 820, 400, { sombra: true, kb: k ? t1 : t0, pos: lado.foto ? "50% 45%" : (k ? "75% 50%" : "25% 50%"), pai: dentro });
       c.style.position = "relative";
       const tlado = k ? t1 : t0;
       if (TIPO === "comparar") {
         const tit = texto(dentro, "gigante sombra-txt", "font-size:112px;margin-top:30px", 820, 210, 44);
-        escreve(tit, `*${limpo(lado.titulo)}*`, tlado + 0.1, { cor: k && !neutro ? "vermelha" : "escura", passo: 0.07 });
+        escreve(tit, `*${limpo(lado.titulo || lado.texto)}*`, tlado + 0.1, { cor: k && !neutro ? "vermelha" : "escura", passo: 0.07 });
         const its = (lado.itens || []).slice(0, 2);
         its.forEach((it, i) => escreve(texto(dentro, "leve", "font-size:46px;margin-top:12px", 820, 120, 26), limpo(it.texto), T(it.t, tlado + 0.5 + i * 0.4), { passo: 0.05 }));
       } else {
@@ -344,20 +353,24 @@
     fontes.forEach((it, i) => {
       const x = x0 + i * (w + 30), t = T(it.t, 0.3 + i * 0.7);
       const c = carta(it.foto || null, x, 60, w, h, { sombra: true, kb: t, pos: it.foto ? "50% 45%" : "50% 50%" });
-      const rot = texto(el(`<div class="bloco" ${PERMITE} style="left:24px;bottom:18px"></div>`, c), "medio sombra-txt", "font-size:46px", w - 48, 110, 22);
-      escreve(rot, limpo(it.texto), t + 0.1, { passo: 0.05 });
+      const rot = texto(el(`<div class="bloco" ${PERMITE} style="left:24px;bottom:24px"></div>`, c), "medio sombra-txt", "font-size:46px", w - 48, 110, 22);
+      escreve(rot, limpo(it.texto), t + 0.1, { passo: 0.05, jeito: "curto" });
       if (it.data) { const et = el(`<div class="etiqueta" ${PERMITE} style="left:18px;top:16px">${esc(it.data)}</div>`, c); entra(et, t + 0.2, "carimbo", 0.35); }
       entra(c, t, "sobe", 0.5);
       linha(svg, `M ${x + w / 2} ${60 + h} C ${x + w / 2} ${60 + h + 90}, 960 ${330}, 960 ${405}`, tDest - 0.15 + i * 0.08, 0.55);
     });
-    const cd = carta(destino.foto || s.fundo || null, 410, 410, 1100, 360, { sombra: true, kb: tDest, pos: "50% 55%" });
+    // sem foto nem textura, o cartão do destino seria um retângulo escuro vazio: fica só a frase (cenas 71 e 296)
+    const fotoDest = destino.foto || (fontes.some(it => it.foto) ? null : s.fundo) || null;
+    const cd = fotoDest || s.fundo
+      ? carta(fotoDest, 410, 410, 1100, 360, { sombra: true, kb: tDest, pos: "50% 55%" })
+      : el(`<div class="bloco" ${PERMITE} style="left:410px;top:410px;width:1100px;height:360px"></div>`);
     entra(cd, Math.max(0, tDest - 0.35), "baixo", 0.55);
     if (destino.data) { const et = el(`<div class="etiqueta" ${PERMITE} style="left:24px;top:20px;font-size:40px">${esc(destino.data)}</div>`, cd); entra(et, tDest + 0.2, "carimbo", 0.35); }
     const pino = el(`<div class="pino" ${PERMITE} style="left:938px;top:388px"></div>`);
     entra(pino, tDest + 0.3, "carimbo", 0.4);
     const fim = texto(el(`<div class="bloco" ${PERMITE} style="left:160px;top:575px;text-align:center"></div>`),
                       "gigante sombra-txt", "font-size:150px", 1600, 190, 50);
-    escreve(fim, /\*/.test(destino.texto || "") ? destino.texto : `*${limpo(destino.texto)}*`, tDest + 0.15, { passo: 0.07 });
+    escreve(fim, /\*/.test(destino.texto || "") ? destino.texto : `*${limpo(destino.texto)}*`, tDest, { passo: 0.04 });
     flash(tDest + 0.15);
   };
 

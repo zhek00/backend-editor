@@ -82,3 +82,13 @@ def test_sons_do_impacto_caem_nos_momentos_das_receitas():
     for tipo in a.TIPOS_IMPACTO:
         dados, _ = a.resolver_tempos(tipo, a.EXEMPLOS[tipo], [], 6.0)
         assert a.sons_impacto(tipo, dados, 6.0), tipo
+
+
+def test_nome_da_animacao_nao_pisa_no_arquivo_de_outra_cena(tmp_path):
+    # a cena 33 (a 34 de antes de renumerar) mostra midia/0034_anim.mp4: a cena 34 nova grava com outro nome
+    from fabrica.midia import nome_livre
+
+    cenas = [{"n": 33, "midia": {"arquivo": "midia/0034_anim.mp4"}}, {"n": 34, "midia": None}]
+    p = SimpleNamespace(ler_json=lambda nome: {"cenas": cenas})
+    assert nome_livre(p, 34, ("_anim.mp4", "_anim_capa.jpg")) == "0034_2"
+    assert nome_livre(p, 35, ("_anim.mp4", "_anim_capa.jpg")) == "0035"

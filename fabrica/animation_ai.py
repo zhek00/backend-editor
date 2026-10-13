@@ -1046,21 +1046,53 @@ def _foto_do_banco(projeto, pasta, c, item, usadas, log):
     return destino, credito
 
 
-def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_foto=COM_FOTO) -> dict:
+def _o_que_a_cena_mostra(c) -> str:
+    """O que se sabe da foto da cena: a legenda da visão, o pedido da busca e a fala."""
+    antes = _o_que_a_cena_tinha(c)
+    partes = [str((antes.get("captura") or {}).get("legenda") or "")]
+    partes += [str(antes.get(k) or c.get(k) or "") for k in ("exato", "animal", "sujeito", "busca")]
+    return _normal(" ".join(partes + [str(c.get("texto") or "")]))
+
+
+def _combina(item, mostra) -> int:
+    """Quantas palavras do item (pelo radical de 5 letras: "macacos" acha "macaco") aparecem no que a cena mostra."""
+    texto = _normal(str(item.get("texto") or item.get("titulo") or "").replace("*", ""))
+    radicais = {p[:5] for p in re.findall(r"[a-z0-9]{4,}", texto)}
+    return sum(1 for r in radicais if r in mostra)
+
+def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_foto=COM_FOTO,
+                    minimo=MINIMO_DE_FOTOS, exigir_combina=False) -> dict:
     """Põe em cada item (dados["itens"]) a foto da coisa que ele cita: a da cena em que a palavra do item é falada,
     ou uma dos bancos. Cada cena empresta a foto a um item só. Devolve {número da cena: [créditos]} das fotos que
     entram na tela durante cada cena."""
     itens = [it for it in dados.get("itens") or [] if isinstance(it, dict)]
     if tipo not in com_foto or not itens or not config(projeto).get("fotos_nos_itens", True):
         return {}
-    usadas, por_cena, achadas = _usadas_no_video(projeto), set(), []
-    for it in itens:
+    usadas, achadas = _usadas_no_video(projeto), []
+
+    def cena_do(it):
         momento = ini + float(it.get("t") or 0) + 0.12
         cena = next((c for c in trecho if float(c["ini"]) <= momento < float(c["fim"])), None)
-        cena = cena or min(trecho, key=lambda c: abs(float(c["ini"]) - momento))
-        if cena["n"] in por_cena:
-            continue  # a cena já deu a foto ao item anterior: a pilha segue com ela
-        por_cena.add(cena["n"])
+        return cena or min(trecho, key=lambda c: abs(float(c["ini"]) - momento))
+
+    # cada cena empresta a foto a um item só: ao que ela mostra, e não ao primeiro que cai nela. Cena 34 do
+    # brasil-selvagem: "bichos-preguiça" e "macacos" falados na mesma cena, a do macaco-prego; o cartão dos
+    # bichos-preguiça saía com o macaco
+    por_cena = {}
+    for it in itens:
+        por_cena.setdefault(cena_do(it)["n"], []).append(it)
+    escolhidos = []
+    for cena in trecho:
+        candidatos = por_cena.get(cena["n"])
+        if candidatos:
+            mostra = _o_que_a_cena_mostra(cena)
+            melhor = max(candidatos, key=lambda it: (_combina(it, mostra), -candidatos.index(it)))
+            # exigir_combina (impacto): vários itens na cena e a foto não mostra nenhum, ela não vai para cartão
+            # nenhum ("onças" sobre o macaco-prego)
+            if not (exigir_combina and len(candidatos) > 1 and not _combina(melhor, mostra)):
+                escolhidos.append((melhor, cena))
+    escolhidos.sort(key=lambda par: itens.index(par[0]))
+    for it, cena in escolhidos:
         foto = _foto_da_cena(projeto, cena)
         if foto is None:
             foto = _foto_do_banco(projeto, pasta, cena, it, usadas, log)
@@ -1074,7 +1106,7 @@ def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_fot
                 continue
         usadas.add(f"{foto[1].get('fonte')}:{foto[1].get('id')}")
         achadas.append((it, arquivo, foto[1], cena["n"]))
-    if len(achadas) < min(MINIMO_DE_FOTOS, len(itens)):
+    if len(achadas) < min(minimo, len(itens)):
         return {}
     creditos = {}
     for it, arquivo, credito, n in achadas:
@@ -1087,12 +1119,17 @@ def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_fot
 def fotos_impacto(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
     """As fotos do motor do impacto: a foto que a cena já tinha vai para o fundo (dados["fundo"]), e cada item, lado da
     comparação ou passo da ligação ganha a foto da coisa que cita (fotos_dos_itens). Devolve os créditos por cena."""
-    creditos = fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log, com_foto=COM_FOTO_IMPACTO)
+    # no impacto cada cartão é a sua foto: a que achou entra, mesmo sozinha (com o mínimo de 2, a foto achada para
+    # "Interrompe circulação" se perdia e os dois cartões da cena 71 do brasil-selvagem saíam vazios)
+    creditos = fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log, com_foto=COM_FOTO_IMPACTO, minimo=1,
+                               exigir_combina=True)
     if tipo in ("comparar", "antes_depois", "deslizar"):
         lados = [dados.get(k) for k in (("esq", "dir") if tipo == "comparar" else ("antes", "depois"))]
         if all(isinstance(l, dict) for l in lados):
-            itens = [{"texto": l.get("titulo") or l.get("rotulo") or "", "t": l.get("t", 0)} for l in lados]
-            for n, lista in fotos_dos_itens(projeto, trecho, "lista", {"itens": itens}, ini, pasta, log).items():
+            itens = [{"texto": l.get("titulo") or l.get("rotulo") or l.get("texto") or "", "t": l.get("t", 0)}
+                     for l in lados]
+            for n, lista in fotos_dos_itens(projeto, trecho, "lista", {"itens": itens}, ini, pasta, log,
+                                            minimo=1).items():
                 creditos.setdefault(n, []).extend(lista)
             for lado, it in zip(lados, itens):
                 if it.get("foto"):
@@ -1108,36 +1145,98 @@ def fotos_impacto(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
             dados["fundo_id"] = f"{foto[1].get('fonte')}:{foto[1].get('id')}"  # outra foto, outro clipe
             if dados["fundo_id"] not in {f"{x.get('fonte')}:{x.get('id')}" for x in creditos.get(c["n"], [])}:
                 creditos.setdefault(c["n"], []).append(foto[1])
+            # nenhum item com foto própria: a do fundo vai para o cartão do item que ela mostra, e os outros ficam
+            # sem foto (motor_impacto.js, baralho). Sem isso, todo cartão repetia o fundo com o nome de outra coisa
+            # embaixo (cena 34 do brasil-selvagem: "bichos-preguiça" sobre o macaco-prego)
+            itens = [it for it in dados.get("itens") or [] if isinstance(it, dict)]
+            if tipo in COM_FOTO_IMPACTO and len(itens) > 1 and not any(it.get("foto") for it in itens):
+                mostra = _o_que_a_cena_mostra(c)
+                melhor = max(itens, key=lambda it: (_combina(it, mostra), -itens.index(it)))
+                if _combina(melhor, mostra):
+                    melhor["foto"], melhor["foto_id"] = dados["fundo"], dados["fundo_id"]
             break
     return creditos
 
+
+def trechos_animados(cenas) -> list:
+    """[(trecho, grupo)]: cada trecho animado (anim_trecho, os números de quando foi gravado, que dão a pasta do plano)
+    com as cenas seguidas que ainda são essa animação. O grupo sai de quem carrega a mesma lista, não dos números:
+    narrar de novo renumera as cenas e o anim_trecho fica com os números velhos (brasil-selvagem, 2026-10-13: a cena
+    61 com o trecho 66 a 69; pelos números, 41 dos 45 trechos ficavam sem regravar e sem som). A cena que a pessoa
+    trocou por foto ou imagem de IA no editor fica de fora e corta o grupo (cena 36, no meio do trecho 34 a 36); se
+    era a primeira, o trecho todo fica como está."""
+    saida, vistos = [], set()
+    for i, c in enumerate(cenas):
+        chave = tuple(c.get("anim_trecho") or ([c["n"]] if e_animada(c) else []))
+        if not chave or chave in vistos:
+            continue
+        vistos.add(chave)
+        if not e_animada(c):
+            continue
+        grupo = [c]
+        for d in cenas[i + 1:]:
+            if not (e_animada(d) and tuple(d.get("anim_trecho") or [d["n"]]) == chave and d["n"] == grupo[-1]["n"] + 1):
+                break
+            grupo.append(d)
+        saida.append((list(chave), grupo))
+    return saida
+
+
+def _partes_do_trecho(projeto, trecho):
+    """O plano gravado do trecho (partes.json da pasta do primeiro número), ou None. A pasta vai pelo número: depois
+    de renumerar, outro trecho pode ter gravado por cima dela (brasil-selvagem: a 0034 virou o trecho [34], e a cena
+    do [34, 35] velho ficou sem plano). O plano diz de quais cenas é, e só vale para elas."""
+    pasta = _pasta_do_trecho(projeto, trecho)
+    return None if pasta is None else _ler_partes(pasta)
+
+
+def _ler_partes(pasta):
+    try:
+        return json.loads((pasta / "partes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _pasta_do_trecho(projeto, trecho):
+    """A pasta com o plano destas cenas: a do primeiro número (animation_ai/0100) ou, se ela já era de outro trecho
+    quando este foi gravado, a 0100_2, 0100_3... O plano sem a lista de cenas (de antes de 2026-10-13) vale."""
+    base = _pasta(projeto, trecho[0])
+    for pasta in [base, *sorted(base.parent.glob(f"{base.name}_*"))]:
+        partes = _ler_partes(pasta)
+        if partes is not None and (not partes.get("cenas") or list(partes["cenas"]) == list(trecho)):
+            return pasta
+    return None
+
+
+def _pasta_para_gravar(projeto, numeros):
+    """Onde gravar o plano das cenas numeros: a pasta do primeiro número, menos quando ela guarda o plano de outro
+    trecho que alguma cena ainda mostra. Depois de renumerar, a cena 94 é o trecho 100 a 102 de antes; gravar a cena
+    100 nova em animation_ai/0100 apagava o plano dela, e a 94 ficava sem som e sem como regravar (brasil-selvagem)."""
+    em_uso = {tuple(c["anim_trecho"]) for c in projeto.ler_json("cenas.json")["cenas"]
+              if c.get("anim_trecho") and e_animada(c) and c["n"] not in numeros}
+    base, k = _pasta(projeto, numeros[0]), 1
+    while True:
+        pasta = base if k == 1 else base.with_name(f"{base.name}_{k}")
+        partes = _ler_partes(pasta)
+        if (partes is None or not partes.get("cenas") or list(partes["cenas"]) == list(numeros)
+                or tuple(partes["cenas"]) not in em_uso):
+            return pasta
+        k += 1
 
 def regravar(projeto, numeros=None, log=print) -> list:
     """Grava de novo as cenas animadas que já existem, com o plano delas (partes.json): pega as mudanças do desenho
     (as fotos dos itens, VERSAO) sem perguntar nada ao modelo. numeros: só os trechos que têm alguma dessas cenas.
     Falhou, a cena fica com a animação de antes."""
     todas = projeto.ler_json("cenas.json")["cenas"]
-    por_n = {c["n"]: c for c in todas}
     pares = []
-    for c in todas:
-        trecho = c.get("anim_trecho") or [c["n"]]
-        if not e_animada(c) or c["n"] != trecho[0]:
+    for trecho, grupo in trechos_animados(todas):
+        if numeros and not (set(trecho) | {c["n"] for c in grupo}) & set(numeros):
             continue
-        if numeros and not set(trecho) & set(numeros):
+        partes = _partes_do_trecho(projeto, trecho)
+        if partes is None:
+            log(f"  animation-ai: cena {grupo[0]['n']} sem o plano do trecho dela; fica como estava")
             continue
-        try:
-            partes = json.loads((_pasta(projeto, c["n"]) / "partes.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        # só as cenas que ainda são a animação: a que a pessoa trocou por foto ou imagem de IA no editor fica como está
-        # (cena 36 do brasil-selvagem, trocada por imagem de IA no meio do trecho 34 a 36)
-        grupo = []
-        for n in trecho:
-            if n in por_n and e_animada(por_n[n]) and (not grupo or n == grupo[-1]["n"] + 1):
-                grupo.append(por_n[n])
-            elif grupo:
-                break
-        if grupo and partes.get("tipo"):
+        if partes.get("tipo"):
             dados = json.loads(json.dumps(partes["dados"]))
             if isinstance(dados.get("itens"), list):
                 # plano de antes da conferência de item repetido ("a cada dois ou três anos" duas vezes, cena 47)
@@ -1244,7 +1343,7 @@ def gravar(projeto, trecho, plano, log=print):
     resolvidos, eventos = resolver_tempos(tipo, dados, palavras, dur)
     cores = tema(projeto)
     canal = str(cfg.get("canal") or "")  # o nome do canal no canto, do perfil (animation_ai.canal); vazio, sem nome
-    pasta = _pasta(projeto, trecho[0]["n"])
+    pasta = _pasta_para_gravar(projeto, [c["n"] for c in trecho])
     if e_impacto(cores):
         creditos = fotos_impacto(projeto, trecho, tipo, resolvidos, ini, pasta, log)
         eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
@@ -1252,7 +1351,13 @@ def gravar(projeto, trecho, plano, log=print):
         creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
     variante = trecho[0]["n"]
     marca = assinatura(tipo, resolvidos, dur, cores, canal, variante)
-    destino = projeto.pasta / "midia" / f"{trecho[0]['n']:04d}_anim{'_trecho' if len(trecho) > 1 else ''}.mp4"
+    from .midia import nome_livre
+
+    # o nome pelo número da cena, mas nunca o de um arquivo que outra cena usa: depois de renumerar, a cena 33 mostra o
+    # midia/0034_anim.mp4, e gravar a cena 34 nova com esse nome trocava a animação da 33 (brasil-selvagem, 2026-10-13)
+    sufixos = ("_anim.mp4", "_anim_capa.jpg")
+    base = nome_livre(projeto, trecho[0]["n"], sufixos)
+    destino = projeto.pasta / "midia" / f"{base}_anim{'_trecho' if len(trecho) > 1 else ''}.mp4"
     partes = pasta / "partes.json"
     anterior = json.loads(partes.read_text(encoding="utf-8")) if partes.exists() else {}
     if anterior.get("assinatura") != marca or not destino.exists():
@@ -1283,13 +1388,13 @@ def gravar(projeto, trecho, plano, log=print):
         inicio = float(c["ini"]) - ini
         dur_c = max(float(c["fim"]) - float(c["ini"]), 0.5)
         if len(trecho) > 1:
-            pedaco = projeto.pasta / "midia" / f"{c['n']:04d}_anim.mp4"
+            pedaco = projeto.pasta / "midia" / f"{nome_livre(projeto, c['n'], sufixos)}_anim.mp4"
             rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.3f}", "-i", str(destino), "-t",
                    f"{dur_c + 0.05:.3f}", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "16",
                    "-pix_fmt", "yuv420p", str(pedaco)])
         else:
             pedaco = destino
-        capa = pedaco.with_name(f"{c['n']:04d}_anim_capa.jpg")
+        capa = pedaco.with_name(pedaco.name.replace("_anim.mp4", "_anim_capa.jpg"))
         rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0.0, min(dur_c * 0.7, dur_c - 0.1)):.2f}",
                "-i", str(pedaco), "-frames:v", "1", "-q:v", "3", str(capa)])
         saida.append((c["n"], pedaco, capa, dur_c, creditos.get(c["n"], [])))
@@ -1754,11 +1859,12 @@ def sons_na_linha(projeto, cenas, log=print) -> list:
     if not cfg.get("sons", True):
         return []
     saida = []
-    for c in cenas:
-        if not e_animada(c) or (c.get("anim_trecho") and c["n"] != c["anim_trecho"][0]):
+    for trecho, grupo in trechos_animados(cenas):
+        c, pasta = grupo[0], _pasta_do_trecho(projeto, trecho)
+        if pasta is None:
             continue
         try:
-            arquivo = _sons_do_trecho(projeto, _pasta(projeto, c["n"]))
+            arquivo = _sons_do_trecho(projeto, pasta)
         except Exception as erro:  # noqa: BLE001 - uma cena sem som não derruba o render
             log(f"  animation-ai: cena {c['n']} ficou sem som ({str(erro)[:100]})")
             continue

@@ -444,6 +444,23 @@ se a frase dela tiver estrutura e nota alta (`imagens._motion_antes_da_ia` com `
   ponto de partida (1,3 vez maior, deslocado), tudo encolhia até o mínimo. Os contadores são medidos com o valor
   final. Todo texto leva `data-layout-allow-overlap` (fica de propósito sobre foto e película) e a conferência de
   contraste segue valendo. `tema: apple` (ou outro) no `config.yaml` volta ao motor de antes.
+  Os sons do impacto saem de `sons_impacto` (os momentos de cada receita: o baque no soco e no flash, o risco no
+  cartão que chega). Foto de item: a foto da cena vai para o item que ela mostra (`_combina` com a legenda da visão,
+  a busca e a fala), não para o primeiro que cai nela. No impacto (`fotos_impacto`): vale a foto achada mesmo
+  sozinha (`minimo=1`; com o mínimo de 2 a foto achada se perdia e os cartões saíam vazios), vários itens na mesma
+  cena e a foto não mostra nenhum, ela não vai para cartão nenhum (`exigir_combina`), e sem foto própria em nenhum
+  item a do fundo vai só para o cartão do item que ela mostra (cena 34 do brasil-selvagem: "bichos-preguiça" saía
+  sobre o macaco-prego). Cartão sem foto leva a do fundo bem desfocada (`img.textura`): a cor e a luz, sem a coisa
+  que ela mostra; o destino da ligação sem foto nem fundo fica sem cartão, só a frase. Texto dentro de cartão entra
+  com o `curto` (26 px): os 70 px do `sobe` passavam da borda. O comparar aceita o nome do lado em `texto` (o modelo
+  às vezes manda assim, e os títulos sumiam; o motor.js também só lê `titulo`).
+- **Cenas animadas depois de renumerar** (2026-10-13, no teste do impacto no brasil-selvagem): narrar de novo
+  renumera as cenas e o `anim_trecho` fica com os números velhos (a cena 61 com o trecho 66 a 69). Pelos números, 41
+  dos 45 trechos ficavam sem regravar e sem som no render, e regravar dava o plano às cenas erradas. Agora o grupo
+  sai de quem carrega a mesma lista (`trechos_animados`, usado no `regravar`, nos sons e na direção); o plano diz de
+  quais cenas é (`partes.json`, `cenas`) e só vale para elas (`_partes_do_trecho`); a pasta do plano não apaga a de
+  outro trecho que alguma cena ainda mostra (`_pasta_para_gravar`: 0100_2); e o arquivo do clipe nunca pega o nome
+  de um que outra cena usa (`midia.nome_livre`: a cena 34 nova gravava por cima do `0034_anim.mp4` da cena 33).
 - **Tema `apple`, o padrão até 2026-10-12** (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo APPLE que o
   motion ia utilizava, para ficar elegante e com qualidade"): os valores do esqueleto do Motion IA, creme `#F7F6F2`
   com pontos de 24 px, cards brancos de raio 20 sem borda com a sombra `0 12px 32px rgba(0,0,0,.06)`, título em Inter
