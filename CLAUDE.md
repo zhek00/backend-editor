@@ -430,7 +430,21 @@ se a frase dela tiver estrutura e nota alta (`imagens._motion_antes_da_ia` com `
   px e de 100 a 800 px; embaixo, a legenda. Decoração grande é SVG, não texto (o "?" de 1.100 px da pergunta saía da
   tela e reprovava). Temas em `TEMAS` (noite, editorial, misterio; `cores` por cima); o nome do canal no canto vem de
   `animation_ai.canal`. O `motor.js` entra na assinatura: mudou o desenho, os trechos são gravados de novo.
-- **Tema `apple`, o padrão** (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo APPLE que o
+- **Tema `impacto`, o padrão desde 2026-10-13** (pedido do usuário: as animações estavam "fraquinhas, sem sal"; queria
+  "uma animação de verdade" como os vídeos de referência; o protótipo em `teste-estilos/prototipo` foi aprovado e virou
+  modelo fixo). Motor próprio, `recursos/animation_ai/motor_impacto.js` e `.css` (`montar_html` e `assinatura` escolhem
+  pelo `_motor` do tema, `e_impacto`): fundo quase preto com a foto da cena atrás andando devagar, letra gigante em
+  Inter 900, destaque em caixa amarela `#FFD23F` (vermelho `#FF4D3D` no segundo), brilho, vinheta, grão e flash. Seis
+  receitas cobrem os tipos (`QUAL` no motor): `heroi` (número que conta subindo ao lado da foto), `frase` (palavras
+  entrando no tempo da fala), `baralho` (cartões com foto que se empilham, os de trás escurecidos por película),
+  `comparar` (dois lados com foto), `ligacao` (causas ou datas em cartões ligados por linha a um cartão de destino) e
+  `titulo`. O modelo só escolhe tipo que tem receita (`TIPOS_IMPACTO`, `tipos_do_tema`). As fotos vêm de
+  `fotos_impacto`: a foto que a cena já tinha vai para `dados["fundo"]`, e cada item ou lado ganha a foto da coisa que
+  cita (`COM_FOTO_IMPACTO`). O texto encolhe para caber (`cabe`), medido sem as transformações de entrada: medido no
+  ponto de partida (1,3 vez maior, deslocado), tudo encolhia até o mínimo. Os contadores são medidos com o valor
+  final. Todo texto leva `data-layout-allow-overlap` (fica de propósito sobre foto e película) e a conferência de
+  contraste segue valendo. `tema: apple` (ou outro) no `config.yaml` volta ao motor de antes.
+- **Tema `apple`, o padrão até 2026-10-12** (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo APPLE que o
   motion ia utilizava, para ficar elegante e com qualidade"): os valores do esqueleto do Motion IA, creme `#F7F6F2`
   com pontos de 24 px, cards brancos de raio 20 sem borda com a sombra `0 12px 32px rgba(0,0,0,.06)`, título em Inter
   grafite, destaque em Playfair itálica azul `#2563EB`, laranja `#EA580C` e verde `#166534`. O jeito de mexer vem do

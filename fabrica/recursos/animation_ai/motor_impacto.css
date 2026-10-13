@@ -1,0 +1,63 @@
+/* animation-ai, tema impacto (animation_ai.TEMAS["impacto"], motor_impacto.js): fundo quase preto com a foto da cena
+   atrás, letra gigante, uma cor de destaque, brilho, grão e câmera sempre andando. Vem do protótipo de 2026-10-13
+   (teste-estilos/prototipo). A faixa de baixo fica livre para a legenda queimada. Nada aqui anima sozinho: quem move
+   tudo é a linha do tempo do motor. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--fundo, #07080A); }
+#root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--fundo, #07080A);
+        font-family: "Texto", system-ui, sans-serif; color: var(--txt, #F5F3EE); }
+#palco { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 50% 42%; }
+.bg { position: absolute; left: -80px; top: -60px; width: 2080px; height: 1200px; overflow: hidden; }
+.bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bg.vazio { background: radial-gradient(900px 700px at 28% 30%, var(--brilho-a, rgba(77,163,255,.20)), transparent 62%),
+                        radial-gradient(900px 700px at 76% 72%, var(--brilho-b, rgba(255,210,63,.14)), transparent 60%),
+                        var(--fundo, #07080A); }
+.escuro { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block;
+          background: radial-gradient(ellipse at 50% 40%, rgba(7,8,10,.35), rgba(7,8,10,.92) 75%); }
+.escuro.forte { background: rgba(7,8,10,.55); }
+.escuro.lado { background: linear-gradient(to right, rgba(7,8,10,.15), rgba(7,8,10,.55) 45%, rgba(7,8,10,.9)); }
+.card { position: absolute; border-radius: 30px; overflow: hidden; background: #15171C;
+        box-shadow: 0 50px 110px rgba(0,0,0,.65), 0 0 0 2px rgba(255,255,255,.10); }
+.card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card.vazio { background: radial-gradient(120% 90% at 20% 15%, rgba(255,255,255,.10), transparent 55%),
+                          linear-gradient(135deg, #1C2230, #0E1118); }
+.card .sombra { position: absolute; left: 0; right: 0; bottom: 0; height: 62%; display: block;
+                background: linear-gradient(to bottom, transparent, rgba(0,0,0,.88)); }
+.embrulho { position: absolute; }
+.pelicula { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; background: #000; opacity: 0;
+            pointer-events: none; }
+.bloco { position: absolute; }
+.gigante { font-weight: 900; letter-spacing: -0.04em; line-height: .9; text-transform: uppercase; }
+.medio { font-weight: 800; letter-spacing: -0.02em; line-height: 1.02; text-transform: uppercase; }
+.leve { font-weight: 600; font-size: 58px; line-height: 1.15; color: var(--txt2, #D9D4CA); letter-spacing: -0.01em; }
+.serif { font-family: "Titulo", Georgia, serif; font-style: italic; font-weight: 700; text-transform: none;
+         letter-spacing: -0.01em; }
+.uma-linha { white-space: nowrap; }
+.sombra-txt { text-shadow: 0 18px 60px rgba(0,0,0,.75); }
+.p { display: inline-block; margin-right: .22em; }
+.p:last-child { margin-right: 0; }
+.caixa { position: relative; display: inline-block; isolation: isolate; padding: 0 .12em; }
+.caixa > i { position: absolute; left: 0; right: 0; top: 4%; bottom: 0; border-radius: .08em; z-index: -1; display: block;
+             background: var(--acc, #FFD23F); transform-origin: 0 50%; }
+.caixa.escura { color: #0B0B0C; }
+.caixa.vermelha > i { background: var(--acc2, #FF4D3D); }
+.caixa.vermelha { color: #FFFFFF; }
+.cor-acc { color: var(--acc, #FFD23F); }
+.cor-acc2 { color: var(--acc2, #FF4D3D); }
+.brilho { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .55; pointer-events: none; }
+.vinheta { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none;
+           background: radial-gradient(ellipse at 50% 45%, transparent 52%, rgba(0,0,0,.78) 100%); }
+.faixa { position: absolute; left: 0; right: 0; bottom: 0; height: 300px; pointer-events: none;
+         background: linear-gradient(to bottom, transparent, rgba(0,0,0,.55)); }
+.grao { position: absolute; left: -200px; top: -200px; width: 2320px; height: 1480px; pointer-events: none; opacity: .09;
+        mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+.flash { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #fff; pointer-events: none; opacity: 0; }
+.selo { position: absolute; width: 110px; height: 110px; border-radius: 50%; display: flex; align-items: center;
+        justify-content: center; background: var(--acc, #FFD23F); color: #0B0B0C; font-weight: 900; font-size: 60px;
+        box-shadow: 0 16px 40px rgba(0,0,0,.55), 0 0 0 6px rgba(0,0,0,.25); }
+.etiqueta { position: absolute; padding: 6px 16px; border-radius: 10px; background: var(--acc, #FFD23F); color: #0B0B0C;
+            font-weight: 900; font-size: 34px; letter-spacing: -0.01em; }
+.pino { position: absolute; width: 44px; height: 44px; border-radius: 50%; background: var(--acc, #FFD23F);
+        box-shadow: 0 0 0 10px rgba(255,210,63,.35), 0 0 60px rgba(255,210,63,.9); }
+svg.linhas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; pointer-events: none; }

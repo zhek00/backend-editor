@@ -10,7 +10,7 @@ ESTILOS_NOVOS = ("neon", "riso", "blueprint", "cinema")
 
 
 def test_duzentos_e_quarenta_modelos():
-    assert len(a.CATALOGO) == 30 and len(a.TEMAS) == 8
+    assert len(a.CATALOGO) == 30 and len(a.TEMAS) == 9  # 8 temas do motor de antes + o impacto
     assert len(a.CATALOGO) * len(a.TEMAS) >= 200
     assert set(a.CATALOGO) == set(a.EXEMPLOS)
     assert set(NOVOS) <= set(a.CATALOGO)

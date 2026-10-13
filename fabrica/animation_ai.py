@@ -45,12 +45,18 @@ from . import animacoes
 from .util import rodar
 
 FONTE = "animation_ai"
-VERSAO = 4  # suba quando mudar o desenho (motor.js, motor.css ou TEMAS): os trechos são gravados de novo
+VERSAO = 4  # suba quando mudar o desenho (motor.js, motor.css, motor_impacto.* ou TEMAS): os trechos são gravados de novo
 # 4 (2026-10-13): kicker de 34 px sem caixa-alta espaçada; transição de cena com chegada desacelerando e saída acelerando
 RECURSOS = Path(__file__).parent / "recursos" / "animation_ai"
 _TRAVA_CENAS = threading.Lock()
 
 TEMAS = {
+    # o padrão desde 2026-10-13 (pedido do usuário: "transforme essas receitas em modelos que a fábrica monta sozinha e
+    # fixo na fábrica"): motor próprio (motor_impacto.js), com a foto da cena atrás, letra gigante, uma cor de destaque
+    # (amarelo; vermelho no outro lado da comparação), brilho, grão e a cena se montando peça por peça. Saiu do protótipo
+    # em teste-estilos/prototipo. Os tipos sem receita própria não são oferecidos (TIPOS_IMPACTO)
+    "impacto": {"fundo": "#07080A", "txt": "#F5F3EE", "txt2": "#D9D4CA", "acc": "#FFD23F", "acc2": "#FF4D3D",
+                "brilho-a": "rgba(77,163,255,.20)", "brilho-b": "rgba(255,210,63,.14)", "_motor": "impacto"},
     # o visual do Motion IA, de produto da Apple (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo
     # APPLE que o motion ia utilizava"): creme #F7F6F2 com pontos de 24 px, cards brancos de raio 20 sem borda com a
     # sombra suave e flutuando, título em Inter grafite, destaque em Playfair itálica azul, mola na entrada, sem
@@ -189,7 +195,7 @@ _PALAVRAS_LIVRES = {"mais", "menos", "como", "para", "pelo", "pela", "pelos", "p
 
 
 def config(projeto) -> dict:
-    padrao = {"ativo": True, "tema": "apple", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
+    padrao = {"ativo": True, "tema": "impacto", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
               "limiar": 70, "maximo_do_video": 0.12, "intervalo_minimo": 20, "trechos_por_lote": 6,
               "tentativas": 2, "paralelo": 2, "fps": 30, "canal": "", "sons": True, "volume_sons_db": -20,
               "fotos_nos_itens": True, "maximo_no_lugar_do_motion": 0.25}
@@ -731,12 +737,89 @@ def sons(tipo, d) -> list:
     return saida[:8]
 
 
+
+def _t(v, padrao):
+    """O T do motor do impacto: o segundo que veio nos dados ou, sem ele, o de sempre."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else padrao
+
+
+def sons_impacto(tipo, d, dur) -> list:
+    """Os sons no tempo das receitas do motor_impacto.js (QUAL): o baque no soco e no flash, o risco no que chega
+    deslizando, o pop no que aparece, a contagem no número que sobe. No máximo 8, com 0,25 s entre eles."""
+    ev = []
+    itens = [it for it in d.get("itens") or [] if isinstance(it, dict)]
+    if tipo in ("numero", "porcentagem", "medidor", "proporcao"):
+        t = _t(d.get("t"), 0.3)
+        ev.append((t, "baque"))
+        if tipo == "porcentagem" or (tipo == "numero" and d.get("contar") and isinstance(d.get("numero"), (int, float))):
+            ev.append((t + 0.3, "contagem"))
+    elif tipo in ("lista", "destaques", "checklist", "cartoes", "pilha_cartoes", "ranking", "passos"):
+        selo = tipo in ("lista", "passos", "ranking", "pilha_cartoes", "checklist") or d.get("marca")
+        for i, it in enumerate(it for it in itens if it.get("texto") or it.get("titulo")):
+            t = _t(it.get("t"), 0.4 + i * 0.8)
+            ev.append((max(0.0, t - 0.1), "risco"))
+            if selo:
+                ev.append((t + 0.3, "pop"))
+    elif tipo in ("comparar", "antes_depois", "deslizar"):
+        lados = [d.get(k) or {} for k in (("esq", "dir") if tipo == "comparar" else ("antes", "depois"))]
+        t0 = _t(lados[0].get("t"), 0.3)
+        t1 = max(_t(lados[1].get("t"), dur * 0.45), t0 + 0.8)
+        ev += [(max(0.0, t0 - 0.1), "risco"), (t1, "baque")]
+        if tipo != "comparar":
+            ev += [(t0 + 0.3, "contagem"), (t1 + 0.3, "contagem")]
+    elif tipo in ("causa_efeito", "linha_do_tempo") and len([it for it in itens if it.get("texto") or it.get("data")]) >= 2:
+        validos = [it for it in itens if it.get("texto") or it.get("data")]
+        fontes, destino = validos[:-1], validos[-1]
+        ev += [(_t(it.get("t"), 0.3 + i * 0.7), "pop") for i, it in enumerate(fontes)]
+        t_dest = max(_t(destino.get("t"), dur * 0.6), _t(fontes[-1].get("t"), 0) + 0.6)
+        ev += [(max(0.0, t_dest - 0.35), "risco"), (t_dest + 0.15, "baque")]
+    elif tipo in ("abertura", "capitulo", "revelacao", "encerramento"):
+        tt = _t(d.get("t_titulo"), _t(d.get("t"), 0.3))
+        if d.get("kicker"):
+            ev.append((_t(d.get("t_kicker"), 0.1), "risco"))
+        ev.append((tt, "baque"))
+        if d.get("sub") or d.get("proximo"):
+            ev.append((_t(d.get("t_sub"), tt + 1.0), "pop"))
+    else:  # a receita da frase (e quem cai nela)
+        t = _t(d.get("t"), 0.3)
+        ev.append((t, "baque"))
+        if tipo == "palavra_chave":
+            ev += [(_t(it.get("t"), t + 0.6 + i * 0.4), "pop") for i, it in enumerate(itens)]
+    saida = []
+    for t, nome in sorted(ev):
+        if t >= dur or (saida and t - saida[-1][0] < 0.25):
+            continue
+        saida.append((round(max(0.0, t), 3), nome))
+    return saida[:8]
+
 # ------------------------------------------------------------------------------------------------ página e gravação
 
 def tema(projeto) -> dict:
     cfg = config(projeto)
-    base = TEMAS.get(cfg.get("tema") or "apple", TEMAS["apple"])
+    base = TEMAS.get(cfg.get("tema") or "impacto", TEMAS["impacto"])
     return {**base, **(cfg.get("cores") or {})}
+
+
+def e_impacto(cores) -> bool:
+    """O tema desenha com o motor do impacto (motor_impacto.js): foto, letra gigante, cena que se monta."""
+    return cores.get("_motor") == "impacto"
+
+
+# os tipos que têm receita no motor do impacto (motor_impacto.js, QUAL). Barras, gráfico de linha e afins ficam de fora
+# da escolha: no impacto eles virariam só uma frase
+TIPOS_IMPACTO = ("numero", "porcentagem", "medidor", "proporcao", "frase", "pergunta", "fato", "palavra_chave",
+                 "citacao", "definicao", "manchete", "documento", "lista", "destaques", "checklist", "cartoes",
+                 "pilha_cartoes", "ranking", "passos", "comparar", "antes_depois", "deslizar", "causa_efeito",
+                 "linha_do_tempo", "abertura", "capitulo", "revelacao", "encerramento")
+# no impacto, toda receita de vários itens mostra a foto de cada um
+COM_FOTO_IMPACTO = ("lista", "checklist", "destaques", "cartoes", "pilha_cartoes", "ranking", "passos",
+                    "causa_efeito", "linha_do_tempo")
+
+
+def tipos_do_tema(projeto, tipos=None) -> list:
+    """Os tipos que o modelo pode escolher: no impacto, só os que têm receita."""
+    base = list(tipos or DE_COMPLEMENTO)
+    return [t for t in base if t in TIPOS_IMPACTO] if e_impacto(tema(projeto)) else base
 
 
 def com_variante(cores) -> bool:
@@ -749,8 +832,9 @@ def montar_html(tipo, dados, dur, cores, canal="", variante=0) -> str:
     estilo = {k[1:]: v for k, v in cores.items() if k.startswith("_")}
     dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal, "estilo": estilo,
                            "variante": int(variante)}, ensure_ascii=False)
-    css = (RECURSOS / "motor.css").read_text(encoding="utf-8")
-    js = (RECURSOS / "motor.js").read_text(encoding="utf-8")
+    motor = "motor_impacto" if e_impacto(cores) else "motor"
+    css = (RECURSOS / f"{motor}.css").read_text(encoding="utf-8")
+    js = (RECURSOS / f"{motor}.js").read_text(encoding="utf-8")
     return f"""<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -962,12 +1046,12 @@ def _foto_do_banco(projeto, pasta, c, item, usadas, log):
     return destino, credito
 
 
-def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
+def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_foto=COM_FOTO) -> dict:
     """Põe em cada item (dados["itens"]) a foto da coisa que ele cita: a da cena em que a palavra do item é falada,
     ou uma dos bancos. Cada cena empresta a foto a um item só. Devolve {número da cena: [créditos]} das fotos que
     entram na tela durante cada cena."""
     itens = [it for it in dados.get("itens") or [] if isinstance(it, dict)]
-    if tipo not in COM_FOTO or not itens or not config(projeto).get("fotos_nos_itens", True):
+    if tipo not in com_foto or not itens or not config(projeto).get("fotos_nos_itens", True):
         return {}
     usadas, por_cena, achadas = _usadas_no_video(projeto), set(), []
     for it in itens:
@@ -997,6 +1081,34 @@ def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict
         it["foto"] = arquivo.relative_to(pasta).as_posix()
         it["foto_id"] = f"{credito.get('fonte')}:{credito.get('id')}"  # entra na assinatura: outra foto, outro clipe
         creditos.setdefault(n, []).append(credito)
+    return creditos
+
+
+def fotos_impacto(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
+    """As fotos do motor do impacto: a foto que a cena já tinha vai para o fundo (dados["fundo"]), e cada item, lado da
+    comparação ou passo da ligação ganha a foto da coisa que cita (fotos_dos_itens). Devolve os créditos por cena."""
+    creditos = fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log, com_foto=COM_FOTO_IMPACTO)
+    if tipo in ("comparar", "antes_depois", "deslizar"):
+        lados = [dados.get(k) for k in (("esq", "dir") if tipo == "comparar" else ("antes", "depois"))]
+        if all(isinstance(l, dict) for l in lados):
+            itens = [{"texto": l.get("titulo") or l.get("rotulo") or "", "t": l.get("t", 0)} for l in lados]
+            for n, lista in fotos_dos_itens(projeto, trecho, "lista", {"itens": itens}, ini, pasta, log).items():
+                creditos.setdefault(n, []).extend(lista)
+            for lado, it in zip(lados, itens):
+                if it.get("foto"):
+                    lado["foto"], lado["foto_id"] = it["foto"], it["foto_id"]
+    for c in trecho:
+        foto = _foto_da_cena(projeto, c)
+        if foto is None:
+            continue
+        arquivo = pasta / "assets" / "fotos" / f"fundo_{c['n']:04d}.jpg"
+        duracao = (_o_que_a_cena_tinha(c).get("midia") or {}).get("duracao")
+        if _preparar_foto(foto[0], arquivo, foto[1].get("tipo") == "video", duracao):
+            dados["fundo"] = arquivo.relative_to(pasta).as_posix()
+            dados["fundo_id"] = f"{foto[1].get('fonte')}:{foto[1].get('id')}"  # outra foto, outro clipe
+            if dados["fundo_id"] not in {f"{x.get('fonte')}:{x.get('id')}" for x in creditos.get(c["n"], [])}:
+                creditos.setdefault(c["n"], []).append(foto[1])
+            break
     return creditos
 
 
@@ -1054,7 +1166,8 @@ def _pasta(projeto, n) -> Path:
 
 
 def assinatura(tipo, dados, dur, cores, canal, variante=0) -> str:
-    motor = (RECURSOS / "motor.js").read_bytes() + (RECURSOS / "motor.css").read_bytes()
+    nome = "motor_impacto" if e_impacto(cores) else "motor"  # o motor que desenha a cena (montar_html)
+    motor = (RECURSOS / f"{nome}.js").read_bytes() + (RECURSOS / f"{nome}.css").read_bytes()
     # a variante só conta nos estilos que variam de cena para cena: nos 4 de antes o nome do clipe não muda
     base = json.dumps([VERSAO, tipo, dados, round(dur, 3), cores, canal] + ([variante] if com_variante(cores) else []),
                       ensure_ascii=False, sort_keys=True)
@@ -1132,7 +1245,11 @@ def gravar(projeto, trecho, plano, log=print):
     cores = tema(projeto)
     canal = str(cfg.get("canal") or "")  # o nome do canal no canto, do perfil (animation_ai.canal); vazio, sem nome
     pasta = _pasta(projeto, trecho[0]["n"])
-    creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+    if e_impacto(cores):
+        creditos = fotos_impacto(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+        eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
+    else:
+        creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
     variante = trecho[0]["n"]
     marca = assinatura(tipo, resolvidos, dur, cores, canal, variante)
     destino = projeto.pasta / "midia" / f"{trecho[0]['n']:04d}_anim{'_trecho' if len(trecho) > 1 else ''}.mp4"
@@ -1538,7 +1655,7 @@ def nas_uteis(projeto, log=print, numeros=None, como_motion=False) -> list:
     itens = _itens_util(projeto, grupos, todas)
     log(f"  animation-ai: {len(itens)} frase(s) com lista, data, número ou comparação; o modelo diz onde a cena "
         f"animada explica melhor que a foto")
-    decisoes = decidir(projeto, itens, log, COMO_MOTION if como_motion else None)
+    decisoes = decidir(projeto, itens, log, tipos_do_tema(projeto, COMO_MOTION if como_motion else None))
     ocupados = [(float(c["ini"]), float(c["fim"])) for c in todas
                 if (c.get("midia") or {}).get("fonte") in ("motion_ia", FONTE)]
     duracao = float(projeto.ler_json("alinhamento.json").get("duracao") or todas[-1]["fim"])

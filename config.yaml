@@ -324,7 +324,8 @@ conferencia_voz:
 # tudo) ou com fabrica animation-ai NOME. Falhou, a cena fica com a foto.
 animation_ai:
   ativo: true
-  tema: apple            # o estilo das cenas (30 layouts x 8 estilos = 240 modelos): apple (creme, cards brancos, azul),
+  tema: impacto          # impacto (o padrão desde 2026-10-13): foto da cena atrás, letra gigante, a cena se montando
+                         # peça por peça (motor_impacto.js). Os outros: apple (creme, cards brancos, azul),
                          # noite, editorial, misterio, neon (HUD ciano e magenta), riso (papel e duas tintas),
                          # blueprint (planta azul) ou cinema (filme quente com grão)
   limiar: 70             # nota de utilidade mínima (0 a 100)

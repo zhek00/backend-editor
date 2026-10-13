@@ -128,9 +128,9 @@ def test_cadencia_de_complemento():
     assert 48 not in [it["id"] for it in a.escolher(itens, decisoes, cfg, 1200.0)]
 
 
-def test_tema_apple_e_o_padrao_e_leva_o_jeito_de_mexer():
+def test_tema_apple_leva_o_jeito_de_mexer():
     from types import SimpleNamespace
-    p = SimpleNamespace(config={}, perfil={})
+    p = SimpleNamespace(config={"animation_ai": {"tema": "apple"}}, perfil={})
     assert a.config(p)["tema"] == "apple"
     html = a.montar_html("frase", {"texto": "x", "t": 0.3}, 4.0, a.tema(p))
     assert "--fundo:#F7F6F2" in html and "--raio-card:20px" in html  # o creme e o card do Motion IA
