@@ -39,6 +39,7 @@ uv run fabrica motion NOME        # o Jev diz onde um clipe de motion explica a 
 uv run fabrica trilha NOME        # o modelo compõe a trilha e o código toca (grátis)
 uv run fabrica render NOME        # monta o vídeo
 uv run fabrica render NOME --vertical   # versão em pé (9:16) para Reels e Shorts, em final_vertical.mp4
+uv run fabrica checar-video NOME  # o FFmpeg aponta imagem parada, tela preta e falta de som (grátis; roda sozinho no tudo)
 uv run fabrica revisar-video NOME # o modelo olha o vídeo pronto e aponta problemas (grátis)
 uv run fabrica conferir-voz NOME  # ouve a narração e aponta palavra comida, repetida ou mal pronunciada (grátis)
 uv run fabrica publicacao NOME    # título, descrição com capítulos, tags e legenda para o YouTube (grátis)
@@ -65,9 +66,9 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - Listas com vírgulas ou "e" viram uma cena por item (`_itens_enumerados`).
 - Cena que cita duas ou mais coisas visuais diferentes: o Groq (ou o MiMo de reserva) devolve `citacoes`, e o código corta a cena onde cada uma é falada, com a busca e o prompt da própria coisa.
 - Cenas de citação e de enumeração têm mínimo de 1 segundo em vez de 3. **Item curto nunca engole o seguinte** ("alces" dura 0,6 s antes de "cavalos-de-przewalski"): o corte do próximo item é empurrado só o necessário (`_dividir_enumeracoes`), e na fase de cenas curtas o item empresta tempo da vizinha em vez de se fundir a ela. Cada citação do agente traz a própria `descricao`, `exato` e `animal`, e a fatia leva `item_citado`: o Jev julga se a imagem mostra AQUELE item, não os outros da frase. **Item citado no fim da cena adianta o corte** (tirando tempo do item anterior, os dois com o mínimo), em vez de ser jogado fora: "outras pela velocidade" é dita a 0,92 s do fim da frase, e o guepardo que o agente pediu sumia. **Cena comum curta nunca funde nem divide tempo com a fatia de um item citado** (`livre` em `_garantir_limites_estritos`): a frase do mosquito (2,6 s) era fundida com a fatia do guepardo, e ele sumia de novo; ela busca o tempo do outro lado. **Lista falada depressa não desloca os pedidos** (`_itens_por_fatia`): cada fatia mostra o item que começa a ser falado nela. Em "chocolate, caramelo e flores" (2 s) não cabiam três fatias de 1 s, e a fatia que fala "e flores" ficava com o caramelo (mcp-cafe-5min); agora sai o item espremido no meio.
-- Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 80% dos 3 primeiros minutos e 40% até os 7 (`_balancear_foto_e_video`). Os 30% de vídeo permitidos no total são gastos primeiro no começo, com prioridade para os 3 primeiros minutos.
+- Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 70% vídeo e 30% foto nos 5 primeiros minutos (`_balancear_foto_e_video`, `ESTILO_VIDEO_NO_INICIO`; pedido do usuário em 2026-10-12, para o vídeo não ficar chato). O começo não entra no teto de 30% de vídeo do total: o que ele usar é descontado, e o resto do vídeo fica com o que sobrar.
 - **Precisão literal (direção de arte).** O agente (`roteirista.PROMPT_CENAS`, "Diretor de Arte Sênior") e o Jev (`corrigir.PERGUNTAS_JEV`) seguem as mesmas 6 regras: sujeito exato sem substituições, cenário fiel, nada de B-roll desconexo ou metáfora, ação e característica exatas, placas e telas do contexto certo, nada de reaproveitar entre blocos sem relação. Só o que existe apenas como tipo genérico (o gráfico de um estudo, uma pessoa anônima) aceita uma representação direta do mesmo tipo. **Animal tem ainda a regra de código abaixo**: se a fala cita o pangolim, aparece um pangolim — nunca um gato, um tatu, outro lêmure ou "um animal parecido". Vale para o agente (busca pelo nome da espécie, nome científico na alternativa), para o Jev (`corrigir.PERGUNTAS_JEV`) e para o código: em cena de animal (`midia.animal_da_cena`) só entra candidato cujas tags citam a espécie ou o tipo do bicho ("snake" para uma cobra, porque os bancos descrevem assim; a espécie exata quem confere é o julgamento), a Wikimedia vem primeiro e o tapa-buraco nunca põe outro bicho. **Nunca encher cenas repetindo a mesma foto do animal**: isso já foi feito e ficou pior (cenas 4 a 7 com a mesma cobra).
-- **Onze bancos de imagem** (`midia.Buscador._das_fontes`, `fontes_foto` do perfil base), consultados ao mesmo tempo e com os resultados intercalados (antes a lista era cortada na ordem dos bancos). Wikimedia, Pexels, Pixabay e Unsplash entram em toda busca de foto. O iNaturalist entra primeiro em cena de animal e a NASA só em cena de espaço. **Os bancos de acervo (Harvard, Europeana, Smithsonian, NYPL e Te Papa, `bancos.ACERVO`) só entram em cena de acervo** (`midia._e_de_acervo`): o agente mandou buscar na Wikimedia, ou a cena fala de história, arte, artefato ou ano antes de 1950; em cena de animal, só com fóssil, esqueleto, espécime ou espécie extinta. Antes eles entravam em tudo e só tomavam vaga: no lince2 o Harvard trouxe 4.303 candidatos, quase todos quadros, e 1 entrou no vídeo. O Biodiversity Heritage Library ficou de fora porque devolve livros, não imagens. O Unsplash da chave atual é do plano de demonstração (50 buscas por hora) e acaba cedo; a fábrica segue com os outros. Vídeo continua só no Pexels e no Pixabay. 12 candidatos por cena (`midia.candidatos`).
+- **Onze bancos de imagem** (`midia.Buscador._das_fontes`, `fontes_foto` do perfil base), consultados ao mesmo tempo e com os resultados intercalados (antes a lista era cortada na ordem dos bancos). Wikimedia, Pexels, Pixabay e Unsplash entram em toda busca de foto. O iNaturalist entra primeiro em cena de animal e a NASA só em cena de espaço. **Os bancos de acervo (Harvard, Europeana, Smithsonian, NYPL e Te Papa, `bancos.ACERVO`) só entram em cena de acervo** (`midia._e_de_acervo`): o agente mandou buscar na Wikimedia, ou a cena fala de história, arte, artefato ou ano antes de 1950; em cena de animal, só com fóssil, esqueleto, espécime ou espécie extinta. Antes eles entravam em tudo e só tomavam vaga: no lince2 o Harvard trouxe 4.303 candidatos, quase todos quadros, e 1 entrou no vídeo. O Biodiversity Heritage Library ficou de fora porque devolve livros, não imagens. O Unsplash da chave atual é do plano de demonstração (50 buscas por hora) e acaba cedo; a fábrica segue com os outros. Vídeo vem do Pexels, do Pixabay e da **Coverr** (`bancos.coverr`, 2026-10-12, para os 70% de vídeo do começo): só vídeo deitado, só com `COVERR_API_KEY` no `.env` (a chave se pede por e-mail a team@coverr.co; sem ela o banco se desliga sozinho) e só nos perfis que a listam em `fontes_video` (o `base-documentario` lista). A Coverr exige avisar cada download (`avisar_download`, chamado em `midia._baixar_midia`). **Licença:** o uso grátis da API e dos vídeos não vale para "serviço de edição de vídeo" nem para revenda; vídeos feitos para vender (TipLabs) podem estar fora disso, confirmar com a Coverr antes de ligar a chave no servidor de clientes. 12 candidatos por cena (`midia.candidatos`).
 - **A busca digitada pela pessoa manda** (botão "Pesquisar novo material de acervo" e `fabrica refazer --busca`, em `imagens._a_busca_da_pessoa_manda`): o termo vira o assunto da cena (`busca`, `sujeito` e `mostrar`), o `exato` e o `animal` saem, e o pedido do agente fica guardado em `pedido_original`. Sem tirar o `animal`, o filtro de espécie continuava com o bicho do agente: a cena marcada "impala" voltava três impalas seguidas para a busca "leão". Termo em português é traduzido pelo modelo principal (`midia.busca_em_ingles`) e as duas versões são buscadas. Antes só a busca mudava: na cena 15 do ouro-da-serra-gaucha a pessoa pediu "frosted plant", o sujeito antigo "campos com geada" pôs Campo Mourão e Campos dos Goytacazes na frente das fotos de geada, e o pedido "campos de uva da Serra Gaúcha" fez a planta ser recusada.
 - **O assunto que ordena, filtra e busca é sempre em inglês** (`midia.sujeito_da_busca`): os bancos descrevem as fotos em inglês, e o agente escreve o `sujeito` em português em boa parte das cenas (62 de 217 no ouro-da-serra-gaucha). Sujeito com cara de português cede lugar à `busca`. Antes, na cena 106, "fogo de chão" marcou as 6 fotos de fogueira como fora do assunto e, buscado na Wikimedia, "fogo" trouxe a ilha vulcânica do Fogo (Cabo Verde), que ficou no vídeo.
 - **Na escolha do acervo, o sujeito é obrigatório e a ação e o cenário só ordenam** (`midia.INSTRUCOES_ESCOLHA`, `VERSAO_ESCOLHA` na assinatura do cache da escolha). No natureza-nos-ensina o modelo que escolhe recusou 11 fotos boas de crocodilo-do-nilo porque nenhuma era "só olhos e narinas na água", e 22 cenas foram para a IA sem ninguém julgar: 48 imagens de IA em 92 cenas de um vídeo de animais da África. Quando ele recusa todos, os candidatos que citam o assunto nas tags entram mesmo assim (`midia._do_assunto_quando_recusou`), como suspeitos, e a conferência do Jev julga. Na captura, o Jev segue a regra da conferência: sujeito certo (60 ou mais) com nota baixa é cena genérica e fica (`_escolher_conferindo`); antes as leoas andando, para "caçam em grupo, cercando a presa", iam para a IA.
@@ -111,6 +112,9 @@ O roteiro manda: o que a narração cita tem que aparecer, na hora em que é fal
 - **O Jev responde três perguntas numa chamada só** (`corrigir._perguntas`): combina (a nota), **sujeito** (a imagem mostra AQUILO e não outra coisa, mesmo que genérica) e, em cena de época, **época**. Recebe também o assunto do bloco do mapa, o `exato` e o **`aceitavel`** (o mínimo para a cena estar certa, escrito pelo agente; o ideal fica no `mostrar`). Sujeito certo com nota baixa é cena genérica e **fica**: três leões sem juba tiravam 4% contra "dois leões entre tendas à noite" e seriam trocados à toa.
 - **Quem descreve no Corrigir não vê o pedido** (`corrigir._descrever_lote`, `midia.INSTRUCOES_SEM_PEDIDO`): vendo, ele escrevia o nome que estava nele. Descrição antiga feita com o pedido ("confere com o pedido") é refeita. Com uma cena por chamada, a resposta única é daquela cena, seja qual for o número que o modelo escreveu: o Qwen do Groq devolveu outro número e as imagens de IA ficaram sem descrição, sem a conferência do Jev.
 - **O Corrigir nunca termina com imagem sem conferência** (`corrigir._conferir_sem_nota`): a troca por repetida e as buscas do fim são julgadas antes de acabar. No virou-filme sobraram 77 sem ninguém olhar.
+- **A criação também não** (`corrigir.conferir_completadas`, 2026-10-11): o "Completar cenas" roda depois da conferência, e a 3ª rodada dele (`permissivo`) e a última busca da esteira aceitam o que a busca achou. No brasil-selvagem 7 cenas entraram assim, sem ninguém olhar, e a cena 51 ("quando uma árvore de ninho é derrubada") ficou com uma foto de castanhas. Agora, depois do Completar (site e `cli.completar_depois_da_narracao`), toda cena sem conferência e sem aprovação na captura vai ao Jev; a errada busca de novo e, com a IA ligada, vira imagem de IA.
+- **Nome comum com nome científico exige o substantivo** (`midia._identificador`): no `exato` "Brazil nut tree Bertholletia excelsa", a foto cita Brazil, Bertholletia E "tree". Só com os dois nomes, as castanhas (tags "brazil nut, bertholletia excelsa, snack") passavam por árvore.
+- **Nome genérico com complemento mostra o complemento** (regra no pedido do agente, `roteirista.PROMPT_CENAS`): "árvore de ninho" é a árvore com o ninho da harpia, nunca a castanheira que a frase anterior citou como exemplo.
 - **A imagem de IA é conferida pelo Jev** (`corrigir.conferir_ia`, chamada por `imagens.gerar`; vale para toda cena com
   imagem gerada, `corrigir.imagem_de_ia`, inclusive a cena de foto que nenhum banco resolveu: no ouro-serra-1min a
   cena 15, uma `foto_real` sem material, ganhou imagem de IA e ficou sem conferência, porque só o tipo "ia" contava): mostrando outra coisa, é feita de novo uma vez com o motivo no pedido. Refazer com o prompt da pessoa (`refazer`) não confere. Em cena de época a imagem sai no estilo de foto antiga (`imagens.prompt_final`).
@@ -433,15 +437,119 @@ se a frase dela tiver estrutura e nota alta (`imagens._motion_antes_da_ia` com `
   tema (chaves com `_` em `TEMAS`, `E` no motor.js): cards flutuando 5 px fora de fase (pelo `translate` do CSS, que
   não briga com a entrada), entrada em mola (sobe 40 px e cresce de 0,92 com back.out), o impacto vira mola, sem
   tremor, e a câmera só aproxima 3%. Os outros temas (noite, editorial, misterio) seguem como eram.
+- **Quadro morto** (`animation_ai.quadros_mortos`, 2026-10-12, ideia do motionmaxxing): depois de gravar, o clipe é
+  medido quadro a quadro (96x54 em cinza, diferença média abaixo de 0,02 = o mesmo quadro). Reprova tela parada por
+  mais de 0,8 s no começo ou no meio, ou por mais de 2,5 s no fim (`MORTO_NO_MEIO`, `MORTO_NO_FIM`). **Os limites são
+  medidos, não os do concorrente** (3 quadros): nos 167 clipes reais do brasil-selvagem o maior trecho parado no meio
+  foi 0,43 s e no fim 0,73 s; com 3 quadros quase todo clipe bom reprovava. Reprovado = a cena fica com a foto, como
+  qualquer falha de gravação. A medida nunca derruba a produção.
+- **240 modelos prontos: 30 layouts x 8 estilos** (2026-10-13, pedido do usuário: "mais de 200 modelos prontos";
+  escolhido por ele: layouts x estilos, não 200 layouts soltos). **Layouts**: os 24 de antes e 6 novos, das categorias
+  de tipografia, dados, abertura e entrada de cartões do video-shotcraft (Apache-2.0; só a ideia, o código é nosso):
+  `palavra_chave` (as letras chegam girando e montam a palavra, com palavras de apoio), `medidor` (mostrador de ponteiro
+  com contagem), `grafico_linha` (a linha se desenha ponto a ponto, na palavra de cada valor), `deslizar` (régua que
+  revela o "depois"), `revelacao` (título que se materializa com um brilho que passa) e `pilha_cartoes` (cada cartão
+  cobre o anterior). `palavra_chave` e `revelacao` são só do modo de cenas pedidas (texto sobre fundo); os outros 4
+  entram no complemento. **Estilos** (`TEMAS`, `animation_ai.tema`, `--tema`): `apple`, `noite`, `editorial`, `misterio`
+  como eram (saem iguais: não definem `_fundo`, `_entradas`, `_cameras` nem `_saidas`) e 4 novos: `neon` (HUD ciano e
+  magenta, grade em perspectiva e linhas de varredura), `riso` (papel com grão e duas tintas fora de registro),
+  `blueprint` (planta azul milimetrada com marcas de registro) e `cinema` (filme quente com luz que vaza, vinheta e grão).
+  Cada estilo novo traz fundo animado em canvas, jeitos de entrar (`scan`, `glitch`, `carimbo`, `traco`, `desfoca`), de
+  mexer a câmera (`soco`, `tilt`, `derivar`, `assentar`) e de sair (`wipe`, `iris`, `flash`, `fade`). **O estilo é do canal**
+  (coerência do vídeo); dentro dele a cena escolhe entre as entradas, câmeras e saídas pelo número dela (`variante`, o
+  número da primeira cena do trecho), então as cenas não se repetem. A variante só entra na assinatura dos estilos que
+  variam. Fundo, grão e brilho são desenhados no canvas (nada por cima do texto: a conferência do HyperFrames lê uma
+  camada translúcida por cima como cobertura); camada que se cobre de propósito leva `data-layout-allow-overlap` e
+  `data-layout-allow-occlusion` (`PERMITE`). O grão e os riscos usam `hash(quadro)` e o sorteio tem semente: o quadro X
+  sai igual em toda gravação. `fabrica animation-ai NOME --catalogo --tema neon` desenha a folha de um estilo; o quadro
+  é o de 4,8 s (aos 5,8 s a cena já está saindo). Mudou o desenho, suba `VERSAO` e confira todos pelo `hyperframes check`.
+  **Conferido** (o mesmo `hyperframes check` que a gravação usa, `animacoes._conferir(clipe=True)`): os 30 layouts nos 4
+  estilos novos (variantes 0 e 1) e nos de antes, 0 reprovados no fim. O que a conferência achou e foi corrigido, para
+  não voltar: seta da régua era texto (contraste) e virou desenho; o brilho do título cobre o título (marcado como camada
+  intencional, filhos incluídos); o soco de `impacto` levava o capítulo para fora da tela (`x.smax`: o elemento cresce em
+  volta do centro, então o limite vem da folga até a borda; era erro **antigo**, também em noite e misterio); câmeras
+  `derivar` e `tilt` aproximam no máximo 3% (a linha do tempo chega a 1880 px); `riso` tinha cor rosa e sombra de tinta
+  no texto abaixo do contraste (virou `#E11D48` e a sombra de tinta ficou só nos cartões); papel claro com vermelho claro
+  (`verm-papel` no blueprint e no noite, `botao` e `botao-clicado` no blueprint); a vinheta do misterio caiu de .7 para
+  .5 (a conferência lia a camada escura como cobertura do texto, como no noite com .55); o cartão da pilha é opaco
+  (`--painel2`), senão o texto do cartão de baixo aparecia atrás.
 - **Gravação**: `hyperframes check`, MP4, um pedaço por cena (`midia/NNNN_anim.mp4`), `fonte: animation_ai`; a foto
   fica em `anim_reserva` (`--desfazer` volta e marca `anim_falhou`, que não tenta de novo na mesma fala). Reprovou ou
   falhou: a cena fica com a foto. Nunca para o vídeo.
-- Tratada como o Motion IA: o Jev não julga, a camada de animação não cobre, fica fora dos créditos e das repetidas,
-  selo "Animation IA" no editor e na nota do vídeo.
+- **Foto em cada item** (`fotos_dos_itens`, pedido do usuário em 2026-10-11: "mostrar cenas do banco de imagens
+  junto com esses motion, para as palavras não ficarem soltas"; a lista do ninho, da castanheira e da sumaúma era só
+  texto). Em lista, checklist e destaques, a foto da coisa citada entra junto com o item, numa pilha de fotos soltas à
+  direita (o texto vai para a metade da esquerda); em cartoes, a foto fica no alto de cada card. A foto é a que a cena
+  em que a palavra do item é falada já tinha (de graça, já julgada; nunca a `errada` nem a suspeita sem julgamento);
+  sem ela, busca nos bancos pelo pedido da cena (`_foto_do_banco`): bicho só com a própria espécie nas tags
+  (`_cabeca_do_animal` ou o gênero científico; com "bird" bastando, um urutau entrou como filhote de harpia), quem
+  cita a espécie inteira na frente, e a visão escolhe com o `aceitavel` da cena (nunca pessoa, luva ou zoológico que
+  o item não cita). Cada cena empresta a foto a um item; menos de 2 fotos, a lista fica só com texto. Guardado em
+  `animation_ai/NNNN/fotos.json` (`VERSAO_FOTOS`), crédito em `anim_fotos` da cena (vai para o `creditos.txt`). A
+  conferência recusa dois itens com o mesmo texto. `fabrica animation-ai NOME --regravar [--cenas N...]` grava de
+  novo as cenas animadas que existem, com o plano delas, sem perguntar ao modelo (só as cenas que ainda são animação:
+  a trocada no editor fica).
+- Tratada como o Motion IA: o Jev não julga, a camada de animação não cobre, fica fora das repetidas, selo
+  "Animation IA" no editor e na nota do vídeo. Nos créditos, só as fotos dos itens.
 - **Cenas pedidas** (`fabrica animation-ai NOME --cenas N...`, `fazer`): anima essas cenas sem perguntar se vale, com
-  os 24 tipos, em trechos de `duracao_alvo` (8 s); variedade cobrada (frase e pergunta no máximo um terço, o mesmo tipo
+  os 30 tipos, em trechos de `duracao_alvo` (8 s); variedade cobrada (frase, pergunta, palavra_chave e revelacao no máximo um terço, o mesmo tipo
   nunca 3 vezes seguidas), planos em `animation_ai/planos.json`; desenho reprovado vira a frase da fala.
   `--catalogo` desenha um quadro de cada tipo, grátis.
+
+## direção (cenas dirigidas: câmera, tipografia cinética, formas, 3D, deitadas e em pé)
+
+`fabrica/direcao.py`, `fabrica/recursos/direcao/` (`direcao.js`, `direcao.css`, `DIRETRIZES.md`), pedido do usuário em
+2026-10-12: sair do "slide de PowerPoint" e do modelo pronto. **Não é um segundo sistema de gravação**: é uma camada
+em cima do animation-ai (mesmo HyperFrames, mesmas conferências, mesmo `_aplicar`, `regravar`, `desfazer` e som).
+`animation_ai.gravar` desvia o plano de tipo `dirigida` para `direcao.gravar`. Uma gravação com Puppeteer própria
+foi descartada de propósito: o HyperFrames já é Puppeteer + Chrome escondido + FFmpeg, quadro a quadro, e aceita
+`--fps 60` e telas deitada e em pé.
+
+- **Comando:** `fabrica direcao NOME --cenas N... [--formato horizontal|vertical|ambos] [--fps 60] [--spec arq.json]
+  [--forcar]`; `--refinar "frase"` e `--desfazer-ajuste` ajustam uma cena já dirigida. Grátis (cadeia de principais).
+  **Não entra sozinha na criação**: o complemento automático continua com os modelos prontos do animation-ai (30 layouts x 8 estilos).
+- **O modelo escreve a direção em JSON, nunca HTML** (regra do projeto, Animações): paleta (8 nomes ou cores hex), ritmo,
+  cenário (partículas, grade, pontos, ondas, raios), câmera (2 a 8 marcações, por segundo ou por palavra falada) e até 7
+  camadas (`texto`, `forma` que vira outra, `numero`, `card3d`, `linha`). As diretrizes (`DIRETRIZES.md`) vão inteiras
+  no pedido e entram na assinatura do plano guardado (`direcao/planos.json`): mexeu nelas, os planos são pedidos de novo.
+- **Conferência** (`direcao.conferir`, o que reprova volta ao modelo, até `animation_ai.tentativas`; sem acerto vai
+  `direcao_de_reserva`, que sempre passa): câmera que nunca para (zoom 0,85 a 1,7, giro até 8 graus, deslocamento até
+  15%), no máximo 3 textos (90 letras, 12 palavras), 1 `card3d`, 2 formas, texto só com palavras e números da fala, sem
+  travessão, e o jeito da cena (paleta, cenário, entrada) diferente do da anterior.
+- **Colisão e loop** (`direcao.colisoes`, `caixa_da_camada`, depois do primeiro teste real, 3 cenas do leite, 2026-10-13):
+  o diretor pôs o texto `xl` no centro e um quadrado embaixo, e "caros" saiu escrito em cima do quadrado (a conferência do
+  HyperFrames só compara texto com texto), e ligou `loop` numa cena que segue para a próxima. Agora o código estima o
+  espaço de cada camada nos DOIS formatos (mesmas âncoras e tamanhos do direcao.js) e recusa texto que passa de 8% da
+  menor camada em cima de forma, número, cartão ou outro texto; `loop` só passa com `permite_loop` (o refinamento). As
+  tabelas `ANCORAS` e `TAMANHO_DA_LETRA` do Python espelham `ANC_H`, `ANC_V` e `TAM` do JS: mudou um, mude o outro.
+  Com o Dots (Groq sem cota no dia), o diretor errou o lugar 3 vezes e caiu na direção de reserva: a qualidade da direção
+  depende do modelo; com modelo fraco a cena sai simples, não quebrada.
+- **Tipografia cinética pela fala** (`direcao._tempos_do_texto`): cada palavra do texto entra no segundo em que a fala
+  chega nela, em sequência (palavra a mais de 2,5 s da anterior, como um "de" repetido, entra logo depois da anterior). A
+  primeira camada entra em até 0,8 s. A forma que vira outra (`morph`) começa na palavra dela; sorteio só com semente.
+- **Determinismo conferido**: `quadro(t)` é função pura do tempo; o sorteio é `mulberry32(semente)`; a vinheta e o fundo
+  são desenhados no canvas, e os elementos que respiram usam voltas inteiras por cena (o fim emenda no começo).
+  Gravado duas vezes, os 420 quadros (horizontal e vertical, 60 fps) saíram idênticos (`framemd5`).
+  `tests/test_direcao.py` proíbe `Math.random`, relógio e animação em CSS no motor; com `FABRICA_TESTES_LENTOS=1` ele
+  grava duas vezes e compara os quadros.
+- **Em pé é recomposição, não corte** (`direcao.js`: `ANC_H`, `ANC_V`, `TAM`): `esq` e `dir` viram um em cima do outro,
+  as letras mudam de tamanho, `pos_v` e `de_v`/`para_v` dão outro lugar só em pé, e o texto nunca sai da área segura
+  (14% de cima e 30% de baixo em pé; encolhe com o maior zoom da câmera, senão o texto da ponta invadia o nome do canal).
+  A mesma especificação grava `NNNN_anim.mp4` e `NNNN_anim_vertical.mp4`; `render.origem_da_cena(vertical=True)` usa o
+  clipe em pé e `_entrada_video` não o corta nem o põe sobre fundo desfocado.
+- **60 quadros**: o clipe sai a `animation_ai.direcao.fps` (60). **O vídeo final só fica em 60 se `render.fps` for 60**:
+  um MP4 tem um ritmo só, então "60 só nas cenas animadas" não existe; a gravação a 60 com render a 30 desce para 30 no
+  `fps=` do render. Mudar o `render.fps` renderiza todos os clipes do projeto de novo. Medido (RTX 2060): 7 s de cena a 60
+  fps levam uns 40 s deitada e uns 40 s em pé.
+- **Quadro morto** vale também aqui (`animation_ai._reprovado_por_quadro_morto`): compara de 1/30 s em 1/30 s, para o
+  limite em segundos ser o mesmo a 30 e a 60 quadros.
+- **Refinamento em linguagem natural** (`direcao.refinar`): pedidos curtos que o código entende saem na hora e sem modelo
+  ("emenda no começo" liga `loop`, "desacelera", "mais rápido", "mais suave", "cores do tema"); o resto vai ao modelo com
+  a direção atual e a nova passa pela mesma conferência (3 tentativas). A de antes fica em `direcao/NNNN/historico`
+  (`--desfazer-ajuste`). Gravou mal, a cena fica como estava.
+- **Falta**: Three.js (o 3D de hoje é `perspective` do CSS, sem biblioteca nova); ligar na criação automática (hoje só
+  por comando); o editor ainda não tem o campo de refinamento em linguagem natural; 60 fps no vídeo final exige decidir
+  o `render.fps` do projeto inteiro.
 
 ## Texto na tela: saiu da fábrica
 

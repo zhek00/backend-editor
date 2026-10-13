@@ -324,14 +324,22 @@ conferencia_voz:
 # tudo) ou com fabrica animation-ai NOME. Falhou, a cena fica com a foto.
 animation_ai:
   ativo: true
-  tema: apple            # apple (o visual do Motion IA: creme, cards brancos, azul), noite, editorial ou misterio
+  tema: apple            # o estilo das cenas (30 layouts x 8 estilos = 240 modelos): apple (creme, cards brancos, azul),
+                         # noite, editorial, misterio, neon (HUD ciano e magenta), riso (papel e duas tintas),
+                         # blueprint (planta azul) ou cinema (filme quente com grão)
   limiar: 70             # nota de utilidade mínima (0 a 100)
   maximo_do_video: 0.12  # no máximo 12% da duração em cenas animadas (contando os clipes do Motion IA)
   intervalo_minimo: 20   # segundos entre uma cena animada e outra (ou um clipe de motion)
+  maximo_no_lugar_do_motion: 0.25  # com o Motion IA pausado, as cenas reprovadas viram cena animada no lugar dele, sem o
+                         # intervalo, mas até 25% da duração em cenas animadas, contando as de cima. Sem teto, o
+                         # brasil-selvagem chegou a 31%; o que passa disso segue para a imagem de IA ou volta à foto
   duracao_maxima: 12     # a frase mais longa que vira uma cena animada
   trechos_por_lote: 6    # frases por pedido ao modelo
   paralelo: 2
   volume_sons_db: -20
+  direcao:               # cenas dirigidas (fabrica/direcao.py, `fabrica direcao NOME --cenas N`)
+    fps: 60              # quadros por segundo da gravação. O vídeo final só fica em 60 se render.fps também for 60
+    formatos: [horizontal, vertical]   # o mesmo desenho sai deitado e em pé (a versão em pé usa o clipe em pé)
 
 # Shorts cortados do vídeo pronto (fabrica/shorts.py), depois de cada render, grátis.
 shorts:

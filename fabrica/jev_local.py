@@ -18,10 +18,37 @@ from datetime import datetime
 import httpx
 
 from .openrouter_local import _chave
+from .util import gravar_cache, ler_cache
 
 URL = "https://openrouter.ai/api/alpha/decisions"
 MODELO_PADRAO = "typesafe/jev-1.13"
 _trava = threading.Lock()
+
+
+# caminho do uso_jev.json -> (versão do arquivo, histórico): enquanto o arquivo não muda, a lista não é lida de novo
+_HISTORICOS = {}
+
+
+def _ler_historico(arquivo) -> list:
+    """O histórico do uso_jev.json, que continua sendo uma lista JSON (api, consumo, custos_reais e motion_ia leem assim).
+
+    Antes cada julgamento relia e reescrevia o arquivo inteiro (centenas de KB, milhares de vezes num vídeo); agora a
+    lista fica na memória enquanto o arquivo não muda, e ele é relido só se outro processo o alterou. Arquivo
+    corrompido vai para o lado (uso_jev.json.corrompido-DATA) e o registro recomeça: antes ele derrubava todo
+    julgamento do Jev, porque o registro roda dentro de decidir."""
+    try:
+        estado = arquivo.stat()
+    except OSError:
+        return []
+    guardado = _HISTORICOS.get(str(arquivo))
+    if guardado and guardado[0] == (estado.st_mtime_ns, estado.st_size):
+        return guardado[1]
+    historico = ler_cache(arquivo)
+    if isinstance(historico, list):
+        return historico
+    if arquivo.exists():
+        arquivo.replace(arquivo.with_name(f"{arquivo.name}.corrompido-{datetime.now():%Y%m%d-%H%M%S}"))
+    return []
 
 
 def _registrar(projeto, etapa, uso, modelo):
@@ -31,19 +58,20 @@ def _registrar(projeto, etapa, uso, modelo):
              "custo_usd": uso.get("cost", 0) or 0}
     with _trava:
         arquivo = projeto.caminho("uso_jev.json")
-        historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
-        historico.append(linha)
-        arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+        historico = _ler_historico(arquivo) + [linha]
+        # inteiro ou nada: gravado pela metade, o arquivo quebrava o próximo registro e, com ele, o julgamento do Jev
+        gravar_cache(arquivo, historico)
+        estado = arquivo.stat()
+        _HISTORICOS[str(arquivo)] = ((estado.st_mtime_ns, estado.st_size), historico)
     from . import consumo  # o Jev é chamado pelo OpenRouter: entra no registro central
     consumo.registrar(projeto, "texto", etapa, modelo, linha["tokens_lidos"], linha["tokens_escritos"],
                       linha["custo_usd"])
 
 
 def resumo_uso(projeto):
-    arquivo = projeto.pasta / "uso_jev.json"
-    if not arquivo.exists():
-        return None
-    historico = json.loads(arquivo.read_text(encoding="utf-8"))
+    historico = ler_cache(projeto.pasta / "uso_jev.json")
+    if not isinstance(historico, list):
+        return None  # sem arquivo, ou corrompido: o resumo some, em vez de derrubar quem só queria saber o custo
     return {"chamadas": len(historico), "lidos": sum(h["tokens_lidos"] for h in historico),
             "escritos": sum(h["tokens_escritos"] for h in historico),
             "custo": sum(h["custo_usd"] for h in historico)}

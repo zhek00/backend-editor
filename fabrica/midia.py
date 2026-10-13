@@ -10,6 +10,7 @@ Por fim baixa o escolhido, sem repetir o mesmo material em duas cenas.
 Se nada servir, a cena passa a usar imagem de IA.
 """
 import base64
+import contextlib
 import copy
 import hashlib
 import html
@@ -17,7 +18,9 @@ import io
 import json
 import os
 import re
+import shutil
 import threading
+import weakref
 from pathlib import Path
 from typing import Optional
 import unicodedata
@@ -28,7 +31,7 @@ import anthropic
 import httpx
 
 from . import claude_local
-from .util import mmss, rodar
+from .util import gravar_cache, ler_cache, mmss, rodar
 
 TIPOS_REAIS = ("foto_real", "video_real")
 
@@ -340,11 +343,27 @@ class _Todos(set):
     """Exigência em que a foto precisa citar todas as palavras, não uma delas (nome próprio composto)."""
 
 
+def _radicais_batem(a, d) -> bool:
+    """Dois radicais (até 4 letras) são a mesma palavra: iguais, ou um é o plural do outro ("ant" e "ants", "fox" e
+    "foxes", que o corte em 4 letras deixa "foxe").
+
+    Antes valia qualquer prefixo, e uma palavra de 3 letras casava com tudo o que começa igual: "bee" aceitava "beer",
+    "ant" aceitava "antelope", "cat" aceitava "cattle" e "rat" aceitava "rate". O sufixo -e só vale depois de x, s, z
+    ou h (foxes, buses, bushes); depois de t seria "ante" (antelope)."""
+    if a == d:
+        return True
+    curto, longo = (a, d) if len(a) < len(d) else (d, a)
+    if len(longo) - len(curto) != 1 or not longo.startswith(curto):
+        return False
+    sufixo = longo[-1]
+    return sufixo == "s" or (sufixo == "e" and curto[-1] in "xszh")
+
+
 def _cita_o_assunto(assunto, candidato) -> bool:
     """As tags ou a descrição do candidato citam alguma palavra do assunto ("ant" e "ants" contam iguais).
     Com _Todos, precisam citar todas."""
     descricao = _radicais(candidato.get("descricao") or "")
-    bate = lambda a: any(a.startswith(d) or d.startswith(a) for d in descricao)
+    bate = lambda a: any(_radicais_batem(a, d) for d in descricao)
     if isinstance(assunto, _Todos):
         return bool(descricao) and bool(assunto) and all(bate(a) for a in assunto)
     return bool(descricao) and any(bate(a) for a in assunto)
@@ -357,7 +376,7 @@ def _cita_bastante(assunto, candidato) -> bool:
     if isinstance(assunto, _Todos) or len(assunto or ()) < 3:
         return _cita_o_assunto(assunto, candidato)
     descricao = _radicais(candidato.get("descricao") or "")
-    batem = sum(1 for a in assunto if any(a.startswith(d) or d.startswith(a) for d in descricao))
+    batem = sum(1 for a in assunto if any(_radicais_batem(a, d) for d in descricao))
     return batem >= 2
 
 
@@ -489,7 +508,15 @@ def nomes_do_roteiro(projeto) -> set:
     """Nomes próprios do roteiro inteiro: palavra com maiúscula no meio da frase ("a cidade de Pripyat",
     "contadores Geiger"). Servem para reconhecer o nome mesmo quando a busca veio em minúscula."""
     chave = str(projeto.pasta)
-    if chave not in _NOMES_DO_ROTEIRO:
+    # a versão do roteiro.txt (data e tamanho) vai junto: o servidor fica de pé dias, e o roteiro pode ser editado
+    # no meio. Sem isso os nomes de antes valiam para sempre, e o filtro por nome próprio usava o roteiro velho
+    try:
+        estado = (projeto.pasta / "roteiro.txt").stat()
+        versao = (estado.st_mtime_ns, estado.st_size)
+    except OSError:
+        versao = None
+    guardado = _NOMES_DO_ROTEIRO.get(chave)
+    if guardado is None or guardado[0] != versao:
         nomes = set()
         try:
             texto = projeto.roteiro()
@@ -497,8 +524,8 @@ def nomes_do_roteiro(projeto) -> set:
             texto = ""
         for frase in re.split(r"[.!?\n]\s*", texto):
             nomes |= set(re.findall(r"(?<=\s)([A-ZÁÉÍÓÚÂÊÔÃÕ][\wÀ-ÿ'-]{3,})", frase))
-        _NOMES_DO_ROTEIRO[chave] = nomes
-    return _NOMES_DO_ROTEIRO[chave]
+        guardado = _NOMES_DO_ROTEIRO[chave] = (versao, nomes)
+    return guardado[1]
 
 
 def assunto_do_video(projeto) -> str:
@@ -560,6 +587,19 @@ def _identificador(exato: str) -> set:
         return set()
     normal = lambda p: unicodedata.normalize("NFKD", p.lower()).encode("ascii", "ignore").decode()[:4]
     maiusculas = [p for p in uteis if p[0].isupper()]
+    generos = _generos_cientificos(exato)
+    if generos:
+        # nome comum e científico juntos ("Brazil nut tree Bertholletia excelsa fallen"): vale também o substantivo do
+        # nome comum ("tree"). Só com "Brazil" e "Bertholletia", a foto das castanhas (tags "brazil nut, bertholletia
+        # excelsa, snack") entrou no lugar da árvore derrubada (cena 51 do brasil-selvagem)
+        antes_do_genero = []
+        for p in uteis:
+            if normal(p) in generos and p[0].isupper():
+                break
+            antes_do_genero.append(p)
+        comum = [p for p in antes_do_genero if not p[0].isupper()]
+        if comum and len(antes_do_genero) > 1:
+            return _Todos({normal(p) for p in maiusculas} | {normal(comum[-1])})
     if len(maiusculas) > 1:
         # nome composto ("Chernobyl Elephant's Foot"): a foto cita TODAS as palavras, senão um elefante passaria
         return _Todos(normal(p) for p in maiusculas)
@@ -840,7 +880,13 @@ def _buscar(projeto, apenas=None, log=print, permissivo=False):
         return
     geral = projeto.config.get("midia") or {}
     buscador = Buscador(projeto, log)
+    try:
+        _buscar_cenas(projeto, dados, alvo, geral, buscador, log, permissivo)
+    finally:
+        buscador.fechar()  # o servidor chama isto o dia todo: cada Buscador abria um cliente HTTP que nunca fechava
 
+
+def _buscar_cenas(projeto, dados, alvo, geral, buscador, log, permissivo):
     # 1. candidatos de cada cena, já com a segunda leva: a mesma busca traz o dobro, sem pedido a mais aos bancos.
     # O modelo vê os 12 primeiros; se ele (ou o Jev) recusar todos, vê os 12 seguintes antes de a cena ir para a IA
     leva = buscador.quantidade
@@ -918,13 +964,23 @@ def _buscar(projeto, apenas=None, log=print, permissivo=False):
                     break
         if not escolhidos:
             return
+        vistas_do_lote = {}  # n -> impressão da imagem já baixada neste lote (ver _igual_no_lote)
         with ThreadPoolExecutor(geral.get("processos", 4)) as executor:
             futuros = {executor.submit(_baixar_midia, projeto, por_n[n], esc, buscador.http): n
                        for n, esc in escolhidos.items()}
             for futuro in as_completed(futuros):
                 n = futuros[futuro]
                 try:
-                    por_n[n]["midia"] = futuro.result()
+                    baixada = futuro.result()
+                    # os downloads do lote correm juntos e cada um só enxerga o cenas.json do disco, que ainda não tem os
+                    # outros: a mesma foto vinda de dois bancos escapava até a varredura do fim. Aqui, onde os
+                    # resultados se juntam, uma contra as outras
+                    igual = _igual_no_lote(projeto, n, baixada, vistas_do_lote)
+                    if igual is not None:
+                        _descartar_baixado(projeto, por_n[n], baixada)
+                        log(f"  cena {n}: recusada porque a imagem é a mesma da cena {igual}, baixada junto; buscando outra")
+                        continue
+                    por_n[n]["midia"] = baixada
                     if infos.get(n):
                         por_n[n]["captura"] = infos[n]
                 except ImagemRepetida as erro:
@@ -953,11 +1009,7 @@ def _buscar(projeto, apenas=None, log=print, permissivo=False):
         with ThreadPoolExecutor(processos) as executor:
             futuros = [executor.submit(_escolher_lote, projeto, lote, candidatos, folhas, descricoes if conferir else None)
                        for lote in lotes]
-            for futuro in futuros:
-                try:
-                    aplicar(futuro.result())
-                except BaseException as erro:
-                    interrupcao = interrupcao or erro
+            interrupcao = _aplicar_ao_terminar(futuros, aplicar)
         if interrupcao is not None:
             prontas = sum(1 for c in alvo if c.get("midia"))
             log(f"  {prontas} de {len(alvo)} cena(s) baixadas e gravadas antes da interrupção")
@@ -992,6 +1044,52 @@ def _buscar(projeto, apenas=None, log=print, permissivo=False):
     if sem_resposta:
         log(f"  {sem_resposta} cena(s) ficaram pendentes por falha de escolha, de miniatura ou de download. Rode o mesmo comando de novo para tentar outra vez")
     escrever_creditos(projeto)
+
+
+def _igual_no_lote(projeto, n, registro, vistas) -> Optional[int]:
+    """Número da outra cena do mesmo lote de downloads que já ficou com esta imagem (ou uma quase igual), ou None.
+
+    `vistas` guarda a impressão de cada imagem aceita no lote; a desta entra nele quando é nova."""
+    caminho = _imagem_de_comparar(projeto, registro)
+    impressao = _impressao(caminho) if caminho else None
+    if impressao is None:
+        return None
+    for outra, dela in vistas.items():
+        if _impressoes_iguais(impressao, dela):
+            return outra
+    vistas[n] = impressao
+    return None
+
+
+def _descartar_baixado(projeto, cena, registro) -> None:
+    """Apaga o que foi baixado para a cena e põe a imagem em rejeitadas, para a busca não escolhê-la de novo."""
+    for campo in ("arquivo", "capa"):
+        if registro.get(campo):
+            (projeto.pasta / registro[campo]).unlink(missing_ok=True)
+    cena.setdefault("rejeitadas", []).append(f"{registro.get('fonte')}:{registro.get('id')}")
+
+
+def _aplicar_ao_terminar(futuros, aplicar):
+    """Aplica o resultado de cada lote de escolha na ordem. Devolve o primeiro erro, para ser relançado no fim.
+
+    Um lote que falha (cota do modelo, rede) não derruba os outros, e os que já estavam decididos continuam sendo
+    baixados. Ctrl+C é a exceção: antes era guardado como qualquer erro, e a produção seguia esperando todos os lotes
+    que faltavam (cada um com chamadas ao modelo) antes de relançá-lo. Agora os lotes que ainda não começaram são
+    cancelados e o KeyboardInterrupt sobe na hora."""
+    interrupcao = None
+    try:
+        for futuro in futuros:
+            try:
+                aplicar(futuro.result())
+            except KeyboardInterrupt:
+                raise
+            except BaseException as erro:
+                interrupcao = interrupcao or erro
+    except KeyboardInterrupt:
+        for futuro in futuros:
+            futuro.cancel()
+        raise
+    return interrupcao
 
 
 def _segunda_leva(projeto, cenas, candidatos, segunda_leva, na_segunda, buscador, descricoes, aplicar, log):
@@ -1200,6 +1298,9 @@ class Buscador:
         self.contato = str(geral.get("contato") or "").strip()
         agente = f"FabricaVideos/0.1 ({self.contato})" if self.contato else "FabricaVideos/0.1"
         self.http = httpx.Client(headers={"User-Agent": agente}, timeout=60, follow_redirects=True)
+        # fecha o cliente quando o Buscador for descartado, mesmo em quem não chama fechar() (animation_ai, motion_figura).
+        # A função guarda o cliente, e não o Buscador, para não impedir que ele seja descartado
+        self._fechador = weakref.finalize(self, self.http.close)
         self.quantidade = geral.get("candidatos", 8)
         self.espera_maxima = float(geral.get("espera_maxima", 3600))
         self.desligadas = set()
@@ -1222,6 +1323,13 @@ class Buscador:
                     # sem o contexto a busca só fica menos precisa, então nunca para a fábrica por isso
                     log(f"  não consegui completar o contexto dos blocos ({str(erro)[:100]}), buscando sem ele")
             self.blocos = {b["id"]: b for b in projeto.ler_json("roteiro_mapa.json").get("blocos", [])}
+
+    def fechar(self):
+        """Fecha o cliente HTTP e as conexões abertas. Seguro de chamar mais de uma vez."""
+        try:
+            self._fechador()  # roda uma vez só; as chamadas seguintes não fazem nada
+        except Exception:  # noqa: BLE001 - fechar nunca pode derrubar uma produção que já terminou
+            pass
 
     def candidatos(self, cena):
         # vídeo de banco é sempre de hoje: cena de época busca foto de arquivo
@@ -1337,7 +1445,7 @@ class Buscador:
                    **{nome: (lambda t, b, _f=funcao: _f(self, t, b)) for nome, funcao in bancos.FONTES.items()}}
         if fonte not in funcoes:
             raise SystemExit(f"Fonte desconhecida no perfil: {fonte}")
-        codigo = hashlib.sha1(f"{fonte}|{tipo}|{busca}".encode()).hexdigest()[:16]
+        codigo = hashlib.sha1(f"{fonte}|{tipo}|{busca}{self._assinatura_da_licenca(fonte)}".encode()).hexdigest()[:16]
         cache = self.projeto.caminho("midia", "buscas", f"{codigo}.json")
         if cache.exists():
             try:
@@ -1392,6 +1500,17 @@ class Buscador:
         except OSError:
             provisorio.unlink(missing_ok=True)  # outra busca igual gravou primeiro; o resultado é o mesmo
         return achados
+
+    def _assinatura_da_licenca(self, fonte) -> str:
+        """O que da licença configurada mudou o resultado de uma busca guardada, para entrar no nome do cache.
+
+        A Wikimedia devolve só as licenças aceitas (aceitar_cc_by, aceitar_cc_by_sa): ligar uma delas depois não
+        trazia as fotos de volta, porque a busca guardada já vinha sem elas. Vazio nos valores padrão, de modo que os
+        caches que já existem continuam valendo."""
+        if fonte not in ("wikimedia", "wikimedia_categoria"):
+            return ""
+        por_sa, por = bool(self.cfg.get("aceitar_cc_by_sa", False)), bool(self.cfg.get("aceitar_cc_by", True))
+        return "" if (por_sa, por) == (False, True) else f"|licenca:sa={int(por_sa)},by={int(por)}"
 
     def _caiu(self, fonte):
         """O banco caiu de novo depois das tentativas. Três vezes seguidas: fica de fora um tempo e volta sozinho,
@@ -1651,14 +1770,15 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
             (json.dumps([_chave(c) for c in candidatos[cena["n"]]]) + ("|descricao" if com_descricao else "")
              + (f"|v{VERSAO_ESCOLHA}" if VERSAO_ESCOLHA > 1 else "") + ("|cliente" if pelo_cliente else "")).encode()
         ).hexdigest()[:12]
-        if cache.exists():
-            salvo = json.loads(cache.read_text(encoding="utf-8"))
-            if salvo.get("assinatura") == assinatura:
-                resultado[cena["n"]] = salvo["escolhas"]
-                if com_descricao:
-                    descricoes[cena["n"]] = {int(i): f for i, f in (salvo.get("vejo") or {}).items()}
-                _lembrar_juizos(projeto, cena["n"], candidatos[cena["n"]], salvo.get("juizo") or {})
-                continue
+        # cache gravado pela metade (queda durante a escrita) ou sem os campos esperados: a escolha é refeita, em vez de
+        # derrubar o lote com JSONDecodeError ou KeyError
+        salvo = ler_cache(cache)
+        if isinstance(salvo, dict) and salvo.get("assinatura") == assinatura and isinstance(salvo.get("escolhas"), list):
+            resultado[cena["n"]] = salvo["escolhas"]
+            if com_descricao:
+                descricoes[cena["n"]] = {int(i): f for i, f in (salvo.get("vejo") or {}).items()}
+            _lembrar_juizos(projeto, cena["n"], candidatos[cena["n"]], salvo.get("juizo") or {})
+            continue
         if not folhas[cena["n"]][1]:
             # nenhuma miniatura carregou: pode ser falha de rede, então a cena fica sem resposta e tenta de novo depois
             continue
@@ -1721,9 +1841,9 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
         escolhas = [i for i in respostas[cena["n"]] if i in validos]
         vejo = {i: f for i, f in (vejos.get(cena["n"]) or {}).items() if i in validos}
         juizo = {str(i): j for i, j in (juizos.get(cena["n"]) or {}).items() if i in validos}
-        cache.write_text(json.dumps({"assinatura": assinatura, "escolhas": escolhas,
-                                     "vejo": {str(i): f for i, f in vejo.items()},
-                                     **({"juizo": juizo} if juizo else {})}), encoding="utf-8")
+        gravar_cache(cache, {"assinatura": assinatura, "escolhas": escolhas,
+                             "vejo": {str(i): f for i, f in vejo.items()},
+                             **({"juizo": juizo} if juizo else {})}, indent=None)
         _lembrar_juizos(projeto, cena["n"], candidatos[cena["n"]], juizo)
         resultado[cena["n"]] = escolhas
         if com_descricao:
@@ -1962,10 +2082,14 @@ class FundoDeChroma(ImagemRepetida):
 
 
 # o nome e as tags dos bancos entregam o material de edição; azul só pelo nome (céu limpo também é azul liso)
+# "chroma" só como palavra inteira (ou "chroma key"/"chromakey"): sem isso, chromatography, chromatin e chromatic
+# apagavam do vídeo as fotos de ciência. "lower third" não vale em "lower third of the moon".
 _DE_EDICAO = re.compile(
-    r"green[\s_-]*screen|greenscreen|chroma|green[\s_-]*(?:background|backdrop)|blue[\s_-]*screen|bluescreen|"
+    r"green[\s_-]*screen|greenscreen|(?<![a-z])chroma(?:[\s_-]*key(?:ing)?)?(?![a-z])|"
+    r"green[\s_-]*(?:background|backdrop)|blue[\s_-]*screen|bluescreen|"
     r"alpha[\s_-]*channel|transparent[\s_-]*background|fundo[\s_-]*verde|tela[\s_-]*verde|"
-    r"subscribe[\s_-]*(?:button|animation|bell)|like[\s_-]*(?:and|&)[\s_-]*subscribe|lower[\s_-]*third|"
+    r"subscribe[\s_-]*(?:button|animation|bell)|like[\s_-]*(?:and|&)[\s_-]*subscribe|"
+    r"lower[\s_-]*third(?:s(?![a-z])|(?![a-z])(?![\s_-]*of\b))|"
     r"overlay[\s_-]*(?:effect|template)|motion[\s_-]*template", re.I)
 
 
@@ -2058,17 +2182,41 @@ def _impressao(caminho) -> Optional[int]:
             return _IMPRESSOES[chave]
     try:
         with Image.open(caminho) as im:
-            cinza = im.convert("L").resize((9, 8))
-            px = list(cinza.getdata())
+            pequena = im.convert("RGB").resize((9, 8))
+        pixels = lambda im: list(im.get_flattened_data()) if hasattr(im, "get_flattened_data") else list(im.getdata())
+        px = pixels(pequena.convert("L"))
+        cores = pixels(pequena)
     except Exception:
         return None
     valor = 0
     for linha in range(8):
         for col in range(8):
             valor = (valor << 1) | (px[linha * 9 + col] > px[linha * 9 + col + 1])
+    # acima dos 64 bits do dHash, a cor média em 16 níveis por canal: sem textura o dHash é quase só zeros (ou uns) e
+    # um quadro preto "igualava" um céu liso ou um fundo cinza (distância 0). Ver _impressoes_iguais
+    media = [sum(c[i] for c in cores) // len(cores) >> 4 for i in range(3)]
+    valor |= ((media[0] << 8) | (media[1] << 4) | media[2]) << 64
     with _TRAVA_IMPRESSOES:
         _IMPRESSOES[chave] = valor
     return valor
+
+
+_MASCARA_DHASH = (1 << 64) - 1
+
+
+def _impressoes_iguais(a: int, b: int) -> bool:
+    """As duas impressões são da mesma imagem (ou quase): dHash a até DISTANCIA_REPETIDA pontos.
+
+    Imagem com pouca textura (dHash com menos de 12 ou mais de 52 pontos ligados: preto, fundo liso, céu limpo) não se
+    distingue só pelo dHash, então a cor média também tem que bater, com folga de um nível para a recompressão. A foto
+    com textura continua sendo comparada só pelo dHash, como antes."""
+    if bin((a ^ b) & _MASCARA_DHASH).count("1") > DISTANCIA_REPETIDA:
+        return False
+    pontos = lambda h: bin(h & _MASCARA_DHASH).count("1")
+    if all(12 <= pontos(h) <= 52 for h in (a, b)):
+        return True
+    ca, cb = a >> 64, b >> 64
+    return all(abs(((ca >> s) & 15) - ((cb >> s) & 15)) <= 1 for s in (8, 4, 0))
 
 
 def _imagem_de_comparar(projeto, midia_info) -> Optional[Path]:
@@ -2097,7 +2245,7 @@ def cena_com_a_mesma_imagem(projeto, n, caminho, chave=None) -> Optional[int]:
             return outra["n"]  # a mesma foto do mesmo banco
         dela = _imagem_de_comparar(projeto, outra.get("midia"))
         h = _impressao(dela) if dela else None
-        if h is not None and bin(minha ^ h).count("1") <= DISTANCIA_REPETIDA:
+        if h is not None and _impressoes_iguais(minha, h):
             return outra["n"]
     return None
 
@@ -2114,7 +2262,7 @@ def cenas_repetidas(projeto) -> list[int]:
         caminho = _imagem_de_comparar(projeto, m)
         h = _impressao(caminho) if caminho else None
         if (chave and chave in vistas_chave) or m["arquivo"] in vistas_arquivo or (
-                h is not None and any(bin(h ^ outra).count("1") <= DISTANCIA_REPETIDA for outra in vistas_impressao)):
+                h is not None and any(_impressoes_iguais(h, outra) for outra in vistas_impressao)):
             repetidas.append(c["n"])
             continue
         if chave:
@@ -2179,10 +2327,48 @@ def nome_livre(projeto, n: int, sufixos: tuple) -> str:
         k += 1
 
 
+@contextlib.contextmanager
+def _guardando_o_que_havia(caminhos):
+    """O que já existe nesses caminhos volta para o lugar se o bloco falhar; se ele terminar, a cópia é descartada.
+
+    Copia em vez de mover: se o processo morrer no meio, o arquivo original nunca fica fora do lugar."""
+    guardados = []
+    for caminho in dict.fromkeys(caminhos):
+        if caminho.exists():
+            copia = caminho.with_name(caminho.name + ".anterior")
+            shutil.copy2(caminho, copia)
+            guardados.append((caminho, copia))
+    try:
+        yield
+    except BaseException:
+        for caminho, copia in guardados:
+            copia.replace(caminho)
+        raise
+    for _, copia in guardados:
+        copia.unlink(missing_ok=True)
+
+
 def _baixar_midia(projeto, cena, candidato, http):
+    """Baixa o candidato para a cena e devolve o registro da mídia.
+
+    O nome do arquivo é o da cena (midia/NNNN.jpg), o mesmo da foto que ela tinha antes de uma nova busca. Se a imagem
+    nova for recusada depois do download (repetida, material de edição) ou o download falhar, o arquivo que estava ali
+    volta. Antes ele era apagado junto com a recusada, e o Corrigir (_tirar_outra_coisa) devolvia à cena uma foto que
+    não existia mais."""
     n = cena["n"]
     if candidato["tipo"] == "video":
         base = nome_livre(projeto, n, (".mp4", "_capa.jpg"))
+        alvos = [projeto.caminho("midia", f"{base}.mp4"), projeto.caminho("midia", f"{base}_capa.jpg")]
+    else:
+        base = nome_livre(projeto, n, (".jpg",))
+        alvos = [projeto.caminho("midia", f"{base}.jpg")]
+    with _guardando_o_que_havia(alvos):
+        return _trazer_midia(projeto, cena, candidato, http, base)
+
+
+def _trazer_midia(projeto, cena, candidato, http, base):
+    n = cena["n"]
+    if candidato["tipo"] == "video":
         arquivo = projeto.caminho("midia", f"{base}.mp4")
         _baixar(http, candidato["arquivo"], arquivo)
         capa = projeto.caminho("midia", f"{base}_capa.jpg")
@@ -2191,7 +2377,7 @@ def _baixar_midia(projeto, cena, candidato, http):
         except httpx.HTTPError:
             capa = None
     else:
-        arquivo = projeto.caminho("midia", f"{nome_livre(projeto, n, ('.jpg',))}.jpg")
+        arquivo = projeto.caminho("midia", f"{base}.jpg")
         _baixar(http, candidato["arquivo"], arquivo)
         _garantir_jpeg(arquivo)
         capa = arquivo
@@ -2212,6 +2398,10 @@ def _baixar_midia(projeto, cena, candidato, http):
             f.unlink(missing_ok=True)
         cena.setdefault("rejeitadas", []).append(_chave(candidato))
         raise ImagemRepetida(f"a imagem é a mesma da cena {igual}")
+    if candidato.get("avisar_download"):
+        from . import bancos
+
+        bancos.avisar_download(candidato, http)  # a Coverr exige o aviso de cada vídeo usado
     registro = {chave: candidato.get(chave) for chave in ("fonte", "id", "tipo", "pagina", "autor", "licenca", "duracao")}
     registro["arquivo"] = str(arquivo.relative_to(projeto.pasta))
     registro["capa"] = str(capa.relative_to(projeto.pasta)) if capa else None
@@ -2274,7 +2464,14 @@ def escrever_creditos(projeto):
     for c in projeto.ler_json("cenas.json")["cenas"]:
         m = c.get("midia")
         if m and m.get("fonte") == "animation_ai":
-            continue  # cena animada feita pela fábrica: não tem crédito
+            # cena animada feita pela fábrica: só as fotos de banco que os itens mostram (animation_ai.fotos_dos_itens)
+            for f in c.get("anim_fotos") or []:
+                if f.get("fonte"):
+                    autor = f" por {f['autor']}" if f.get("autor") else ""
+                    tipo = "Vídeo" if f.get("tipo") == "video" else "Foto"
+                    linhas.append(f"{mmss(c['ini'])} {tipo} do {f['fonte'].capitalize()}{autor}, "
+                                  f"{f.get('licenca') or ''}. {f.get('pagina') or ''}")
+            continue
         if m and m.get("fonte") == "motion_ia":
             m = c.get("motion_foto")  # a foto de banco que o clipe de motion usa (o bicho na balança)
         if not m or not m.get("fonte"):

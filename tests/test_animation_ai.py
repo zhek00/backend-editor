@@ -100,7 +100,7 @@ def test_estrutura_so_manda_ao_modelo_o_que_tem_o_que_desenhar():
 
 def test_complemento_nao_usa_os_tipos_de_texto_puro():
     assert "frase" not in a.DE_COMPLEMENTO and "abertura" not in a.DE_COMPLEMENTO
-    assert len(a.DE_COMPLEMENTO) == 19
+    assert len(a.DE_COMPLEMENTO) == 23  # os 19 de antes e 4 novos (medidor, grafico_linha, deslizar, pilha_cartoes)
 
 
 def test_frases_do_video_param_no_ponto_e_pulam_o_motion():
@@ -136,3 +136,46 @@ def test_tema_apple_e_o_padrao_e_leva_o_jeito_de_mexer():
     assert "--fundo:#F7F6F2" in html and "--raio-card:20px" in html  # o creme e o card do Motion IA
     assert '"flutuar": true' in html and '"tremer": false' in html  # as opções vão para o motor, não para o CSS
     assert "--_flutuar" not in html
+
+
+def test_item_repetido_e_recusado():
+    # cena 47 do brasil-selvagem: "a cada dois ou três anos" em dois itens seguidos, só com outro destaque
+    fala = "Em geral, cria um único filhote a cada dois ou três anos, e esse jovem depende dos pais."
+    plano = {"itens": [{"texto": "cria um único *filhote*"}, {"texto": "a cada *dois* ou três anos"},
+                       {"texto": "a cada dois ou *três* anos"}]}
+    assert any("mesmo texto" in e for e in a.conferir("lista", plano, fala))
+
+
+class _ProjetoDeFotos:
+    def __init__(self, pasta, cenas):
+        self.pasta, self._cenas, self.config, self.perfil = pasta, cenas, {}, {}
+
+    def ler_json(self, nome):
+        return {"cenas": self._cenas}
+
+    def existe(self, nome):
+        return False
+
+
+def test_cada_item_ganha_a_foto_da_cena_em_que_e_falado(tmp_path, monkeypatch):
+    # cenas 44 a 46 do brasil-selvagem: ninho, castanheira e sumaúma, cada uma com a foto que a cena tinha
+    from PIL import Image
+
+    (tmp_path / "midia").mkdir()
+    cenas = []
+    for n, ini in ((44, 0.0), (45, 3.0), (46, 6.0)):
+        Image.new("RGB", (64, 48), (n, 90, 40)).save(tmp_path / "midia" / f"{n:04d}.jpg")
+        cenas.append({"n": n, "ini": ini, "fim": ini + 3.0, "midia": {"fonte": "animation_ai"},
+                      "anim_reserva": {"midia": {"fonte": "pexels", "id": str(n), "tipo": "foto",
+                                                 "arquivo": f"midia/{n:04d}.jpg"}}})
+    cenas[1]["anim_reserva"]["captura"] = {"suspeita": True}  # tapa-buraco sem julgamento: não empresta a foto
+    projeto = _ProjetoDeFotos(tmp_path, cenas)
+    dados = {"itens": [{"texto": "constrói *ninhos*", "t": 0.5}, {"texto": "a *castanheira*", "t": 3.4},
+                       {"texto": "e a *sumaúma*", "t": 6.2}]}
+    pasta = tmp_path / "animation_ai" / "0044"
+    monkeypatch.setattr(a, "_foto_do_banco", lambda *args, **kw: None)  # sem rede: a cena sem foto boa fica sem
+    creditos = a.fotos_dos_itens(projeto, cenas, "lista", dados, 0.0, pasta, log=lambda *x: None)
+    assert [it.get("foto") for it in dados["itens"]] == ["assets/fotos/cena_0044.jpg", None, "assets/fotos/cena_0046.jpg"]
+    assert set(creditos) == {44, 46}
+    # tipo sem foto (número) não mexe nos dados
+    assert a.fotos_dos_itens(projeto, cenas, "numero", {"valor": "3"}, 0.0, pasta) == {}

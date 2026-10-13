@@ -1,0 +1,34 @@
+/* direção (fabrica/direcao.py): o estilo das cenas dirigidas. Nada aqui anima sozinho: quem move tudo é o quadro(t) do
+   direcao.js. O tamanho da tela (deitada ou em pé) chega nas variáveis --W e --H. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: var(--W); height: var(--H); overflow: hidden; background: var(--fundo); }
+#root { position: relative; width: var(--W); height: var(--H); overflow: hidden; background: var(--fundo);
+        font-family: "Texto", sans-serif; color: var(--txt); }
+#palco { position: absolute; left: 0; top: 0; width: var(--W); height: var(--H); transform-origin: 50% 50%; }
+#cenario { position: absolute; left: -15%; top: -15%; width: 130%; height: 130%; }
+.camada { position: absolute; left: 0; top: 0; width: var(--W); height: var(--H); pointer-events: none; }
+.faixa-legenda { position: absolute; left: 0; right: 0; bottom: 0; height: var(--faixa-altura); pointer-events: none;
+                 background: linear-gradient(to bottom, transparent, var(--faixa)); }
+.canal { position: absolute; left: 56px; top: 44px; z-index: 5; font: 700 20px "Texto"; letter-spacing: 4px;
+         text-transform: uppercase; color: var(--mut); }
+
+/* tipografia cinética: cada palavra (ou letra) é uma unidade que entra no segundo em que é falada */
+.txt { position: absolute; transform: translate(-50%, -50%); text-align: center; font-family: "Texto", sans-serif;
+       font-weight: 900; line-height: 1.2; letter-spacing: -0.02em; text-shadow: 0 6px 40px rgba(0,0,0,.35); }
+.txt.serifa { font-family: "Titulo", serif; font-weight: 700; letter-spacing: -0.01em; }
+.txt.suave { font-weight: 600; letter-spacing: 0; line-height: 1.3; }
+.txt .w { display: inline-block; white-space: nowrap; margin: 0 .14em; }
+.txt .w.rev { overflow: hidden; padding: .06em .02em .14em; margin-top: -.06em; margin-bottom: -.14em; }
+.txt .u { display: inline-block; will-change: transform, opacity; }
+.txt .f { color: var(--acc); font-family: "Titulo", serif; font-style: italic; font-weight: 700; }
+
+.numero { position: absolute; transform: translate(-50%, -50%); text-align: center; white-space: nowrap;
+          font: 900 1em "Texto"; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.legenda { position: absolute; transform: translate(-50%, 0); text-align: center; font: 600 1em "Texto"; color: var(--txt2); }
+
+.card3d { position: absolute; background: var(--painel); border: 1px solid var(--linha); border-radius: 28px;
+          box-shadow: 0 40px 90px rgba(0,0,0,.45); padding: 44px 52px; text-align: left; transform-style: preserve-3d; }
+.card3d .t { font: 800 1em "Texto"; letter-spacing: -0.01em; color: var(--acc); }
+.card3d .p { margin-top: .5em; font: 600 .62em "Texto"; line-height: 1.25; color: var(--txt); }
+
+.forma, .traco { position: absolute; left: 0; top: 0; width: var(--W); height: var(--H); overflow: visible; }

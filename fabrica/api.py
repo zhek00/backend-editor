@@ -472,6 +472,14 @@ def _esteira(nome: str, task_id: str) -> None:
         _etapa(task_id, "Completar cenas", lambda: midia.buscar(p, apenas=set(faltam), log=log_w, permissivo=True))
     # regra fixa: jamais repetir imagem, conferido na imagem em si, antes de dizer que está pronto
     _etapa(task_id, "Sem imagens repetidas", lambda: midia.tirar_repetidas(p, log=log_w))
+    # o que o Completar cenas pôs depois da conferência (a rodada que aceita o que a busca achou) passa pelo Jev
+    # agora: a errada busca de novo e, com a IA ligada, vira imagem de IA. Nunca para o vídeo
+    try:
+        corrigir.conferir_completadas(p, log=log_w)
+    except ParadaPrecisaDeVoce:
+        raise
+    except (Exception, SystemExit) as erro_comp:
+        log_w(f"  a conferência das cenas completadas falhou, seguindo sem ela: {erro_comp}")
     if cenas_sem_arquivo(p) and midia.ia_ativa(p):
         # a repetida que não achou foto nova nos bancos vai para a imagem de IA (ia.ativa). Antes a criação parava
         # pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com a IA ligada)
@@ -1312,6 +1320,14 @@ CHAVES_CONHECIDAS = [
         "obrigatoria": True,
         "sem_ela": "Perde uma das fontes de material real.",
         "onde": "pixabay.com/api/docs",
+    },
+    {
+        "env": "COVERR_API_KEY",
+        "nome": "Coverr",
+        "para_que": "Mais vídeos de banco de imagens, de graça.",
+        "obrigatoria": False,
+        "sem_ela": "Os vídeos vêm só do Pexels e do Pixabay.",
+        "onde": "api.coverr.co/docs (a chave se pede por e-mail a team@coverr.co)",
     },
     {
         "env": "KIE_API_KEY",

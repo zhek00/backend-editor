@@ -32,10 +32,16 @@ ESTILO_LEGENDA_VERTICAL = (
 )
 
 
-def origem_da_cena(projeto, cena):
+def origem_da_cena(projeto, cena, vertical=False):
     midia = cena.get("midia")
     if midia:
-        return ("video" if midia["tipo"] == "video" else "foto"), projeto.pasta / midia["arquivo"]
+        arquivo = projeto.pasta / midia["arquivo"]
+        if vertical and animation_ai.e_animada(cena):
+            # a cena dirigida (direcao.py) tem um clipe próprio para a tela em pé, recomposto e não cortado
+            em_pe = arquivo.with_name(arquivo.stem + "_vertical.mp4")
+            if em_pe.exists():
+                return "video", em_pe
+        return ("video" if midia["tipo"] == "video" else "foto"), arquivo
     return "foto", projeto.imagem(cena["n"])
 
 
@@ -70,7 +76,7 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     fps = cfg.get("fps", 30)
     duracao = projeto.ler_json("alinhamento.json")["duracao"]
     cenas = projeto.ler_json("cenas.json")["cenas"]
-    origens = [origem_da_cena(projeto, c) for c in cenas]
+    origens = [origem_da_cena(projeto, c, vertical) for c in cenas]
     trechos = []
     if com_avatar(projeto, sem_avatar):
         if avatar.modo(projeto.perfil) == "trechos":
@@ -452,7 +458,10 @@ def _entrada_video(arquivo, frames, cfg, centro=False):
         inicio = min(1.0, (disponivel - necessario) / 2)  # pula o comecinho, que costuma ter tremida
     elif disponivel < necessario:
         velocidade = max(disponivel / necessario, 0.5)  # desacelera até a metade, depois congela o fim
-    filtro = _encaixe(cfg)
+    # o clipe em pé de uma cena dirigida já tem o tamanho da tela: nada de cortar nem de pôr sobre fundo desfocado
+    nativo = str(arquivo).endswith("_vertical.mp4") and cfg.get("vertical")
+    filtro = (f"scale={largura}:{altura}:force_original_aspect_ratio=increase,crop={largura}:{altura},setsar=1"
+              if nativo else _encaixe(cfg))
     if velocidade < 1:
         filtro += f",setpts=PTS/{velocidade:.4f}"
     filtro += f",fps={fps},tpad=stop_mode=clone:stop_duration={necessario:.3f},format=yuv420p"

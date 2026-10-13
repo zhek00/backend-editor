@@ -7,7 +7,7 @@ fonte, id, tipo, miniatura, arquivo, duracao, pagina, autor, licenca e descricao
 A descricao é o que o próprio banco sabe sobre a imagem (espécie, título, legenda). Ela entra no filtro de
 assunto e é lida pelo Jev na conferência, então quanto mais ela disser, melhor.
 
-Só fotos: estes bancos não têm vídeo que sirva. Quem precisa de chave lê o nome dela do .env e se desliga
+Só fotos, exceto a Coverr, que só tem vídeo. Quem precisa de chave lê o nome dela do .env e se desliga
 sozinho, com um aviso, quando ela não existe.
 """
 import os
@@ -133,6 +133,59 @@ def unsplash(b, tipo, busca):
             "registrar_download": (f.get("links") or {}).get("download_location"),
         })
     return achados
+
+
+def _mp4_do_coverr(urls):
+    """O campo mp4 é um endereço; a Coverr avisou que ele vai virar um dicionário com as resoluções."""
+    mp4 = (urls or {}).get("mp4")
+    if isinstance(mp4, dict):
+        mp4 = next((mp4[k] for k in ("high", "medium", "low") if mp4.get(k)), None)
+    return mp4 if isinstance(mp4, str) else None
+
+
+def coverr(b, tipo, busca):
+    """Vídeos de banco da Coverr (só vídeo, deitados). Precisa da chave da API, que se pede por e-mail à Coverr
+    (team@coverr.co). O endereço de cada vídeo é assinado com a chave. A Coverr exige avisar cada download
+    (`avisar_download`)."""
+    from .midia import FonteIndisponivel
+
+    if tipo != "video":
+        return []
+    chave = _chave("COVERR_API_KEY", "COVERR_API")
+    if not chave:
+        raise FonteIndisponivel("falta COVERR_API_KEY no .env (a chave se pede por e-mail a team@coverr.co)")
+    r = b.http.get("https://api.coverr.co/videos", headers={"Authorization": f"Bearer {chave}"},
+                   params={"query": busca[:100], "page_size": 30, "urls": "true"})
+    b._checar(r, "Coverr")
+    achados = []
+    for v in r.json().get("hits", []):
+        arquivo = _mp4_do_coverr(v.get("urls"))
+        miniatura = v.get("thumbnail") or v.get("poster")
+        if not arquivo or not miniatura or v.get("is_vertical"):
+            continue
+        if (v.get("max_width") or 1920) < (v.get("max_height") or 0):
+            continue
+        tags = " ".join(str(t) for t in (v.get("tags") or [])[:10])
+        achados.append({
+            "fonte": "coverr", "id": str(v["id"]), "tipo": "video", "miniatura": miniatura, "arquivo": arquivo,
+            "duracao": v.get("duration"), "pagina": f"https://coverr.co/videos/{v['id']}",
+            "autor": "Coverr", "licenca": "Licença Coverr",
+            "descricao": _limpar(f"{v.get('title') or ''}. {v.get('description') or ''}. {tags}"),
+            "avisar_download": f"https://api.coverr.co/videos/{v['id']}/stats/downloads",
+        })
+    return achados
+
+
+def avisar_download(candidato, http):
+    """Avisa a Coverr que o vídeo foi baixado (exigência dela para a API grátis). Nunca derruba a produção."""
+    url = candidato.get("avisar_download")
+    chave = _chave("COVERR_API_KEY", "COVERR_API")
+    if not url or not chave or candidato.get("fonte") != "coverr":
+        return
+    try:
+        http.request("PATCH", url, headers={"Authorization": f"Bearer {chave}"})
+    except Exception:
+        pass
 
 
 def smithsonian(b, tipo, busca):
@@ -334,6 +387,7 @@ ACERVO = {"harvard", "europeana", "smithsonian", "nypl", "tepapa"}
 FORCAS = {
     "pexels": "fotos e vídeos modernos de banco de imagens, de gente, cidade, natureza e objetos do dia a dia",
     "pixabay": "fotos e vídeos de banco de imagens, muito material genérico e de objetos",
+    "coverr": "vídeos modernos de banco de imagens, de gente, cidade, natureza e objetos do dia a dia",
     "unsplash": "fotografia moderna de boa qualidade: lugares, gente, comida, objetos, natureza",
     "wikimedia": "fotos documentais e históricas, pessoas e lugares reais, mapas, obras de arte e ilustrações científicas",
     "inaturalist": "bichos e plantas fotografados no campo, indexados pelo nome comum e pelo científico (fire ant, Polistes dominula)",
@@ -353,5 +407,5 @@ def descrever(fontes):
 
 
 # fonte -> função
-FONTES = {"inaturalist": inaturalist, "nasa": nasa, "unsplash": unsplash, "smithsonian": smithsonian,
+FONTES = {"inaturalist": inaturalist, "nasa": nasa, "unsplash": unsplash, "coverr": coverr, "smithsonian": smithsonian,
           "europeana": europeana, "harvard": harvard, "nypl": nypl, "tepapa": tepapa}

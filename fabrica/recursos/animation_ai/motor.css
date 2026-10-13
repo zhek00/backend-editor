@@ -20,9 +20,11 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--
 .faixa-legenda { position: absolute; left: 0; right: 0; bottom: 0; height: var(--faixa-altura, 240px); pointer-events: none;
                  background: linear-gradient(to bottom, transparent, var(--faixa)); }
 
-.kick { font: 800 26px var(--f-txt); letter-spacing: 6px; text-transform: uppercase; color: var(--acc); }
+/* o rótulo acima do título: 34 px, em caixa normal e sem letras espaçadas. Em caixa-alta espaçada e com 26 px era o
+   "kicker" de slide (motionmaxxing) e ficava ilegível no celular, abaixo dos 32 px que a fábrica exige */
+.kick { font: 700 34px var(--f-txt); line-height: 1.2; color: var(--acc); }
 .tit { font-family: var(--f-tit); font-weight: var(--peso-tit); line-height: 1.06; letter-spacing: var(--esp-tit);
-       text-transform: var(--caixa); color: var(--txt); }
+       text-transform: var(--caixa); color: var(--txt); text-shadow: var(--sombra-txt, none); }
 .sub { font: 500 38px var(--f-txt); line-height: 1.3; color: var(--txt2); }
 .d { color: var(--acc); font-family: var(--f-d); font-style: var(--estilo-d); font-weight: var(--peso-d); }
 .d2 { color: var(--acc2); }
@@ -40,5 +42,5 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--
 .linha-svg { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; pointer-events: none; }
 .fonte { font: 500 24px var(--f-txt); color: var(--mut); }
 .papel { background: var(--papel); color: #1E1B16; }
-.carimbo { border: 7px solid var(--verm); color: var(--verm); border-radius: 12px; padding: 8px 26px;
+.carimbo { border: 7px solid var(--verm-papel, var(--verm)); color: var(--verm-papel, var(--verm)); border-radius: 12px; padding: 8px 26px;
            font: 900 46px var(--f-txt); letter-spacing: 5px; text-transform: uppercase; }

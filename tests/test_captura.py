@@ -94,6 +94,14 @@ def test_cena_de_epoca_vai_ao_arquivo_e_nunca_vira_video():
     assert all(c["tipo"] == "foto_real" for c in lista if c.get("epoca"))
 
 
+def test_cinco_primeiros_minutos_70_por_cento_video():
+    lista = [{"n": i, "tipo": "foto_real", "ini": i * 4.0, "personagem": False} for i in range(150)]  # 10 min
+    cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
+    inicio = [c for c in lista if c["ini"] < 300]
+    assert sum(c["tipo"] == "video_real" for c in inicio) == round(len(inicio) * 0.7)
+    assert not any(c["tipo"] == "video_real" for c in lista if c["ini"] >= 300)
+
+
 # ---------------------------------------------------------------- o modelo que escolhe recusou todos (natureza-nos-ensina)
 
 CROCODILO = {"n": 54, "tipo": "foto_real", "busca": "Crocodylus niloticus", "sujeito": "Nile crocodile",
@@ -309,3 +317,33 @@ def test_recorte_com_pontas_espetadas_e_barrado(tmp_path):
     cv2.imwrite(str(tmp_path / "espetado.png"), espetado)
     assert recorte.pontas(tmp_path / "liso.png") < recorte.PONTAS_MAXIMO < recorte.pontas(tmp_path / "espetado.png")
     assert recorte.limpo(tmp_path / "liso.png") and not recorte.limpo(tmp_path / "espetado.png")
+
+
+def test_nome_comum_e_cientifico_exigem_o_substantivo():
+    # cena 51 do brasil-selvagem: "Brazil nut tree Bertholletia excelsa fallen" aceitava a foto das castanhas
+    exigido = midia._identificador("Brazil nut tree Bertholletia excelsa fallen")
+    assert sorted(exigido) == ["bert", "braz", "tree"]
+    castanhas = F("nuts, proteins, snack, brazil nut, kernels, bertholletia excelsa, food")
+    arvore = F("Bertholletia excelsa, Brazil nut tree in the rainforest")
+    assert not midia._cita_o_assunto(exigido, castanhas)
+    assert midia._cita_o_assunto(exigido, arvore)
+    # sem nome comum antes do científico, segue como antes
+    assert sorted(midia._identificador("Naja kaouthia")) == ["kaou", "naja"]
+
+
+def test_completadas_sem_julgamento_vao_ao_jev(monkeypatch):
+    # a 3ª rodada do Completar cenas aceita o que a busca achou: o Jev julga antes de terminar
+    from fabrica import corrigir
+
+    class P:
+        offline, config = False, {}
+
+    cenas = [{"n": 51, "midia": {"arquivo": "x"}},
+             {"n": 52, "midia": {"arquivo": "y"}, "captura": {"conferida": True, "nota": 80}},
+             {"n": 53, "midia": {"arquivo": "z"}, "conferencia": {"legenda": "ok", "nota": 90}}]
+    monkeypatch.setattr(corrigir, "conferiveis", lambda projeto, numeros=None: cenas)
+    monkeypatch.setattr(midia, "nota_minima_da_conferencia", lambda projeto: 40)
+    pedidas = {}
+    monkeypatch.setattr(corrigir, "corrigir", lambda projeto, numeros, **kw: pedidas.setdefault("n", numeros))
+    corrigir.conferir_completadas(P(), log=lambda *x: None)
+    assert pedidas["n"] == {51}

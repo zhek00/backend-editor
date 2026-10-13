@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import animacoes, avatar, cenas, trilha, claude_local, revisao_video, corrigir, custos, gemini_local, genaipro, groq_local, jev_local, openrouter_local, efeitos, imagens, meditacao, midia, musica, narracao, render
-from . import conferir_voz, custos_reais, pacote, pago, publicacao, qualidade, shorts, thumbnail
+from . import checagem_video, conferir_voz, custos_reais, pacote, pago, publicacao, qualidade, shorts, thumbnail
 from . import texto as tx
 from .config import RAIZ, carregar_perfil, config_geral
 from .projeto import PROJETOS, Projeto
@@ -126,6 +126,7 @@ def completar_depois_da_narracao(p, a, antes):
     if faltam:
         midia.buscar(p, apenas=set(faltam), log=log, permissivo=True)
     midia.tirar_repetidas(p, log=log)
+    corrigir.conferir_completadas(p, log=log)  # o que a busca do aperto pôs, sem ninguém olhar
     if corrigir.depois_da_narracao(p, {})["vazias"] and midia.ia_ativa(p):
         etapa_imagens(p, a)  # a repetida sem foto nova nos bancos vai para a imagem de IA, com o custo perguntado
     faltam = sorted(corrigir.depois_da_narracao(p, {})["vazias"])
@@ -337,6 +338,13 @@ def cmd_trilha(a):
 
 def etapa_revisao_video(p, a):
     """Depois do render, o modelo principal olha o vídeo pronto e aponta problemas. Gratuito e sem bloquear."""
+    if p.existe("final.mp4") and checagem_video.ligada(p):
+        # antes do modelo, o FFmpeg lê o vídeo inteiro: imagem parada, tela preta e falta de som (grátis, sem rede)
+        log("Checagem técnica do vídeo pronto")
+        try:
+            checagem_video.checar(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  a checagem técnica não rodou ({str(erro)[:120]}); o vídeo está pronto do mesmo jeito")
     if not revisao_video.ligada(p) or not p.existe("final.mp4"):
         return
     log("Revisão do vídeo pronto")
@@ -475,6 +483,11 @@ def cmd_animation_ai(a):
     if a.desfazer:
         log(f"  voltaram ao que tinham: {animation_ai.desfazer(p, set(a.cenas or []))}")
         return
+    if a.regravar:
+        log("Cenas animadas gravadas de novo com o plano delas (animation-ai, grátis)")
+        feitas = animation_ai.regravar(p, set(a.cenas or []), log=log)
+        log(f"  {len(feitas)} cena(s) gravada(s) de novo. Entram no próximo render.")
+        return
     if a.tema:
         p.perfil["animation_ai"] = {**(p.perfil.get("animation_ai") or {}), "tema": a.tema}
     log("Cenas animadas (animation-ai, grátis)")
@@ -484,6 +497,49 @@ def cmd_animation_ai(a):
     else:
         feitas = animation_ai.nas_uteis(p, log=log)
     log(f"  {len(feitas)} cena(s) com animação. Entram no próximo render.")
+
+
+def cmd_direcao(a):
+    from . import direcao
+    p = Projeto(a.nome)
+    if not p.existe("cenas.json") or not p.existe("alinhamento.json"):
+        raise SystemExit(f"Faltam a narração e as cenas. Rode uv run fabrica cenas {p.nome}")
+    if a.formato:
+        formatos = ["horizontal", "vertical"] if a.formato == "ambos" else [a.formato]
+        p.perfil["animation_ai"] = {**(p.perfil.get("animation_ai") or {}),
+                                    "direcao": {**direcao.config(p), "formatos": formatos}}
+    if a.fps:
+        p.perfil["animation_ai"] = {**(p.perfil.get("animation_ai") or {}),
+                                    "direcao": {**direcao.config(p), "fps": a.fps}}
+    if a.desfazer_ajuste:
+        for n in a.cenas or []:
+            log(f"Desfazendo o último ajuste da cena {n}")
+            direcao.desfazer_ajuste(p, n, log)
+        return
+    if a.refinar:
+        if not a.cenas:
+            raise SystemExit("Diga a cena: uv run fabrica direcao NOME --cenas N --refinar \"deixa a transição mais suave\"")
+        for n in a.cenas:
+            log(f"Ajustando a cena {n}: {a.refinar}")
+            direcao.refinar(p, n, a.refinar, log)
+        log("  pronto. Entra no próximo render.")
+        return
+    if not a.cenas:
+        raise SystemExit("Diga as cenas: uv run fabrica direcao NOME --cenas 3 4 5")
+    spec = None
+    if a.spec:
+        spec = json.loads(Path(a.spec).read_text(encoding="utf-8"))
+    cenas_ = [c for c in p.ler_json("cenas.json")["cenas"] if c["n"] in set(a.cenas)]
+    log("Cenas dirigidas (câmera, tipografia cinética e formas; grátis)")
+    feitas = direcao.fazer(p, cenas_, log=log, forcar=a.forcar, spec=spec)
+    log(f"  {len(feitas)} cena(s) dirigida(s). Entram no próximo render"
+        f"{' (a versão em pé usa o clipe em pé de cada uma)' if direcao.config(p)['formatos'] != ['horizontal'] else ''}.")
+
+
+def cmd_checar_video(a):
+    p = Projeto(a.nome)
+    log("Checagem técnica do vídeo pronto")
+    checagem_video.checar(p, log=log, arquivo="final_vertical.mp4" if a.vertical else "final.mp4")
 
 
 def cmd_revisar_video(a):
@@ -1168,11 +1224,27 @@ def main():
     s.add_argument("nome")
     s.add_argument("--cenas", type=int, nargs="*", help="anima essas cenas sem perguntar se vale (sem dizer: o modelo "
                                                          "escolhe onde ajuda, no ritmo de um complemento)")
-    s.add_argument("--tema", choices=["apple", "noite", "editorial", "misterio"], help="cores e fontes das cenas")
+    s.add_argument("--tema", choices=["apple", "noite", "editorial", "misterio", "neon", "riso", "blueprint", "cinema"],
+                   help="o estilo das cenas: cores, fundo animado, entradas, câmera e transições")
     s.add_argument("--catalogo", action="store_true", help="só desenha um quadro de cada tipo, para ver o visual")
     s.add_argument("--desfazer", action="store_true", help="volta as cenas indicadas para a foto que tinham")
     s.add_argument("--forcar", action="store_true", help="pede um plano novo ao modelo para cada trecho")
+    s.add_argument("--regravar", action="store_true", help="grava de novo as cenas animadas que já existem (todas, "
+                                                           "ou as de --cenas), com o mesmo plano e o desenho novo")
     s.set_defaults(funcao=cmd_animation_ai)
+
+    s = sub.add_parser("direcao", help="cenas dirigidas: câmera, tipografia cinética, formas e cartões em 3D, "
+                                       "deitadas e em pé, a 60 quadros por segundo (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--cenas", type=int, nargs="*", help="as cenas a dirigir (ou a ajustar, com --refinar)")
+    s.add_argument("--refinar", help="ajuste em linguagem natural: \"deixa a transição mais suave\", \"desacelera\", "
+                                     "\"faz o final emendar no começo\", \"muda a cor para o padrão do tema\"")
+    s.add_argument("--desfazer-ajuste", action="store_true", help="volta a cena à direção de antes do último ajuste")
+    s.add_argument("--formato", choices=["horizontal", "vertical", "ambos"], help="o que gravar (padrão: ambos)")
+    s.add_argument("--fps", type=int, help="quadros por segundo da gravação (padrão: 60)")
+    s.add_argument("--spec", help="arquivo JSON com a direção escrita à mão, no lugar do modelo")
+    s.add_argument("--forcar", action="store_true", help="pede uma direção nova ao modelo para cada trecho")
+    s.set_defaults(funcao=cmd_direcao)
 
     s = sub.add_parser("consumo", help="planilha do consumo no OpenRouter (relatorios/consumo_openrouter.xlsx)")
     s.add_argument("--importar", action="store_true", help="traz o histórico dos projetos, sem repetir o que já está")
@@ -1207,6 +1279,12 @@ def main():
                                             "pronúncia errada (grátis, não grava nada)")
     s.add_argument("nome")
     s.set_defaults(funcao=cmd_conferir_voz)
+
+    s = sub.add_parser("checar-video", help="o FFmpeg lê o vídeo pronto e aponta imagem parada, tela preta e falta de "
+                                            "som (grátis, sem rede)")
+    s.add_argument("nome")
+    s.add_argument("--vertical", action="store_true", help="checa o final_vertical.mp4")
+    s.set_defaults(funcao=cmd_checar_video)
 
     s = sub.add_parser("revisar-video", help="o modelo principal olha o vídeo pronto e aponta problemas (grátis)")
     s.add_argument("nome")

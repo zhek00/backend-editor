@@ -14,6 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import claude_local, efeitos, gemini_local, groq_local, openrouter_local, roteirista
 from . import texto as tx
+from .util import gravar_cache as _gravar_cache  # cache inteiro ou nada; o mesmo da escolha de fotos (midia.py)
+from .util import ler_cache as _ler_cache  # None se ausente ou corrompido: a etapa roda de novo
+
 
 # Estilo de vídeo único da fábrica, igual para qualquer nicho de canal: cenas de 3 a 5 segundos e
 # 90% do material vindo de acervo real (o resto em imagem de IA). Fixo aqui, não no perfil, porque
@@ -24,7 +27,7 @@ ESTILO_MAXIMO_SEGUNDOS = 5.0
 ESTILO_PROPORCAO_REAL = 0.9
 ESTILO_MINIMO_FOTOS = 0.70  # do material real, pelo menos isso tem que ser foto
 # nos primeiros minutos, esta fatia do material real é vídeo, para prender a atenção: (até o segundo, fatia)
-ESTILO_VIDEO_NO_INICIO = ((180.0, 0.80), (420.0, 0.40))
+ESTILO_VIDEO_NO_INICIO = ((300.0, 0.70),)  # 70% vídeo e 30% foto nos 5 primeiros minutos
 # Sem teto de IA (desde 2026-10-03, pedido do usuário): cena que não existe em foto ou que veio errada recebe imagem de
 # IA, quantas forem. O teto de 15% transformava em foto de banco as cenas que o agente marcou como IA, e foi assim que
 # o virou-filme-em-1996 saiu com 86 cenas de outra coisa. Com a IA desligada (ia.ativa: false), nenhuma cena é de IA
@@ -168,15 +171,26 @@ STOPWORDS_BUSCA = {
 }
 
 
+# palavras de ligação do português: a busca feita da frase da narração fica com as palavras que dizem alguma coisa
+STOPWORDS_BUSCA_PT = {
+    'que', 'com', 'para', 'por', 'uma', 'uns', 'umas', 'dos', 'das', 'nos', 'nas', 'aos', 'pelo', 'pela', 'pelos',
+    'pelas', 'mais', 'como', 'mas', 'seu', 'sua', 'seus', 'suas', 'esse', 'essa', 'isso', 'este', 'esta', 'isto',
+    'ele', 'ela', 'eles', 'elas', 'foi', 'era', 'são', 'ser', 'tem', 'têm', 'ter', 'está', 'estão', 'quando', 'onde',
+    'sobre', 'entre', 'ainda', 'depois', 'antes', 'também', 'muito', 'muita', 'todo', 'toda', 'todos', 'todas',
+}
+
+
 def _extrair_busca_do_prompt(prompt, texto_cena=""):
+    # letras acentuadas contam: com [a-zA-Z] a palavra "ação" virava "a" e "ç" some, e a busca saía em pedaços de palavra
+    letras = r'[a-zA-ZáéíóúâêôàãõçÁÉÍÓÚÂÊÔÀÃÕÇñÑ]'
     if prompt:
-        palavras = re.findall(r'[a-zA-Z]{3,}', prompt.lower())
-        uteis = [p for p in palavras if p not in STOPWORDS_BUSCA]
+        palavras = re.findall(letras + r'{3,}', prompt.lower())
+        uteis = [p for p in palavras if p not in STOPWORDS_BUSCA and p not in STOPWORDS_BUSCA_PT]
         if len(uteis) >= 2:
             return " ".join(uteis[:3])
         elif uteis:
             return uteis[0]
-    palavras_texto = re.findall(r'[a-zA-ZáéíóúÁÉÍÓÚñÑãõÃÕçÇ]{4,}', texto_cena)
+    palavras_texto = [p for p in re.findall(letras + r'{4,}', texto_cena) if p.lower() not in STOPWORDS_BUSCA_PT]
     return " ".join(palavras_texto[:3]) if palavras_texto else "documentary cinematic"
 
 
@@ -235,10 +249,16 @@ def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, lo
         inicios, quem, k = [], [], 0
         for n_item, item in enumerate(itens):
             alvo = _simplificar(item.split()[0])
-            achado = next((p["ini"] for p in da_cena[k:] if _simplificar(p["texto"]).startswith(alvo[:5])), None)
+            if not alvo:
+                continue  # item só de pontuação: casaria com qualquer palavra
+            # o índice da palavra achada, e não o primeiro com o mesmo instante: duas palavras no mesmo `ini` faziam o
+            # cursor voltar e o item seguinte ser procurado de novo na mesma palavra
+            achado = next((j for j in range(k, len(da_cena))
+                           if _simplificar(da_cena[j]["texto"]).startswith(alvo[:5])), None)
             if achado is None:
                 continue
-            k = next(i for i, p in enumerate(da_cena) if p["ini"] == achado) + 1
+            k = achado + 1
+            achado = da_cena[achado]["ini"]
             inicios.append(max(achado, cena["ini"]))
             quem.append(n_item)
         # cada item ganha a própria fatia. Item curto ("alces" dura 0,6s) não engole o seguinte: o corte do
@@ -312,30 +332,42 @@ def _balancear_proporcao_90_10(cenas, log=print, sem_ia=False):
     return cenas
 
 
-def _balancear_foto_e_video(cenas, log=print):
-    """Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 80% nos 3 primeiros minutos e 40% até os 7.
+def _e_de_epoca(cena) -> bool:
+    """A cena pede imagem de uma época passada (campo `epoca`, um ano). Só arquivo mostra isso, nunca vídeo de banco.
 
-    Os 30% de vídeo permitidos no total são gastos primeiro no começo. Se as metas do começo não cabem neles,
-    os 3 primeiros minutos têm prioridade. Só troca o tipo (foto_real por video_real e o contrário), espalhando
-    as trocas pelo trecho, e a busca continua a mesma."""
+    Uma regra só para a fábrica inteira: midia.e_de_epoca, a mesma de corrigir.py e imagens.py. O roteirista só preenche
+    `epoca` com anos anteriores a 1950, então na prática o corte é esse."""
+    from .midia import e_de_epoca
+
+    return e_de_epoca(cena)
+
+
+def _balancear_foto_e_video(cenas, log=print):
+    """Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 70% vídeo e 30% foto nos 5 primeiros minutos.
+
+    O começo não entra no teto de 30% de vídeo: o que ele usar é descontado do teto, e o resto do vídeo fica com
+    o que sobrar (nada, se o começo já passou). Só troca o tipo (foto_real por video_real e o contrário),
+    espalhando as trocas pelo trecho, e a busca continua a mesma."""
     # cena de época é foto de arquivo: vídeo de banco é sempre de hoje (obras modernas no lugar da ferrovia de 1898)
     for c in cenas:
-        if c.get("tipo") == "video_real" and re.search(r"\b1\d{3}\b", str(c.get("epoca") or "")):
+        if c.get("tipo") == "video_real" and _e_de_epoca(c):
             c["tipo"] = "foto_real"
     # vídeo de banco só para o que existe em banco: o que só existe em arquivo (retrato, foto de época) nunca vira vídeo
     for c in cenas:
         if c.get("tipo") == "video_real" and c.get("onde_existe") == "arquivo":
             c["tipo"] = "foto_real"
     reais = [c for c in cenas if c.get("tipo") in TIPOS_REAIS_CENA and not c.get("personagem")
-             and not re.search(r"\b1\d{3}\b", str(c.get("epoca") or "")) and c.get("onde_existe") != "arquivo"]
+             and not _e_de_epoca(c) and c.get("onde_existe") != "arquivo"]
     if len(reais) < 10:
         return cenas
-    limite = int(len(reais) * (1 - ESTILO_MINIMO_FOTOS))  # vídeos permitidos no total
     faixas, inicio_da_faixa = [], 0.0
     for fim, fatia in ESTILO_VIDEO_NO_INICIO:
         faixas.append([c for c in reais if inicio_da_faixa <= c["ini"] < fim])
         inicio_da_faixa = fim
     faixas.append([c for c in reais if c["ini"] >= inicio_da_faixa])  # o resto do vídeo
+    # vídeos permitidos no total: 30%, mas nunca menos do que o começo pede (num vídeo curto, tudo é começo)
+    limite = max(int(len(reais) * (1 - ESTILO_MINIMO_FOTOS)),
+                 sum(round(len(g) * f) for g, (_, f) in zip(faixas, ESTILO_VIDEO_NO_INICIO)))
 
     def ajustar(grupo, quantos_videos):
         trocar = quantos_videos - sum(1 for c in grupo if c["tipo"] == "video_real")
@@ -429,8 +461,9 @@ def _fica_o_visual_de(sai, fica, texto_sai, texto_fica) -> bool:
 
 
 def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUNDOS, maximo=ESTILO_MAXIMO_SEGUNDOS, alvo=ESTILO_ALVO_SEGUNDOS, log=print, alinhamento=None):
-    """Garante de forma absoluta que TODAS as cenas tenham duração entre minimo (3.0s) e maximo (5.0s).
-    Nenhuma cena ultrapassará 5.0 segundos e nenhuma ficará abaixo de 3.0 segundos.
+    """Nenhuma cena passa de maximo (5.0s): isso é garantido no passo 4.
+    O mínimo (3.0s) é buscado por fusão e redistribuição de cortes, mas nem sempre se consegue (cena curta ao lado de uma
+    fatia de enumeração, ou sozinha): o que sobrar abaixo dele é avisado no log, não escondido.
     Desduplica termos de busca e sincroniza textos falados de fatias.
     """
     if not cenas:
@@ -615,7 +648,22 @@ def _garantir_limites_estritos(cenas, duracao_total, minimo=ESTILO_MINIMO_SEGUND
                         continue
             i += 1
         if not mudou:
+            convergiu = True
             break
+    else:
+        convergiu = False
+
+    # a fusão não consegue tudo: cena curta ao lado de uma fatia de enumeração, ou sozinha, fica abaixo do mínimo. Antes
+    # isso passava em silêncio, embora o texto acima prometa o contrário: agora o render avisa quais são
+    curtas = [c for c in fatiadas
+              if c["fim"] - c["ini"] < (ESTILO_MINIMO_ENUMERACAO if c.get("enumeracao") or c.get("_curta_aceita")
+                                        else minimo) - 0.001]
+    if curtas and len(fatiadas) > 1:
+        log(f"  {len(curtas)} cena(s) ficaram abaixo do mínimo de {minimo:.1f}s e não puderam ser fundidas: "
+            + ", ".join(f"{c['ini']:.1f}s ({c['fim'] - c['ini']:.1f}s)" for c in curtas[:5])
+            + (" ..." if len(curtas) > 5 else ""))
+    if not convergiu:
+        log("  o ajuste das cenas curtas não terminou em 40 voltas; as cenas ficaram como estão")
 
     # 4. Verificação final estrita: NENHUMA cena pode ter > maximo
     novas_finais = []
@@ -850,16 +898,18 @@ def _termo_ingles_do_topico(projeto, topico_pt, log=print):
     os bancos de imagem entendem). Sem traduzir, o travamento por tópico nunca bateria com nada."""
     assinatura = hashlib.sha1(topico_pt.encode("utf-8")).hexdigest()[:10]
     arquivo = projeto.caminho("cenas_lotes", f"topico_ingles_{assinatura}.json")
-    if arquivo.exists():
-        return json.loads(arquivo.read_text(encoding="utf-8")).get("termo", "")
+    guardado = _ler_cache(arquivo)
+    if isinstance(guardado, dict) and (guardado.get("termo") or "").strip():
+        return guardado["termo"]
     try:
         dados = _modelo(projeto).perguntar(projeto, "termo em inglês do tópico", SISTEMA_TOPICO_INGLES, topico_pt,
                                             ESQUEMA_TOPICO_INGLES, log=log, temperatura=0.1)
         termo = (dados.get("termo") or "").strip()
     except (RuntimeError, SystemExit) as e:
         log(f"  não consegui traduzir o tópico '{topico_pt}' ({str(e)[:60]}), sem travar esse trecho")
-        termo = ""
-    arquivo.write_text(json.dumps({"termo": termo}, ensure_ascii=False), encoding="utf-8")
+        return ""  # falha de cota ou de rede não vai para o cache: a próxima rodada tenta de novo
+    if termo:
+        _gravar_cache(arquivo, {"termo": termo})
     return termo
 
 
@@ -939,8 +989,9 @@ def _destacar_titulos_groq(projeto, cenas, log):
                 continue
             assinatura = hashlib.sha1(texto.encode("utf-8")).hexdigest()[:10]
             arquivo = projeto.caminho("cenas_lotes", f"titulo_destaque_{assinatura}.json")
-            if arquivo.exists():
-                t["destaque"] = json.loads(arquivo.read_text(encoding="utf-8")).get("destaque", "")
+            guardado = _ler_cache(arquivo)
+            if isinstance(guardado, dict) and (guardado.get("destaque") or "").strip():
+                t["destaque"] = guardado["destaque"]
                 continue
             try:
                 dados = _modelo(projeto).perguntar(projeto, "destaque do título", SISTEMA_TITULO_DESTAQUE, texto,
@@ -948,9 +999,11 @@ def _destacar_titulos_groq(projeto, cenas, log):
                 destaque = (dados.get("destaque") or "").strip()
             except (RuntimeError, SystemExit) as e:
                 log(f"  não consegui destacar o título '{texto[:40]}' ({str(e)[:60]}), fica sem destaque")
-                destaque = ""
+                t["destaque"] = ""  # falha de cota ou de rede não vai para o cache: a próxima rodada tenta de novo
+                continue
             t["destaque"] = destaque
-            arquivo.write_text(json.dumps({"destaque": destaque}, ensure_ascii=False), encoding="utf-8")
+            if destaque:
+                _gravar_cache(arquivo, {"destaque": destaque})
 
 
 def _palavras_da_cena(alinhamento, frases):
@@ -1224,6 +1277,8 @@ def _mapa_de_tempo(anterior: dict, atual: dict):
     fim_a, fim_n = float(anterior.get("duracao") or 0), float(atual.get("duracao") or 0)
     if fim_a > pares[-1][0] and fim_n >= pares[-1][1]:
         pares.append((fim_a, fim_n))
+    if len(pares) < 2:
+        return None  # nenhuma palavra com tempo e sem duração: não há entre que pontos interpolar
     velhos = [x for x, _ in pares]
 
     def mapear(t):
@@ -1285,6 +1340,30 @@ def _trechos_pela_fala(cenas, palavras, duracao):
     return trechos
 
 
+def _restaurar_renumeracao(pasta) -> int:
+    """Devolve para imagens/ o que ficou em imagens/_renumerando quando uma renumeração foi interrompida.
+
+    A renumeração passa tudo por essa pasta de passagem. Se o programa caía no meio, as imagens ficavam lá para sempre
+    (a próxima rodada via a pasta vazia e saía) e as cenas voltavam a pagar pela imagem de IA. Nada é sobrescrito: se o
+    nome já foi ocupado por uma imagem nova, a sobra vai para imagens/_sem_cena. Devolve quantas sobras foram tratadas."""
+    passagem = pasta / "_renumerando"
+    if not passagem.is_dir():
+        return 0
+    sobras = sorted(p for p in passagem.iterdir() if p.is_file())
+    carimbo = time.strftime("%Y%m%d-%H%M%S")
+    for sobra in sobras:
+        destino = pasta / sobra.name
+        if destino.exists():
+            (pasta / "_sem_cena").mkdir(exist_ok=True)
+            destino = pasta / "_sem_cena" / f"{sobra.stem}_{carimbo}{sobra.suffix}"
+        sobra.replace(destino)
+    try:
+        passagem.rmdir()
+    except OSError:
+        pass  # sobrou algo que não é imagem: fica, sem atrapalhar
+    return len(sobras)
+
+
 def _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa=(), escondidas=()):
     """Depois de recortar as cenas, cada imagem imagens/NNNN.png vai para a cena nova que mais cobre a fala dela.
 
@@ -1303,6 +1382,7 @@ def _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa=(), escondidas=(
     pasta = projeto.pasta / "imagens"
     if not pasta.is_dir():
         return
+    _restaurar_renumeracao(pasta)  # sobras de uma renumeração interrompida voltam antes de qualquer conta
     arquivos = {int(a.stem): a for a in pasta.glob("[0-9][0-9][0-9][0-9].png")}
     if not arquivos:
         return
@@ -1352,8 +1432,12 @@ def _levar_imagens_numeradas(projeto, cenas, trechos, da_pessoa=(), escondidas=(
     # duas passadas, por uma pasta de passagem: a 0112 pode ir para a 0128 enquanto a 0128 vai para a 0146
     passagem = pasta / "_renumerando"
     passagem.mkdir(exist_ok=True)
-    for arquivo in arquivos.values():
-        arquivo.replace(passagem / arquivo.name)
+    try:
+        for arquivo in arquivos.values():
+            arquivo.replace(passagem / arquivo.name)
+    except OSError:
+        _restaurar_renumeracao(pasta)  # falhou no meio da ida: devolve o que já tinha saído e deixa o erro subir
+        raise
     carimbo = time.strftime("%Y%m%d-%H%M%S")
     for antigo in arquivos:
         origem = passagem / f"{antigo:04d}.png"
@@ -1549,15 +1633,16 @@ def _planejar_com_groq(projeto, unidades, alvo, minimo, maximo, log):
         assinatura = hashlib.sha1(
             (sistema + json.dumps([cortes[k] for k in lote])).encode("utf-8")).hexdigest()[:10]
         arquivo = projeto.caminho("cenas_lotes", f"groq_{indice:03d}_{assinatura}.json")
-        if arquivo.exists():
-            resultado += json.loads(arquivo.read_text(encoding="utf-8"))
+        guardado = _ler_cache(arquivo)
+        if isinstance(guardado, list):
+            resultado += guardado
             continue
         contexto_antes = range(max(0, lote.start - antes), lote.start)
         contexto_depois = range(lote.stop, min(len(cortes), lote.stop + depois))
         decididas = _decidir_cenas_groq(projeto, sistema, unidades, cortes, lote, contexto_antes,
                                         contexto_depois, cfg, log)
         grupos = [{**cortes[k], **decididas[k]} for k in lote]
-        arquivo.write_text(json.dumps(grupos, ensure_ascii=False, indent=2), encoding="utf-8")
+        _gravar_cache(arquivo, grupos)
         log(f"  lote {indice + 1} pronto com {len(grupos)} cenas")
         resultado += grupos
     return resultado
@@ -1637,7 +1722,11 @@ def _decidir_cenas_groq(projeto, sistema, unidades, cortes, lote, antes, depois,
         frases = unidades[cortes[k]["primeira_frase"]:cortes[k]["ultima_frase"] + 1]
         texto = " ".join(f["texto"] for f in frases)
         log(f"  cena {k + 1} sem resposta do Groq, usando imagem de IA com o texto da cena")
-        obtidas[k] = {"tipo": "ia", "busca": "", "personagem": False, "prompt": texto,
+        # o prompt de imagem é em inglês: a frase da narração, em português, vai explicada para o modelo de imagem
+        # a busca de reserva (vira busca de acervo se a IA estiver desligada) sai das palavras do texto, e não do prompt,
+        # que leva o prefixo em inglês
+        obtidas[k] = {"tipo": "ia", "busca": _extrair_busca_do_prompt("", texto), "personagem": False,
+                      "prompt": f"Documentary photograph illustrating this narration (in Portuguese): {texto}",
                       "citacoes": [], "texto_tela": None, "efeito": None}
     return obtidas
 
@@ -1778,12 +1867,12 @@ def _planejar_lote(projeto, sistema, lote, indice, cfg, log):
     # o plano antigo às cegas, porque o nome do arquivo só olhava pro índice do lote)
     assinatura = hashlib.sha1(sistema.encode("utf-8")).hexdigest()[:10]
     arquivo = projeto.caminho("cenas_lotes", f"lote_{indice:03d}_{assinatura}.json")
-    if arquivo.exists():
-        salvo = json.loads(arquivo.read_text(encoding="utf-8"))
+    salvo = _ler_cache(arquivo)
+    if isinstance(salvo, list) and salvo:
         return _consertar(salvo, lote[0]["id"], lote[-1]["id"])
 
     cenas = _planejar_lote_local(projeto, sistema, lote, indice, cfg, log)
-    arquivo.write_text(json.dumps(cenas, ensure_ascii=False, indent=2), encoding="utf-8")
+    _gravar_cache(arquivo, cenas)
     log(f"  lote {indice + 1} pronto com {len(cenas)} cenas")
     return cenas
 

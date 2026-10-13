@@ -36,7 +36,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import animacoes, motion_estilo, motion_modelos
+from . import animacoes, motion_estilo, motion_modelos, movimento
 from .util import rodar
 
 FONTE = "motion_ia"
@@ -593,7 +593,9 @@ REGRAS INEGOCIÁVEIS (o código confere e devolve o que quebrar):
 7. Use position: absolute só para os cards, os SVG e o que fica solto na tela, com left/top em px. O que vai dentro
    de um card fica em fluxo normal (.m-num, .m-rot, .m-sub, .m-frase). SVG com viewBox e tamanho em px.
 8. Todo id e classe sua começa com "m-". Nada de position fixed. Não use transform no CSS dos .m-card nem das
-   .m-barra (a animação cuida disso); para centralizar, calcule left e top."""
+   .m-barra (a animação cuida disso); para centralizar, calcule left e top.
+
+""" + movimento.REGRAS
 
 ESQUEMA_HTML = {
     "type": "object",
@@ -648,7 +650,7 @@ def problemas_do_codigo(partes) -> list:
                      "de 32px (frase 72px ou mais, número 140px ou mais, rótulo 36px ou mais)")
     if len(tudo) > 20000:
         erros.append("o código passou de 20.000 caracteres: simplifique")
-    return erros
+    return erros + movimento.problemas(partes)
 
 
 def _palavras_inventadas(partes, fala) -> list:
@@ -1285,7 +1287,8 @@ CRITERIOS = {
     "movimento": "comparando os quadros, a cena se monta ao longo do tempo, sem tela vazia ou parada demais, e o "
                  "último quadro está completo?",
     "acabamento": "parece motion graphics de um canal grande (Vox), e não um slide amador? Hierarquia clara, cores "
-                  "contidas, uma cor de destaque. Bicho recortado com borda serrilhada, pontas espetadas (folhas, "
+                  "contidas, uma cor de destaque. Cara de slide conta contra: contador de etapas (02 / 05), barra de "
+                  "progresso, rótulo pequeno em caixa-alta espaçada, título digitado letra por letra. Bicho recortado com borda serrilhada, pontas espetadas (folhas, "
                   "gravetos), pedaços do fundo grudados ou partes do corpo cortadas fica estranho: nota baixa",
 }
 
@@ -1714,6 +1717,8 @@ REGRAS QUE O CÓDIGO CONFERE (o resto é liberdade):
 5. O código tem no máximo 30.000 caracteres: faça desenhos ricos, mas enxutos (use <defs> e <use> para repetir).
 6. Se o pedido disser que a cena tem foto, mostre-a em <div class="m-card m-foto"></div> (560x400 ou maior).
 
+""" + movimento.REGRAS + """
+
 Devolva: ideia, css, html, js."""
 
 ESTILOS_LIVRE = {
@@ -1813,7 +1818,7 @@ def problemas_do_codigo_livre(partes) -> list:
                      "de 32px (rótulos 36px ou mais, texto principal 64px ou mais)")
     if len(tudo) > 30000:
         erros.append("o código passou de 30.000 caracteres: simplifique (use <defs> e <use> para repetir)")
-    return erros
+    return erros + movimento.problemas(partes)
 
 
 def _pela_demonstracao_livre(projeto, cena, dur, vizinhas, pasta, nome_foto, log, erros_iniciais=(), direcao=None):

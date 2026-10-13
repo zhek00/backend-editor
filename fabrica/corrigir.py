@@ -324,6 +324,24 @@ def aprovada_na_captura(cena, minima) -> bool:
     return bool(cap.get("conferida")) and not cap.get("suspeita") and (cap.get("nota") or 0) >= minima
 
 
+def conferir_completadas(projeto, log=print) -> dict:
+    """Julga as cenas que o Completar cenas preencheu DEPOIS da conferência da criação, sem ninguém olhar. A 3ª
+    rodada dele (e a última busca da esteira) aceita o que a busca achou, contando com uma conferência que, na
+    criação, já tinha passado: no brasil-selvagem 7 cenas entraram assim, e a "árvore de ninho derrubada" (cena 51)
+    ficou com uma foto de castanhas. Errada vai para a busca nova e, com a IA ligada, para a imagem de IA."""
+    cfg = projeto.config.get("corrigir") or {}
+    if projeto.offline or not cfg.get("automatico", True):
+        return {}
+    minima = midia.nota_minima_da_conferencia(projeto)
+    alvo = {c["n"] for c in conferiveis(projeto)
+            if not (c.get("conferencia") or {}).get("legenda") and not aprovada_na_captura(c, minima)}
+    if not alvo:
+        return {}
+    log(f"  {len(alvo)} cena(s) completadas sem julgamento: o Jev confere antes de terminar")
+    return corrigir(projeto, numeros=alvo, rodadas=cfg.get("rodadas", RODADAS), nota_minima=minima,
+                    nota_para_trocar=minima, log=log)
+
+
 def na_duvida(projeto) -> set:
     """As cenas de acervo que a conferência depois do download precisa olhar: as que não foram aprovadas na escolha.
 
@@ -539,7 +557,13 @@ def _julgar_com_jev(projeto, cena, legenda, vizinhas, log):
     except RuntimeError as e:
         log(f"  o Jev não julgou a cena {cena['n']} ({e})")
         return None
-    nota = round(float(respostas["combina"]["noul"]) * 100)
+    try:
+        nota = round(float(respostas["combina"]["noul"]) * 100)
+    except (KeyError, TypeError, ValueError):
+        # resposta sem a pergunta principal ou com valor que não é número: vale como "não julgou", em vez de um KeyError
+        # que derrubava a escolha das fotos inteira (midia._nota_do_candidato só esperava RuntimeError)
+        log(f"  o Jev respondeu a cena {cena['n']} sem a nota de combinar; fica sem julgamento")
+        return None
 
     def outra(chave):
         try:
@@ -564,15 +588,19 @@ def _mapa(projeto) -> dict:
     """O mapa do agente (roteiro_mapa.json), lido uma vez enquanto não muda."""
     arquivo = projeto.pasta / "roteiro_mapa.json"
     try:
-        chave = (str(arquivo), arquivo.stat().st_mtime)
+        versao = arquivo.stat().st_mtime_ns
     except OSError:
         return {}
-    if chave not in _MAPAS:
+    # uma entrada por arquivo, trocada quando ele muda. Com a data na chave, cada edição deixava uma cópia do mapa
+    # inteiro na memória do servidor, para sempre
+    guardado = _MAPAS.get(str(arquivo))
+    if guardado is None or guardado[0] != versao:
         try:
-            _MAPAS[chave] = projeto.ler_json("roteiro_mapa.json")
+            mapa = projeto.ler_json("roteiro_mapa.json")
         except (OSError, ValueError):
-            _MAPAS[chave] = {}
-    return _MAPAS[chave]
+            mapa = {}
+        guardado = _MAPAS[str(arquivo)] = (versao, mapa)
+    return guardado[1]
 
 
 def _bloco_da_cena_no_mapa(projeto, cena) -> str:
@@ -589,19 +617,15 @@ def _pessoa_da_cena(projeto, cena) -> str:
     """Quem é a pessoa real que a cena cita (campo quem_e do mapa): nome, anos de vida e o que fez. Com isso o Jev
     separa o caçador John Henry Patterson (1867-1947) do homônimo de Dayton, Ohio, e do soldado de 1865, que
     entraram no virou-filme-em-1996 porque o nome batia."""
-    arquivo = projeto.pasta / "roteiro_mapa.json"
-    try:
-        chave = (str(arquivo), arquivo.stat().st_mtime)
-    except OSError:
-        return ""
-    if chave not in _QUEM_E:
-        try:
-            _QUEM_E[chave] = [p for p in projeto.ler_json("roteiro_mapa.json").get("quem_e") or []
-                              if isinstance(p, dict) and (p.get("nome") or "").strip()]
-        except (OSError, ValueError):
-            _QUEM_E[chave] = []
+    # o mesmo mapa de _mapa (uma entrada por arquivo, trocada quando ele muda): a lista de pessoas sai dele
+    mapa = _mapa(projeto)
+    chave = str(projeto.pasta / "roteiro_mapa.json")
+    guardado = _QUEM_E.get(chave)
+    if guardado is None or guardado[0] is not mapa:
+        pessoas = [p for p in mapa.get("quem_e") or [] if isinstance(p, dict) and (p.get("nome") or "").strip()]
+        guardado = _QUEM_E[chave] = (mapa, pessoas)
     texto = " ".join(str(cena.get(c) or "") for c in ("texto", "exato", "sujeito", "mostrar", "busca"))
-    for pessoa in _QUEM_E[chave]:
+    for pessoa in guardado[1]:
         sobrenome = pessoa["nome"].split()[-1]
         if re.search(rf"\b{re.escape(sobrenome)}\b", texto, re.I):
             return f"{pessoa['nome'].strip()}: {(pessoa.get('quem') or '').strip()}"
@@ -881,15 +905,19 @@ def _avaliar_pelo_modelo(projeto, cenas, vizinhas, log, nota_minima):
         return juntos
 
 
+def _conferencia(a, **extra) -> dict:
+    """A conferência como fica guardada na cena. Uma forma só para _guardar e _restaurar: a restauração gravava sem o
+    sujeito e a época, e uma foto de sujeito errado (20%) deixava de contar como errada depois de voltar."""
+    return {"legenda": a["legenda"], "veredito": a["veredito"], "nota": a["nota"], "motivo": a["motivo"], **extra,
+            **{k: a[k] for k in ("sujeito", "epoca", "prompt_novo") if a.get(k) is not None}}
+
+
 def _guardar(projeto, avaliacoes, rodada):
     """A legenda e a nota ficam na cena, para o editor mostrar o que o sistema enxergou."""
     dados = projeto.ler_json("cenas.json")
     for c in dados["cenas"]:
         if c["n"] in avaliacoes:
-            a = avaliacoes[c["n"]]
-            c["conferencia"] = {"legenda": a["legenda"], "veredito": a["veredito"], "nota": a["nota"],
-                                "motivo": a["motivo"], "rodada": rodada,
-                                **{k: a[k] for k in ("sujeito", "epoca", "prompt_novo") if a.get(k) is not None}}
+            c["conferencia"] = _conferencia(avaliacoes[c["n"]], rodada=rodada)
     projeto.salvar_json("cenas.json", dados)
 
 
@@ -929,6 +957,15 @@ def _snapshot(projeto, cena, avaliacao, rodada):
             "busca": cena.get("busca"), "prompt": cena.get("prompt")}
 
 
+def _apagar_backups(snapshots) -> None:
+    """Apaga as cópias de conferir/backup feitas por _snapshot, quando já não servem para devolver a mídia.
+
+    Elas nunca eram apagadas: 2,3 GB nos projetos medidos em 2026-10-13 (735 MB só no virou-filme-em-1996)."""
+    for snap in snapshots.values():
+        for copia, _ in snap.get("copias") or []:
+            Path(copia).unlink(missing_ok=True)
+
+
 def _restaurar(projeto, snapshots):
     """Devolve às cenas a melhor mídia que elas tiveram, com legenda e nota dela."""
     dados = projeto.ler_json("cenas.json")
@@ -943,9 +980,7 @@ def _restaurar(projeto, snapshots):
         chave = f"{c['midia']['fonte']}:{c['midia']['id']}"
         if chave in c.get("rejeitadas", []):
             c["rejeitadas"].remove(chave)
-        a = snap["avaliacao"]
-        c["conferencia"] = {"legenda": a["legenda"], "veredito": a["veredito"], "nota": a["nota"],
-                            "motivo": a["motivo"], "restaurada": True}
+        c["conferencia"] = _conferencia(snap["avaliacao"], restaurada=True)
     projeto.salvar_json("cenas.json", dados)
 
 
@@ -962,7 +997,12 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
               "para_revisar": []}
     precisam_ia = {}
     melhor, nota_atual = {}, {}
-    alvo = set(numeros) if numeros else None
+    if numeros is not None and not numeros:
+        # conjunto vazio é "nenhuma cena", não "todas": quem quer todas passa None (a API e o cmd_corrigir já fazem isso).
+        # Antes um conjunto vazio conferia e trocava o vídeo inteiro
+        resumo["precisam_ia"] = []
+        return resumo
+    alvo = set(numeros) if numeros is not None else None
     # IA obrigatória para cena errada (ia.ativa): uma busca nova só, e o que continuar errado vai para a IA. Rodar
     # três rodadas de busca quando o banco não tem a coisa só trouxe mais lixo (o virou-filme-em-1996 terminou o
     # Corrigir com 77 imagens que ninguém conferiu)
@@ -991,7 +1031,9 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
                                          precisam_ia, melhor, nota_atual, alvo, devolver_as_melhores)
     except BaseException:
         devolver_as_melhores()
+        _apagar_backups(melhor)  # só depois de devolver: se a devolução falhar, as cópias ficam para salvar à mão
         raise
+    _apagar_backups(melhor)
     if not so_avaliar:
         if ia:
             # a melhor imagem que a cena teve ainda mostra OUTRA coisa: com a IA ligada ela vai para a IA, sem nova
@@ -1356,8 +1398,15 @@ def _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, r
         reais.sort()
         for n in reais:
             if n not in melhor or nota_atual[n] > melhor[n]["nota"]:
+                if n in melhor:
+                    _apagar_backups({n: melhor[n]})  # a cópia da melhor anterior não vai mais ser usada
                 melhor[n] = _snapshot(projeto, cenas[n], avaliacoes[n], rodada)
         log(f"  buscando outro material real para {len(reais)} cena(s), de graça")
+        # a mídia sai da cena agora, antes da busca: até a próxima avaliação ela não tem nota. Sem isto, um Ctrl+C no
+        # meio da busca deixava nota_atual com a nota da foto antiga, devolver_as_melhores achava que não havia o que
+        # devolver (5 > 5 é falso) e a cena terminava sem imagem nenhuma
+        for n in reais:
+            nota_atual[n] = -1
         _trocar_por_outra_busca(projeto, avaliacoes, reais, log)
         resumo["trocadas"] += len(reais)
         depois = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}

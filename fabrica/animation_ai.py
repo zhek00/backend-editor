@@ -13,8 +13,9 @@ cenas com dado (`motion_ia.nas_uteis`), e roda logo depois dele (passo 6b da cri
    consequência, ou uma cena que o agente marcou como diagrama, texto na tela, linha do tempo ou mapa. Narração pura
    nem vai ao modelo. Cena com personagem, imagem ou prompt da pessoa, ou que já é Motion IA, fica de fora.
 2. **Decisão e plano numa chamada** (`decidir`, grátis pela cadeia de principais): o modelo lê a fala, as vizinhas e o
-   que a foto de hoje mostra, dá a nota de utilidade (0 a 100) e, se valer, escolhe um dos 19 tipos de conteúdo do
-   `CATALOGO` (abertura, capitulo, frase, pergunta e encerramento são só do modo de cenas pedidas) e escreve os textos
+   que a foto de hoje mostra, dá a nota de utilidade (0 a 100) e, se valer, escolhe um dos tipos de conteúdo do
+   `CATALOGO` (30 layouts; abertura, capitulo, frase, pergunta, encerramento, palavra_chave e revelacao são só do modo
+   de cenas pedidas). Cada layout sai em qualquer um dos 8 estilos do `TEMAS` (30 x 8 = 240 modelos prontos) e escreve os textos
    curtos com a `palavra` da fala em que cada item entra. Ele NÃO escreve HTML. O código confere (`conferir`); o que
    reprovar volta uma vez com os erros. Fica em `animation_ai/decisoes.json` pela fala: rodar de novo não pergunta.
 3. **Cadência** (`escolher`): das que passaram de `limiar` (70), as de nota maior primeiro, até `maximo_do_video`
@@ -44,7 +45,8 @@ from . import animacoes
 from .util import rodar
 
 FONTE = "animation_ai"
-VERSAO = 1  # suba quando mudar o desenho (motor.js, motor.css ou TEMAS): os trechos são gravados de novo
+VERSAO = 4  # suba quando mudar o desenho (motor.js, motor.css ou TEMAS): os trechos são gravados de novo
+# 4 (2026-10-13): kicker de 34 px sem caixa-alta espaçada; transição de cena com chegada desacelerando e saída acelerando
 RECURSOS = Path(__file__).parent / "recursos" / "animation_ai"
 _TRAVA_CENAS = threading.Lock()
 
@@ -63,10 +65,54 @@ TEMAS = {
               "esp-tit": "-0.02em", "caixa": "none", "f-d": '"Titulo"', "estilo-d": "italic", "peso-d": "700",
               "f-num": '"Texto"', "f-txt": '"Texto"',
               "_flutuar": True, "_mola": True, "_tremer": False, "_assentar": False},
+    # os 4 estilos completos de 2026-10-13 (pedido do usuário: mais de 200 modelos prontos = 30 layouts x 8 estilos). Cada
+    # um traz cor, fundo animado (canvas, `_fundo`), jeitos de entrar (`_entradas`), de mexer a câmera (`_cameras`) e de
+    # sair (`_saidas`); dentro do estilo, a cena escolhe entre eles pelo número dela (`variante`), então o vídeo fica
+    # coerente e as cenas não se repetem. Ideias de categoria (câmera, transição, tipografia, efeitos) do video-shotcraft
+    # (Apache-2.0); o código é nosso
+    "neon": {"fundo": "#05070D", "painel": "#0B1220", "painel2": "#101B30", "linha": "#16314D", "txt": "#EAF6FF",
+             "txt2": "#A9C4DA", "mut": "#6F8BA3", "acc": "#00E5FF", "acc2": "#FF2BD6", "verm": "#FF3B6B", "ok": "#3DFFA2",
+             "tinta": "#04121A", "papel": "#EAF6FF", "brilho1": "transparent", "brilho2": "transparent",
+             "ponto": "transparent", "sombra": "rgba(0,229,255,.18)", "sombra-card": "0 0 38px rgba(0,229,255,.16)",
+             "card-borda": "1px solid rgba(0,229,255,.55)", "raio-card": "10px", "raio-selo": "8px",
+             "vinheta": "transparent", "faixa": "rgba(0,0,0,0)", "f-tit": '"Texto"', "peso-tit": "900",
+             "esp-tit": "0.01em", "caixa": "uppercase", "f-d": '"Texto"', "estilo-d": "normal", "peso-d": "900",
+             "f-num": '"Texto"', "f-txt": '"Texto"', "sombra-txt": "0 0 26px rgba(0,229,255,.5)",
+             "_fundo": "hud", "_entradas": ["scan", "glitch"], "_cameras": ["soco", "tilt"], "_saidas": ["wipe", "flash"]},
+    "riso": {"fundo": "#F3EEE3", "painel": "#FFFBF2", "painel2": "#EFE7D6", "linha": "#1B1B1B", "txt": "#1B1B1B",
+             "txt2": "#3A3A3A", "mut": "#7A7468", "acc": "#E11D48", "acc2": "#2547FF", "verm": "#E11D48", "ok": "#0E9F6E",
+             "tinta": "#FFFBF2", "papel": "#FFFBF2", "brilho1": "transparent", "brilho2": "transparent",
+             "ponto": "transparent", "sombra": "rgba(27,27,27,.3)", "sombra-card": "7px 7px 0 #1B1B1B",
+             "card-borda": "3px solid #1B1B1B", "raio-card": "4px", "raio-selo": "4px", "vinheta": "transparent",
+             "faixa": "rgba(27,27,27,.5)", "faixa-altura": "230px", "f-tit": '"Texto"', "peso-tit": "900",
+             "esp-tit": "-0.03em", "caixa": "uppercase", "f-d": '"Texto"', "estilo-d": "normal", "peso-d": "900",
+             "f-num": '"Texto"', "f-txt": '"Texto"',
+             "_fundo": "papel", "_entradas": ["carimbo", "traco"], "_cameras": ["derivar"], "_saidas": ["wipe", "iris"],
+             "_tremer": False},
+    "blueprint": {"fundo": "#0A2A4D", "painel": "rgba(10,42,77,.72)", "painel2": "#103A66", "linha": "#4F86B8",
+                  "txt": "#EAF3FF", "txt2": "#B5D0EC", "mut": "#7FA3C6", "acc": "#FFD166", "acc2": "#7FD6FF",
+                  "verm": "#FF8A7A", "verm-papel": "#C8321F", "botao": "#D7392A", "botao-clicado": "#4F6A86", "ok": "#7DE3A8", "tinta": "#0A2A4D", "papel": "#EAF3FF", "brilho1": "transparent",
+                  "brilho2": "transparent", "ponto": "transparent", "sombra": "rgba(0,0,0,.25)", "sombra-card": "none",
+                  "card-borda": "2px dashed #7FB6E8", "raio-card": "4px", "raio-selo": "4px", "vinheta": "transparent",
+                  "faixa": "rgba(0,0,0,0)", "f-tit": '"Texto"', "peso-tit": "800", "esp-tit": "0.02em", "caixa": "none",
+                  "f-d": '"Texto"', "estilo-d": "normal", "peso-d": "800", "f-num": '"Texto"', "f-txt": '"Texto"',
+                  "_fundo": "planta", "_entradas": ["traco", "desfoca"], "_cameras": ["derivar", "assentar"],
+                  "_saidas": ["iris", "fade"], "_tremer": False},
+    "cinema": {"fundo": "#110C09", "painel": "rgba(30,20,14,.78)", "painel2": "#241810", "linha": "#4A3622",
+               "txt": "#F6EBDD", "txt2": "#D2BFA6", "mut": "#9C8870", "acc": "#E8A33D", "acc2": "#D1613B",
+               "verm": "#D1613B", "ok": "#9CB86A", "tinta": "#110C09", "papel": "#F2E6D0", "brilho1": "transparent",
+               "brilho2": "transparent", "ponto": "transparent", "sombra": "rgba(0,0,0,.55)",
+               "sombra-card": "0 30px 70px rgba(0,0,0,.55)", "card-borda": "1px solid rgba(232,163,61,.35)",
+               "raio-card": "14px", "raio-selo": "12px", "vinheta": "transparent", "faixa": "rgba(0,0,0,0)",
+               "f-tit": '"Titulo"', "peso-tit": "700", "esp-tit": "-0.01em", "caixa": "none", "f-d": '"Titulo"',
+               "estilo-d": "italic", "peso-d": "700", "f-num": '"Texto"', "f-txt": '"Texto"',
+               "sombra-txt": "0 6px 40px rgba(0,0,0,.5)",
+               "_fundo": "filme", "_entradas": ["desfoca", "scan"], "_cameras": ["derivar", "tilt"],
+               "_saidas": ["fade", "flash"], "_tremer": False},
     # escuro, azul-noite com âmbar: serve para quase tudo
     "noite": {"fundo": "#0E1420", "painel": "#161F2E", "painel2": "#1E2A3D", "linha": "#2B3850", "txt": "#F1F4F8",
               "txt2": "#C5CEDB", "mut": "#8794A8", "acc": "#F5B83D", "acc2": "#4FD1C5", "verm": "#F0575D",
-              "ok": "#43C58A", "tinta": "#0E1420", "papel": "#EFE8D8", "brilho1": "rgba(245,184,61,.10)",
+              "verm-papel": "#B3262E", "ok": "#43C58A", "tinta": "#0E1420", "papel": "#EFE8D8", "brilho1": "rgba(245,184,61,.10)",
               "brilho2": "rgba(79,209,197,.08)", "ponto": "rgba(255,255,255,.07)", "sombra": "rgba(0,0,0,.45)",
               "vinheta": "rgba(0,0,0,.55)", "faixa": "rgba(0,0,0,0)", "f-tit": '"Texto"', "peso-tit": "800",
               "esp-tit": "-0.01em", "caixa": "none", "f-d": '"Titulo"', "estilo-d": "italic", "peso-d": "700",
@@ -84,12 +130,12 @@ TEMAS = {
                  "txt2": "#CFC9BF", "mut": "#8C877E", "acc": "#E23B3B", "acc2": "#E8D5A3", "verm": "#E23B3B",
                  "ok": "#7FB77E", "tinta": "#FFFFFF", "papel": "#E9E1CF", "brilho1": "rgba(226,59,59,.10)",
                  "brilho2": "rgba(232,213,163,.05)", "ponto": "rgba(255,255,255,.05)", "sombra": "rgba(0,0,0,.6)",
-                 "vinheta": "rgba(0,0,0,.7)", "faixa": "rgba(0,0,0,0)", "f-tit": '"Texto"', "peso-tit": "900",
+                 "vinheta": "rgba(0,0,0,.5)", "faixa": "rgba(0,0,0,0)", "f-tit": '"Texto"', "peso-tit": "900",
                  "esp-tit": "0.01em", "caixa": "uppercase", "f-d": '"Titulo"', "estilo-d": "italic", "peso-d": "700",
                  "f-num": '"Texto"', "f-txt": '"Texto"'},
 }
 
-# os 24 tipos: para que servem e os campos de cada um. "palavra" é a palavra da fala em que o elemento entra
+# os 30 tipos: para que servem e os campos de cada um. "palavra" é a palavra da fala em que o elemento entra
 CATALOGO = {
     "abertura": ("abertura do vídeo com o título; SÓ no primeiro trecho", "titulo, sub?, kicker?"),
     "capitulo": ("começo de uma parte nova do assunto", "titulo, kicker?, sub?, palavra?"),
@@ -115,14 +161,28 @@ CATALOGO = {
     "documento": ("um documento, carta, lei, relatório ou registro citado", "titulo, linhas: [{texto, palavra?}] (2 a 5), carimbo? (1 a 2 palavras ditas), palavra?"),
     "manchete": ("uma notícia, como manchete de jornal", "titulo (com *destaque*), veiculo?, data?, sub?, palavra?"),
     "encerramento": ("pedido de inscrição no fim do vídeo; SÓ se a fala pede", "texto, proximo?, palavra?"),
+    # os 6 de 2026-10-13, das categorias de tipografia, dados, abertura e entrada de cartões do video-shotcraft
+    "palavra_chave": ("UMA palavra que carrega o trecho, enorme, com palavras de apoio em volta",
+                      "termo (a palavra-chave da fala, até 18 letras), kicker?, itens: [{texto, palavra?}] (2 a 4, curtos), palavra?"),
+    "medidor": ("um valor num mostrador de ponteiro: nível, intensidade, risco, quanto de um máximo",
+                "valor (como dito: '85%', '72 km/h'), legenda, maximo? (número só da escala; sem ele, % vai a 100), palavra?"),
+    "grafico_linha": ("uma evolução ao longo do tempo ou das etapas, de 3 a 6 valores ditos",
+                      "titulo?, itens: [{rotulo, valor (número), texto?, palavra?}] (3 a 6, na ordem), fonte?"),
+    "deslizar": ("dois estados lado a lado revelados por uma régua que desliza: antes e depois, antigo e novo",
+                 "antes: {rotulo, valor, palavra?}, depois: {rotulo, valor, palavra?}, legenda?"),
+    "revelacao": ("título que se materializa, com um brilho que passa por cima; SÓ no modo de cenas pedidas",
+                  "titulo (com *destaque*), sub?, kicker?, palavra?"),
+    "pilha_cartoes": ("de 3 a 5 ideias empilhadas, cada uma cobrindo a anterior", "titulo?, itens: [{titulo, texto, palavra?}] (3 a 5)"),
 }
 ITENS = {"lista": (2, 6), "checklist": (2, 6), "passos": (2, 5), "barras": (2, 5), "linha_do_tempo": (2, 5),
-         "cartoes": (2, 3), "destaques": (2, 4), "ranking": (3, 5), "causa_efeito": (2, 4), "documento": (2, 5)}
+         "cartoes": (2, 3), "destaques": (2, 4), "ranking": (3, 5), "causa_efeito": (2, 4), "documento": (2, 5),
+         "palavra_chave": (2, 4), "grafico_linha": (3, 6), "pilha_cartoes": (3, 5)}
 LIMITES = {"titulo": 64, "texto": 120, "legenda": 90, "sub": 110, "kicker": 32, "nota": 80, "autor": 50,
            "definicao": 160, "termo": 40, "rotulo": 40, "data": 14, "valor": 24, "veiculo": 30, "fonte": 50,
            "proximo": 70, "carimbo": 18}
 _ITEM_TEXTO = {"lista": 70, "checklist": 70, "passos": 46, "destaques": 70, "ranking": 60, "causa_efeito": 60,
-               "documento": 64, "linha_do_tempo": 60, "cartoes": 110}
+               "documento": 64, "linha_do_tempo": 60, "cartoes": 110, "palavra_chave": 24, "grafico_linha": 40,
+               "pilha_cartoes": 100}
 _PALAVRAS_LIVRES = {"mais", "menos", "como", "para", "pelo", "pela", "pelos", "pelas", "isso", "esse", "essa", "este",
                     "esta", "cada", "muito", "muita", "sobre", "entre", "quando", "onde", "sendo", "hoje", "antes",
                     "depois", "parte", "total", "fonte", "nunca", "sempre", "porque", "também", "tambem"}
@@ -131,7 +191,8 @@ _PALAVRAS_LIVRES = {"mais", "menos", "como", "para", "pelo", "pela", "pelos", "p
 def config(projeto) -> dict:
     padrao = {"ativo": True, "tema": "apple", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
               "limiar": 70, "maximo_do_video": 0.12, "intervalo_minimo": 20, "trechos_por_lote": 6,
-              "tentativas": 2, "paralelo": 2, "fps": 30, "canal": "", "sons": True, "volume_sons_db": -20}
+              "tentativas": 2, "paralelo": 2, "fps": 30, "canal": "", "sons": True, "volume_sons_db": -20,
+              "fotos_nos_itens": True, "maximo_no_lugar_do_motion": 0.25}
     return {**padrao, **(projeto.config.get("animation_ai") or {}),
             **((getattr(projeto, "perfil", None) or {}).get("animation_ai") or {})}
 
@@ -267,7 +328,7 @@ def _inventadas(textos, fala) -> list:
     return list(dict.fromkeys(fora))
 
 
-SIMPLES = ("frase", "pergunta")
+SIMPLES = ("frase", "pergunta", "palavra_chave", "revelacao")
 
 
 def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simples=0) -> list:
@@ -289,6 +350,8 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
     if len(anteriores) >= 2 and anteriores[-1] == anteriores[-2] == tipo:
         erros.append(f"'{tipo}' já foi usado nos dois trechos anteriores: escolha outro tipo")
     obrigatorios = {"abertura": ["titulo"], "capitulo": ["titulo"], "pergunta": ["texto"], "frase": ["texto"],
+                    "palavra_chave": ["termo"], "medidor": ["valor", "legenda"], "deslizar": ["antes", "depois"],
+                    "revelacao": ["titulo"],
                     "numero": ["valor", "legenda"], "citacao": ["texto"], "definicao": ["termo", "definicao"],
                     "fato": ["texto"], "porcentagem": ["valor", "legenda"], "proporcao": ["total", "parte", "legenda"],
                     "documento": ["titulo", "linhas"], "manchete": ["titulo"], "encerramento": ["texto"],
@@ -303,11 +366,16 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
             erros.append(f"{tipo} pede de {menor} a {maior} itens (vieram {len(itens)})")
         limite = _ITEM_TEXTO.get(tipo, 70)
         for it in itens:
-            if not isinstance(it, dict) or not str(it.get("texto") or it.get("titulo") or "").strip():
+            if not isinstance(it, dict) or not str(it.get("texto") or it.get("titulo") or it.get("rotulo") or "").strip():
                 erros.append(f"cada item de {tipo} é um objeto com 'texto'")
                 break
             if len(str(it.get("texto") or "")) > limite:
                 erros.append(f"item comprido demais em {tipo} (até {limite} letras): \"{str(it.get('texto'))[:50]}...\"")
+        # cena 47 do brasil-selvagem: "a cada dois ou três anos" em dois itens seguidos, só com outro destaque
+        textos_itens = [_chave(str(it.get("texto") or it.get("titulo") or "").replace("*", ""))
+                        for it in itens if isinstance(it, dict)]
+        if len(set(textos_itens)) < len(textos_itens):
+            erros.append(f"dois itens de {tipo} com o mesmo texto: cada item é uma coisa diferente dita na fala")
     for campo, maximo in LIMITES.items():
         valor = d.get(campo)
         if isinstance(valor, str) and len(valor) > maximo:
@@ -321,12 +389,14 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
             titulo = _chave(c.get("titulo"))
             if any(_chave(it.get("texto")) == titulo for it in c.get("itens") or [] if isinstance(it, dict)):
                 erros.append(f"em comparar, o item de '{lado}' repete o título do lado: escreva o que a fala diz dele")
-    if tipo in ("barras",):
+    if tipo == "palavra_chave" and len(str(d.get("termo") or "").replace("*", "")) > 18:
+        erros.append("em palavra_chave, 'termo' é UMA palavra de até 18 letras")
+    if tipo in ("barras", "grafico_linha"):
         for it in d.get("itens") or []:
             try:
                 float(str(it.get("valor")).replace(",", "."))
             except (TypeError, ValueError):
-                erros.append("em barras, 'valor' de cada item é um número")
+                erros.append(f"em {tipo}, 'valor' de cada item é um número")
                 break
     if tipo == "porcentagem":
         try:
@@ -390,7 +460,7 @@ def instrucoes() -> str:
 CADA trecho de fala recebido, escolha um tipo de cena do catálogo e preencha os textos curtos que aparecem na tela.
 Responda só em JSON: {{"trechos": [{{"id": N, "tipo": "...", "dados": {{...}}}}]}}, um item por trecho, na ordem.
 
-CATÁLOGO (24 tipos):
+CATÁLOGO ({len(CATALOGO)} tipos):
 {linhas}
 
 REGRAS
@@ -405,6 +475,10 @@ REGRAS
 - Números na tela em algarismos ("150 milhões", "1875"). Em *asteriscos* a palavra em destaque (uma ou duas).
 - "palavra" é UMA palavra que aparece na fala do trecho, escrita como está nela, no momento em que o elemento deve
   entrar. "palavra#2" é a segunda vez que ela é dita. Prefira dar a palavra de cada item.
+- Em lista, checklist, destaques e cartoes, cada item entra na tela com a FOTO da coisa que ele cita (a cena em
+  que ela é falada): dê a "palavra" de cada item no momento em que a COISA é dita, pelo nome dela ("castanheira",
+  não "como"). Item é uma coisa diferente citada em série; nunca pique uma frase comum em pedaços nem repita o mesmo
+  trecho em dois itens.
 - Nunca use travessão (—). Português do Brasil."""
 
 
@@ -427,7 +501,7 @@ def _marca_do_item(item) -> str:
                                    ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
-VERSAO_PLANO = 1  # suba quando mudar as instruções ou a conferência: os planos guardados são pedidos de novo
+VERSAO_PLANO = 2  # suba quando mudar as instruções ou a conferência: os planos guardados são pedidos de novo
 
 
 def planejar(projeto, itens, log=print, forcar=False) -> dict:
@@ -550,10 +624,27 @@ def resolver_tempos(tipo, dados, palavras, dur):
                 it["t"] = quando(it.get("palavra"), round(c["t"] + 0.45 + i * 0.4, 3), c["t"])
             c["itens"] = itens
             d[lado] = c
-    if tipo == "antes_depois":
+    if tipo in ("antes_depois", "deslizar"):
         d["antes"] = {**(d.get("antes") or {}), "t": min(quando((d.get("antes") or {}).get("palavra"), 0.25), PRIMEIRO)}
         d["depois"] = {**(d.get("depois") or {}),
                        "t": max(quando((d.get("depois") or {}).get("palavra"), round(dur * 0.45, 3)), d["antes"]["t"] + 0.6)}
+    if tipo == "medidor":
+        d["prefixo"], d["numero"], d["casas"], d["sufixo"], d["contar"] = _partes_do_numero(d.get("valor"))
+        try:
+            maximo = float(str(d.get("maximo")).replace(",", "."))
+        except (TypeError, ValueError):
+            maximo = 0.0
+        if d["numero"] is None:
+            d["fracao"] = 0.7
+        elif maximo > 0:
+            d["fracao"] = max(0.0, min(1.0, d["numero"] / maximo))
+        elif "%" in str(d.get("valor") or ""):
+            d["fracao"] = max(0.0, min(1.0, d["numero"] / 100))
+        else:
+            d["fracao"] = 0.72  # sem máximo dito, o ponteiro vai a três quartos: mostra que é "alto", sem inventar escala
+        d["valor"] = "0" if d["contar"] and d["numero"] is not None else re.sub(
+            r"^\D*?(\d[\d.]*(?:,\d+)?).*$", r"\1", str(dados.get("valor")))
+        d["t_legenda"] = round(min(d["t"] + 0.9, fim), 3)
     if tipo == "numero":
         d["prefixo"], d["numero"], d["casas"], d["sufixo"], d["contar"] = _partes_do_numero(d.get("valor"))
         if d["numero"] is not None:
@@ -564,7 +655,7 @@ def resolver_tempos(tipo, dados, palavras, dur):
         d["valor"] = float(str(d.get("valor")).replace("%", "").replace(",", "."))
         d["casas"] = 0 if float(d["valor"]).is_integer() else 1
         d["t_legenda"] = round(min(d["t"] + 0.5, fim), 3)
-    if tipo == "barras":
+    if tipo in ("barras", "grafico_linha"):
         for it in d.get("itens") or []:
             it["valor"] = float(str(it.get("valor")).replace(",", "."))
     if tipo == "frase":
@@ -574,7 +665,7 @@ def resolver_tempos(tipo, dados, palavras, dur):
     if tipo == "encerramento":
         d["t_botao"] = round(min(d["t"] + 0.6, fim), 3)
         d["t_proximo"] = round(min(dur * 0.6, fim), 3)
-    if tipo in ("abertura", "capitulo"):
+    if tipo in ("abertura", "capitulo", "revelacao"):
         d["t_titulo"] = max(0.2, min(quando(d.get("palavra"), 0.25), 1.5))
         d["t_sub"] = round(min(d["t_titulo"] + 1.0, fim), 3)
     if tipo == "citacao":
@@ -592,8 +683,14 @@ def sons(tipo, d) -> list:
     itens = d.get("itens") or []
     if tipo == "abertura":
         ev += [(0.0, "risco"), (d["t_titulo"], "pop"), (d["t_titulo"] + 0.7, "baque")]
-    elif tipo in ("capitulo", "pergunta", "manchete"):
-        ev.append((d["t_titulo"] if tipo == "capitulo" else d["t"], "baque"))
+    elif tipo in ("capitulo", "pergunta", "manchete", "revelacao"):
+        ev.append((d["t_titulo"] if tipo in ("capitulo", "revelacao") else d["t"], "baque"))
+    elif tipo == "palavra_chave":
+        ev += [(d["t"], "baque")] + [(it["t"], "pop") for it in itens]
+    elif tipo == "medidor":
+        ev += [(d["t"], "pop"), (d["t"] + 0.05, "contagem")]
+    elif tipo == "grafico_linha":
+        ev += [(it["t"], "risco") for it in itens]
     elif tipo == "frase":
         ev += [(d["t"], "pop"), (d["t_destaque"], "risco")]
     elif tipo == "numero":
@@ -604,7 +701,7 @@ def sons(tipo, d) -> list:
         ev += [(it["t"], "risco") for it in itens]
         if tipo == "ranking" and isinstance(d.get("destaque"), int) and 0 <= d["destaque"] < len(itens):
             ev.append((itens[d["destaque"]]["t"], "baque"))
-    elif tipo in ("passos", "cartoes", "causa_efeito", "linha_do_tempo"):
+    elif tipo in ("passos", "cartoes", "causa_efeito", "linha_do_tempo", "pilha_cartoes"):
         ev += [(it["t"], "pop") for it in itens]
     elif tipo == "comparar":
         ev += [(d["esq"]["t"], "risco"), (d["dir"]["t"], "risco")]
@@ -620,7 +717,7 @@ def sons(tipo, d) -> list:
             ev += [(p["t"], "risco") for p in d.get("pontos") or []]
     elif tipo == "porcentagem":
         ev += [(d["t"], "pop"), (d["t"] + 0.05, "contagem")]
-    elif tipo == "antes_depois":
+    elif tipo in ("antes_depois", "deslizar"):
         ev += [(d["antes"]["t"], "risco"), (d["depois"]["t"], "baque")]
     elif tipo == "proporcao":
         ev += [(d["t"], "contagem"), (d["t"] + 1.3, "baque")]
@@ -642,11 +739,16 @@ def tema(projeto) -> dict:
     return {**base, **(cfg.get("cores") or {})}
 
 
-def montar_html(tipo, dados, dur, cores, canal="") -> str:
+def com_variante(cores) -> bool:
+    """O estilo tem jeitos de entrar, de mexer a câmera ou de sair que variam de cena para cena."""
+    return any(k in cores for k in ("_entradas", "_cameras", "_saidas", "_fundo"))
+
+
+def montar_html(tipo, dados, dur, cores, canal="", variante=0) -> str:
     variaveis = "".join(f"--{k}:{v};" for k, v in cores.items() if not k.startswith("_"))
     estilo = {k[1:]: v for k, v in cores.items() if k.startswith("_")}
-    dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal, "estilo": estilo},
-                          ensure_ascii=False)
+    dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal, "estilo": estilo,
+                           "variante": int(variante)}, ensure_ascii=False)
     css = (RECURSOS / "motor.css").read_text(encoding="utf-8")
     js = (RECURSOS / "motor.js").read_text(encoding="utf-8")
     return f"""<!doctype html>
@@ -675,18 +777,350 @@ def montar_html(tipo, dados, dur, cores, canal="") -> str:
 """
 
 
+# ------------------------------------------------------------------------------------------------ fotos dos itens
+
+# pedido do usuário em 2026-10-11 ("mostrar cenas do banco de imagens junto com esses motion, para as palavras não
+# ficarem soltas"): na lista do ninho, da castanheira e da sumaúma (cenas 44 a 46 do brasil-selvagem) só havia texto
+# num fundo creme. Cada item ganha a foto da coisa que ele cita, entrando junto com ele (motor.js, pilha e cartoes).
+# A foto é a que a cena daquele momento já tinha (baixada e julgada pelo Jev, de graça); a cena sem foto boa busca
+# uma nos bancos pelo pedido dela, e a visão confere que mostra a coisa
+COM_FOTO = ("lista", "checklist", "destaques", "cartoes")
+MINIMO_DE_FOTOS = 2  # menos que isso, a lista fica só com o texto: uma foto para cinco itens parece engano
+FONTES_DA_FOTO = ("wikimedia", "inaturalist", "pexels", "pixabay", "unsplash")
+VERSAO_FOTOS = 4  # suba quando mudar a busca ou a escolha: as fotos guardadas são buscadas de novo
+
+INSTRUCOES_FOTO_ITEM = """Você escolhe a foto de um item de uma lista animada de um documentário. Cada número da folha
+é uma foto. Ela entra ao lado do texto do item, no momento em que a narração cita a coisa, então tem de mostrar
+EXATAMENTE a coisa citada (a espécie, a árvore, o lugar, o objeto), grande e bem visível, e o mínimo que a cena pede
+(a fase, o comportamento: filhote no ninho, bicho caçando). Nunca outra coisa parecida, desenho, mapa, gráfico, texto,
+colagem, montagem ou marca-d'água, e nunca pessoa, mão, luva, gaiola ou zoológico se o item não cita (a águia na luva
+de um falcoeiro não é "aprendendo a caçar"). Responda o número da melhor foto, ou -1 se nenhuma mostra a coisa."""
+
+ESQUEMA_FOTO_ITEM = {"type": "object", "properties": {"numero": {"type": "integer"}, "motivo": {"type": "string"}},
+                     "required": ["numero"]}
+
+
+def _o_que_a_cena_tinha(c) -> dict:
+    """Os campos da cena antes da animação (a reserva, se ela já foi animada)."""
+    return (c.get("anim_reserva") or {}) if e_animada(c) else c
+
+
+def _foto_da_cena(projeto, c):
+    """(arquivo, crédito) da foto ou do vídeo que a cena mostrava, se ninguém disse que é outra coisa; ou None."""
+    from . import corrigir
+
+    antes = _o_que_a_cena_tinha(c)
+    m = antes.get("midia") or {}
+    if not m.get("arquivo") or m.get("fonte") in (FONTE, "motion_ia"):
+        return None
+    captura = antes.get("captura") or {}
+    if corrigir.errada(antes.get("conferencia")) or (captura.get("suspeita") and not antes.get("conferencia")):
+        return None  # o tapa-buraco e o suspeito sem julgamento ficam de fora: na lista, foto errada salta aos olhos
+    caminho = projeto.pasta / m["arquivo"]
+    if not caminho.exists():
+        return None
+    credito = {k: m.get(k) for k in ("fonte", "id", "autor", "licenca", "pagina", "tipo")}
+    return caminho, credito
+
+
+def _preparar_foto(origem, destino, video=False, duracao=None) -> bool:
+    """A foto em até 1400 px (o vídeo, um quadro do meio), em JPEG, para a página."""
+    from PIL import Image
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if video:
+            meio = max(0.0, float(duracao or 2.0) * 0.4)
+            rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{meio:.2f}", "-i", str(origem), "-frames:v", "1",
+                   "-vf", "scale='min(1400,iw)':-2", "-q:v", "3", str(destino)])
+            return destino.exists()
+        with Image.open(origem) as im:
+            im = im.convert("RGB")
+            im.thumbnail((1400, 1400))
+            im.save(destino, quality=88)
+        return True
+    except Exception:  # noqa: BLE001 - foto que não abre: o item fica sem ela
+        return False
+
+
+def _usadas_no_video(projeto) -> set:
+    chaves = set()
+    for c in projeto.ler_json("cenas.json")["cenas"]:
+        for m in (c.get("midia"), (c.get("anim_reserva") or {}).get("midia"), *(c.get("anim_fotos") or [])):
+            if m and m.get("fonte") and m.get("id"):
+                chaves.add(f"{m['fonte']}:{m['id']}")
+    return chaves
+
+
+def _foto_do_banco(projeto, pasta, c, item, usadas, log):
+    """Busca nos bancos a foto da coisa que o item cita, pelo pedido da cena; a visão escolhe. (arquivo, crédito)."""
+    from . import midia, motion_figura, openrouter_local
+
+    antes = _o_que_a_cena_tinha(c)
+    termos = [t for t in dict.fromkeys(str(antes.get(k) or c.get(k) or "").strip()
+                                       for k in ("exato", "animal", "busca", "busca_alternativa")) if t]
+    if not termos:
+        return None
+    coisa = antes.get("exato") or antes.get("sujeito") or termos[0]
+    minimo = antes.get("aceitavel") or antes.get("mostrar") or ""
+    texto = str(item.get("texto") or item.get("titulo") or "").replace("*", "")
+    marca = hashlib.sha1(json.dumps([VERSAO_FOTOS, termos[:2], texto], ensure_ascii=False).encode()).hexdigest()[:12]
+    destino = pasta / "assets" / "fotos" / f"banco_{marca}.jpg"
+    guardadas_em = pasta / "fotos.json"
+    try:
+        guardadas = json.loads(guardadas_em.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        guardadas = {}
+    if marca in guardadas:
+        credito = guardadas[marca].get("credito")
+        return (destino, credito) if credito and destino.exists() else None
+
+    def guardar(credito, motivo):
+        guardadas[marca] = {"credito": credito, "motivo": motivo, "termos": termos[:2], "item": texto}
+        pasta.mkdir(parents=True, exist_ok=True)
+        guardadas_em.write_text(json.dumps(guardadas, ensure_ascii=False, indent=1), encoding="utf-8")
+        if not credito:
+            log(f"  animation-ai: \"{texto[:40]}\" sem foto nos bancos ({motivo})")
+
+    # o que as tags têm de citar. Bicho: a própria espécie ("eagle" de "harpy eagle", ou o gênero científico), nunca
+    # só o tipo: com "bird" bastando, um urutau-australiano do Unsplash entrou como o filhote de harpia (cena 47)
+    if antes.get("animal"):
+        exigido = set(midia._cabeca_do_animal(antes["animal"])) | midia._generos_cientificos(
+            f"{antes.get('busca_alternativa') or ''} {antes.get('exato') or ''}")
+    else:
+        mapa = projeto.ler_json("roteiro_mapa.json") if projeto.existe("roteiro_mapa.json") else {}
+        bloco = next((b for b in mapa.get("blocos") or [] if b.get("id") == c.get("bloco")), {})
+        exigido = midia.exigido_da_cena(bloco, antes)
+    buscador = midia.Buscador(projeto, log)
+    listas = []
+    for termo in termos[:2]:
+        for fonte in FONTES_DA_FOTO:
+            try:
+                achados = [x for x in buscador._buscar(fonte, "foto", termo) if x.get("miniatura")
+                           and f"{x.get('fonte')}:{x.get('id')}" not in usadas and not midia.de_edicao(x)]
+            except (Exception, SystemExit):  # noqa: BLE001 - banco fora do ar: segue com os outros
+                continue
+            listas.append([x for x in achados if midia._cita_o_assunto(exigido, x)] if exigido else achados)
+    candidatos, vistos, rodada = [], set(), 0
+    while len(candidatos) < 40 and any(rodada < len(lista) for lista in listas):
+        for lista in listas:
+            if rodada < len(lista) and (lista[rodada]["fonte"], lista[rodada]["id"]) not in vistos:
+                vistos.add((lista[rodada]["fonte"], lista[rodada]["id"]))
+                candidatos.append(lista[rodada])
+        rodada += 1
+    if antes.get("animal"):
+        # quem cita a espécie inteira ("harpy eagle", Harpia) na frente de quem cita só o bicho ("two young eagles")
+        generos = midia._generos_cientificos(f"{antes.get('busca_alternativa') or ''} {antes.get('exato') or ''}")
+        candidatos.sort(key=lambda x: not (midia._cita_o_nome(antes["animal"], x)
+                                           or (generos and midia._cita_o_assunto(generos, x))))
+    candidatos = candidatos[:12]
+    if not candidatos:
+        guardar(None, "nenhum candidato")
+        return None
+    sub = pasta / f"busca_{marca}"
+    sub.mkdir(parents=True, exist_ok=True)
+    folha, validos = motion_figura._folha(projeto, sub, candidatos, buscador.http)
+    if not validos:
+        guardar(None, "nenhuma miniatura baixou")
+        return None
+    try:
+        escolha = openrouter_local.VISAO.perguntar(
+            projeto, "animation-ai: foto do item", INSTRUCOES_FOTO_ITEM,
+            f"O item na tela: {texto}\nA coisa que a foto tem de mostrar: {coisa}\n"
+            + (f"O mínimo que a cena pede: {minimo}\n" if minimo else "") +
+            f"Números válidos: {', '.join(map(str, validos))}.", ESQUEMA_FOTO_ITEM, log=log, imagens=[folha],
+            temperatura=0) or {}
+        numero = int(escolha.get("numero", -1))
+    except (Exception, SystemExit) as erro:  # noqa: BLE001 - sem visão, o item fica sem foto (não guarda: tenta depois)
+        log(f"  animation-ai: a visão não escolheu a foto de \"{texto[:40]}\" ({str(erro)[:80]})")
+        return None
+    if numero not in validos:
+        guardar(None, "nenhuma mostra a coisa")
+        return None
+    candidato = candidatos[numero]
+    original = sub / "original.jpg"
+    try:
+        midia._baixar(buscador.http, candidato["arquivo"], original)
+        midia._garantir_jpeg(original)
+    except Exception as erro:  # noqa: BLE001 - o banco caiu: o item fica sem foto (não guarda: tenta depois)
+        log(f"  animation-ai: o download da foto de \"{texto[:40]}\" falhou ({str(erro)[:80]})")
+        return None
+    if midia.fundo_de_chroma(original):
+        guardar(None, "material de edição")
+        return None
+    igual = midia.cena_com_a_mesma_imagem(projeto, -1, original, f"{candidato['fonte']}:{candidato['id']}")
+    if igual is not None:
+        guardar(None, f"a mesma imagem da cena {igual}")  # jamais repetir imagem
+        return None
+    if not _preparar_foto(original, destino):
+        guardar(None, "a foto não abriu")
+        return None
+    credito = {k: candidato.get(k) for k in ("fonte", "id", "autor", "licenca", "pagina")}
+    credito["tipo"] = "foto"
+    guardar(credito, "ok")
+    log(f"  animation-ai: \"{texto[:40]}\" com foto do {candidato['fonte']}")
+    return destino, credito
+
+
+def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
+    """Põe em cada item (dados["itens"]) a foto da coisa que ele cita: a da cena em que a palavra do item é falada,
+    ou uma dos bancos. Cada cena empresta a foto a um item só. Devolve {número da cena: [créditos]} das fotos que
+    entram na tela durante cada cena."""
+    itens = [it for it in dados.get("itens") or [] if isinstance(it, dict)]
+    if tipo not in COM_FOTO or not itens or not config(projeto).get("fotos_nos_itens", True):
+        return {}
+    usadas, por_cena, achadas = _usadas_no_video(projeto), set(), []
+    for it in itens:
+        momento = ini + float(it.get("t") or 0) + 0.12
+        cena = next((c for c in trecho if float(c["ini"]) <= momento < float(c["fim"])), None)
+        cena = cena or min(trecho, key=lambda c: abs(float(c["ini"]) - momento))
+        if cena["n"] in por_cena:
+            continue  # a cena já deu a foto ao item anterior: a pilha segue com ela
+        por_cena.add(cena["n"])
+        foto = _foto_da_cena(projeto, cena)
+        if foto is None:
+            foto = _foto_do_banco(projeto, pasta, cena, it, usadas, log)
+            if foto is None:
+                continue
+            arquivo = foto[0]
+        else:
+            arquivo = pasta / "assets" / "fotos" / f"cena_{cena['n']:04d}.jpg"
+            duracao = (_o_que_a_cena_tinha(cena).get("midia") or {}).get("duracao")
+            if not _preparar_foto(foto[0], arquivo, foto[1].get("tipo") == "video", duracao):
+                continue
+        usadas.add(f"{foto[1].get('fonte')}:{foto[1].get('id')}")
+        achadas.append((it, arquivo, foto[1], cena["n"]))
+    if len(achadas) < min(MINIMO_DE_FOTOS, len(itens)):
+        return {}
+    creditos = {}
+    for it, arquivo, credito, n in achadas:
+        it["foto"] = arquivo.relative_to(pasta).as_posix()
+        it["foto_id"] = f"{credito.get('fonte')}:{credito.get('id')}"  # entra na assinatura: outra foto, outro clipe
+        creditos.setdefault(n, []).append(credito)
+    return creditos
+
+
+def regravar(projeto, numeros=None, log=print) -> list:
+    """Grava de novo as cenas animadas que já existem, com o plano delas (partes.json): pega as mudanças do desenho
+    (as fotos dos itens, VERSAO) sem perguntar nada ao modelo. numeros: só os trechos que têm alguma dessas cenas.
+    Falhou, a cena fica com a animação de antes."""
+    todas = projeto.ler_json("cenas.json")["cenas"]
+    por_n = {c["n"]: c for c in todas}
+    pares = []
+    for c in todas:
+        trecho = c.get("anim_trecho") or [c["n"]]
+        if not e_animada(c) or c["n"] != trecho[0]:
+            continue
+        if numeros and not set(trecho) & set(numeros):
+            continue
+        try:
+            partes = json.loads((_pasta(projeto, c["n"]) / "partes.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        # só as cenas que ainda são a animação: a que a pessoa trocou por foto ou imagem de IA no editor fica como está
+        # (cena 36 do brasil-selvagem, trocada por imagem de IA no meio do trecho 34 a 36)
+        grupo = []
+        for n in trecho:
+            if n in por_n and e_animada(por_n[n]) and (not grupo or n == grupo[-1]["n"] + 1):
+                grupo.append(por_n[n])
+            elif grupo:
+                break
+        if grupo and partes.get("tipo"):
+            dados = json.loads(json.dumps(partes["dados"]))
+            if isinstance(dados.get("itens"), list):
+                # plano de antes da conferência de item repetido ("a cada dois ou três anos" duas vezes, cena 47)
+                vistos, itens = set(), []
+                for it in dados["itens"]:
+                    chave = _chave(str((it or {}).get("texto") or (it or {}).get("titulo") or "").replace("*", ""))
+                    if chave not in vistos:
+                        vistos.add(chave)
+                        itens.append(it)
+                dados["itens"] = itens
+            pares.append((grupo, {"tipo": partes["tipo"], "dados": dados}))
+    feitas = []
+    for g, plano in pares:
+        try:
+            for n, destino, capa, dur, fotos in gravar(projeto, g, plano, log):
+                _aplicar(projeto, n, destino, capa, dur, [c["n"] for c in g], plano["tipo"], fotos)
+            feitas += [c["n"] for c in g]
+            log(f"  animation-ai: cena {g[0]['n']} ({plano['tipo']}) gravada de novo")
+        except (Exception, SystemExit) as erro:  # noqa: BLE001 - fica a animação de antes
+            log(f"  animation-ai: cena {g[0]['n']} não foi gravada de novo ({str(erro)[:160]}); fica como estava")
+    return feitas
+
+
 def _pasta(projeto, n) -> Path:
     return projeto.pasta / "animation_ai" / f"{n:04d}"
 
 
-def assinatura(tipo, dados, dur, cores, canal) -> str:
+def assinatura(tipo, dados, dur, cores, canal, variante=0) -> str:
     motor = (RECURSOS / "motor.js").read_bytes() + (RECURSOS / "motor.css").read_bytes()
-    base = json.dumps([VERSAO, tipo, dados, round(dur, 3), cores, canal], ensure_ascii=False, sort_keys=True)
+    # a variante só conta nos estilos que variam de cena para cena: nos 4 de antes o nome do clipe não muda
+    base = json.dumps([VERSAO, tipo, dados, round(dur, 3), cores, canal] + ([variante] if com_variante(cores) else []),
+                      ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(base.encode("utf-8") + motor).hexdigest()[:16]
 
 
+QUADRO_MORTO = 0.02       # diferença média (0 a 255) abaixo da qual dois quadros seguidos são o mesmo
+MORTO_NO_MEIO = 0.8       # segundos parados, no começo ou no meio, a partir dos quais o clipe reprova
+MORTO_NO_FIM = 2.5        # segundos parados no fim (o último elemento já ficou 1,5 s na tela de propósito)
+
+
+def quadros_mortos(mp4, fps=30):
+    """Mede os trechos parados do clipe gravado: (maior trecho parado no começo ou no meio, trecho parado no fim),
+    em segundos. Ideia do motionmaxxing (quadro morto), com os limites medidos em 40 clipes reais da fábrica: com o
+    limite deles, 3 quadros, quase todo clipe bom reprovava, porque o card parado entre duas palavras faz uns 13
+    quadros (0,4 s). O maior trecho do meio dos bons foi 0,43 s e o do fim 0,4 s."""
+    import subprocess
+
+    import numpy as np
+
+    largura, altura = 96, 54
+    p = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(mp4), "-vf", f"scale={largura}:{altura},format=gray",
+                        "-f", "rawvideo", "-"], capture_output=True)
+    quadros = np.frombuffer(p.stdout, np.uint8)
+    quadros = quadros[: len(quadros) // (largura * altura) * (largura * altura)].reshape(-1, largura * altura)
+    # a 60 quadros por segundo dois quadros seguidos quase não mudam; compara de 1/30 s em 1/30 s, como nos clipes
+    # medidos (a 30 quadros por segundo o passo é 1)
+    passo = max(1, round(fps / 30))
+    quadros = quadros[::passo]
+    fps = fps / passo
+    if len(quadros) < 2:
+        return 0.0, 0.0
+    parado = np.abs(np.diff(quadros.astype(np.int16), axis=0)).mean(axis=1) < QUADRO_MORTO
+    fim = 0
+    for x in parado[::-1]:
+        if not x:
+            break
+        fim += 1
+    no_meio = atual = 0
+    for x in parado[: len(parado) - fim]:
+        atual = atual + 1 if x else 0
+        no_meio = max(no_meio, atual)
+    return no_meio / fps, fim / fps
+
+
+def _reprovado_por_quadro_morto(mp4, fps=30):
+    """Texto do motivo se o clipe tem tela parada demais, ou "" se está bom. Nunca derruba por falha da medida."""
+    try:
+        no_meio, no_fim = quadros_mortos(mp4, fps)
+    except Exception:  # noqa: BLE001 - a medida é um extra: sem ela o clipe segue
+        return ""
+    if no_meio > MORTO_NO_MEIO:
+        return f"a tela fica parada {no_meio:.1f} s no meio do clipe (quadro morto)"
+    if no_fim > MORTO_NO_FIM:
+        return f"a tela fica parada {no_fim:.1f} s no fim do clipe"
+    return ""
+
+
 def gravar(projeto, trecho, plano, log=print):
-    """Grava o trecho e devolve [(n, mp4, capa, duração) de cada cena] e os sons. Levanta RuntimeError se falhar."""
+    """Grava o trecho e devolve [(n, mp4, capa, duração, créditos das fotos dos itens) de cada cena]. Levanta
+    RuntimeError se falhar. O plano de tipo "dirigida" é uma cena dirigida (direcao.py): câmera, tipografia cinética e
+    formato em pé, gravada a 60 quadros por segundo."""
+    if plano.get("tipo") == "dirigida":
+        from . import direcao
+
+        return direcao.gravar(projeto, trecho, plano, log)
     if not animacoes.node_pronto():
         raise RuntimeError("falta o Node.js 22 ou mais (o HyperFrames grava a cena)")
     cfg = config(projeto)
@@ -697,15 +1131,17 @@ def gravar(projeto, trecho, plano, log=print):
     resolvidos, eventos = resolver_tempos(tipo, dados, palavras, dur)
     cores = tema(projeto)
     canal = str(cfg.get("canal") or "")  # o nome do canal no canto, do perfil (animation_ai.canal); vazio, sem nome
-    marca = assinatura(tipo, resolvidos, dur, cores, canal)
     pasta = _pasta(projeto, trecho[0]["n"])
+    creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+    variante = trecho[0]["n"]
+    marca = assinatura(tipo, resolvidos, dur, cores, canal, variante)
     destino = projeto.pasta / "midia" / f"{trecho[0]['n']:04d}_anim{'_trecho' if len(trecho) > 1 else ''}.mp4"
     partes = pasta / "partes.json"
     anterior = json.loads(partes.read_text(encoding="utf-8")) if partes.exists() else {}
     if anterior.get("assinatura") != marca or not destino.exists():
         pasta.mkdir(parents=True, exist_ok=True)
         animacoes._preparar_pasta(pasta)
-        (pasta / "index.html").write_text(montar_html(tipo, resolvidos, dur, cores, canal), encoding="utf-8")
+        (pasta / "index.html").write_text(montar_html(tipo, resolvidos, dur, cores, canal, variante), encoding="utf-8")
         erros = animacoes._conferir(projeto, pasta, clipe=True)
         if erros:
             raise RuntimeError("a conferência do HyperFrames reprovou: " + "; ".join(erros[:3]))
@@ -716,6 +1152,10 @@ def gravar(projeto, trecho, plano, log=print):
         if r.returncode != 0 or not temporario.exists() or temporario.stat().st_size < 1000:
             temporario.unlink(missing_ok=True)
             raise RuntimeError(f"o HyperFrames não gravou a cena: {(r.stderr or r.stdout or '')[-200:]}")
+        parado = _reprovado_por_quadro_morto(temporario, int(cfg.get("fps", 30)))
+        if parado:
+            temporario.unlink(missing_ok=True)
+            raise RuntimeError(parado)
         temporario.replace(destino)
         (pasta / "index.html").unlink(missing_ok=True)
         partes.write_text(json.dumps({"assinatura": marca, "tipo": tipo, "dados": dados, "resolvidos": resolvidos,
@@ -735,11 +1175,11 @@ def gravar(projeto, trecho, plano, log=print):
         capa = pedaco.with_name(f"{c['n']:04d}_anim_capa.jpg")
         rodar(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0.0, min(dur_c * 0.7, dur_c - 0.1)):.2f}",
                "-i", str(pedaco), "-frames:v", "1", "-q:v", "3", str(capa)])
-        saida.append((c["n"], pedaco, capa, dur_c))
+        saida.append((c["n"], pedaco, capa, dur_c, creditos.get(c["n"], [])))
     return saida
 
 
-def _aplicar(projeto, n, destino, capa, dur, trecho, tipo) -> None:
+def _aplicar(projeto, n, destino, capa, dur, trecho, tipo, fotos=()) -> None:
     """A cena animada entra como a mídia da cena, igual a um vídeo de banco. O que a cena tinha fica em anim_reserva."""
     with _TRAVA_CENAS:
         dados = projeto.ler_json("cenas.json")
@@ -754,8 +1194,10 @@ def _aplicar(projeto, n, destino, capa, dur, trecho, tipo) -> None:
         c["tipo"] = "video_real"
         c["captura"] = {"conferida": True, "animation_ai": True}
         c["anim_trecho"] = list(trecho)
-        for campo in ("sem_midia_real", "conferencia", "anim_falhou"):
+        for campo in ("sem_midia_real", "conferencia", "anim_falhou", "anim_fotos"):
             c.pop(campo, None)
+        if fotos:
+            c["anim_fotos"] = list(fotos)  # as fotos de banco dos itens que entram nesta cena: vão para os créditos
         projeto.salvar_json("cenas.json", dados)
 
 
@@ -797,8 +1239,8 @@ def _gravar_grupos(projeto, pares, log=print, frase_de_reserva=True) -> list:
                 log(f"  animation-ai: cena {g[0]['n']} ({plano['tipo']}) reprovou ({str(erro)[:120]}); vai como frase")
                 plano = plano_de_reserva(" ".join(c.get("texto") or "" for c in g))
                 pedacos = gravar(projeto, g, plano, log)
-            for n, destino, capa, dur in pedacos:
-                _aplicar(projeto, n, destino, capa, dur, [c["n"] for c in g], plano["tipo"])
+            for n, destino, capa, dur, fotos in pedacos:
+                _aplicar(projeto, n, destino, capa, dur, [c["n"] for c in g], plano["tipo"], fotos)
             return g, plano["tipo"], None
         except (Exception, SystemExit) as erro:
             return g, plano["tipo"], str(erro) or erro.__class__.__name__
@@ -819,7 +1261,7 @@ def _gravar_grupos(projeto, pares, log=print, frase_de_reserva=True) -> list:
 
 def fazer(projeto, cenas, log=print, forcar=False) -> list:
     """Anima as cenas pedidas pela pessoa (`fabrica animation-ai NOME --cenas`), sem perguntar se vale: o modelo só
-    escolhe o tipo, com os 24 do catálogo. Devolve as cenas feitas."""
+    escolhe o tipo, com os 30 do catálogo. Devolve as cenas feitas."""
     if not animacoes.node_pronto():
         log("  animation-ai: falta o Node.js 22 ou mais")
         return []
@@ -836,7 +1278,7 @@ def fazer(projeto, cenas, log=print, forcar=False) -> list:
 
 # ------------------------------------------------------------------------------------------------ complemento
 
-SO_PEDIDAS = ("abertura", "capitulo", "frase", "pergunta", "encerramento")  # texto da fala sobre fundo: a foto já diz
+SO_PEDIDAS = ("abertura", "capitulo", "frase", "pergunta", "encerramento", "palavra_chave", "revelacao")  # texto da fala sobre fundo: a foto já diz
 DE_COMPLEMENTO = [t for t in CATALOGO if t not in SO_PEDIDAS]
 VISUAIS_DE_ANIMACAO = ("diagrama", "texto_tela", "linha_do_tempo", "mapa")
 
@@ -923,7 +1365,7 @@ ESQUEMA_UTIL = {
         "required": ["id", "nota", "tipo", "dados"]}}},
     "required": ["trechos"],
 }
-VERSAO_UTIL = 1  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
+VERSAO_UTIL = 2  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
 
 
 def instrucoes_util(tipos=None) -> str:
@@ -949,6 +1391,10 @@ REGRAS DA CENA
   *asteriscos* a palavra em destaque (uma ou duas).
 - "palavra" é UMA palavra da fala do trecho, escrita como está nela, no momento em que o elemento entra; "palavra#2" é
   a segunda vez que ela é dita. Dê a palavra de cada item.
+- Em lista, checklist, destaques e cartoes, cada item entra na tela com a FOTO da coisa que ele cita (a cena em
+  que ela é falada): dê a "palavra" de cada item no momento em que a COISA é dita, pelo nome dela ("castanheira",
+  não "como"). Item é uma coisa diferente citada em série; nunca pique uma frase comum em pedaços nem repita o mesmo
+  trecho em dois itens.
 - Nunca use travessão (—). Português do Brasil."""
 
 
@@ -1097,8 +1543,17 @@ def nas_uteis(projeto, log=print, numeros=None, como_motion=False) -> list:
                 if (c.get("midia") or {}).get("fonte") in ("motion_ia", FONTE)]
     duracao = float(projeto.ler_json("alinhamento.json").get("duracao") or todas[-1]["fim"])
     if como_motion:
-        # sem teto nem intervalo, como o motion: toda frase que tirou a nota entra
-        escolhidos = escolher(itens, decisoes, {**cfg, "maximo_do_video": 10.0, "intervalo_minimo": 0}, duracao)
+        # no lugar do motion: sem o intervalo (a cena reprovada precisa de uma saída), mas com teto próprio, contando as
+        # cenas já animadas. Sem teto, o brasil-selvagem ficou com 118 cenas animadas, 31% do vídeo, quase o triplo do
+        # maximo_do_video. As de nota maior entram primeiro; as que passam do teto seguem para a imagem de IA ou voltam
+        # para a foto que tinham (imagens._motion_antes_da_ia)
+        teto = float(cfg.get("maximo_no_lugar_do_motion", 0.25))
+        escolhidos = escolher(itens, decisoes, {**cfg, "maximo_do_video": teto, "intervalo_minimo": 0}, duracao, ocupados)
+        aprovadas = sum(1 for it in itens if decisoes.get(it["id"], {}).get("tipo")
+                        and decisoes[it["id"]].get("nota", 0) >= float(cfg.get("limiar", 70)))
+        if aprovadas > len(escolhidos):
+            log(f"  animation-ai: {aprovadas - len(escolhidos)} cena(s) ficaram fora pelo teto de {teto:.0%} do vídeo em "
+                "cenas animadas; seguem para a imagem de IA ou voltam para a foto")
     else:
         escolhidos = escolher(itens, decisoes, cfg, duracao, ocupados)
     if not escolhidos:
@@ -1135,6 +1590,7 @@ def desfazer(projeto, numeros) -> list:
                     c["midia"] = None
                 c["anim_falhou"] = {"motivo": "desfeita pela pessoa", "fala": _marca_fala(c)}
                 c.pop("anim_trecho", None)
+                c.pop("anim_fotos", None)
                 feitas.append(c["n"])
         projeto.salvar_json("cenas.json", dados)
     return feitas
@@ -1235,32 +1691,51 @@ EXEMPLOS = {
     "manchete": {"veiculo": "Diário da Serra", "data": "22 nov 2002", "titulo": "Vale dos Vinhedos ganha o *primeiro selo* do Brasil",
                  "sub": "Região passa a ter origem reconhecida"},
     "encerramento": {"texto": "Gostou? *Se inscreva* para o próximo", "proximo": "A cachaça que envelhece 20 anos"},
+    "palavra_chave": {"kicker": "O que mede tudo", "termo": "TEMPO", "itens": [{"texto": "anos de barrica"}, {"texto": "paciência"},
+                                                                          {"texto": "colheita à mão"}]},
+    "medidor": {"valor": "85%", "legenda": "do vinho fino brasileiro sai da Serra Gaúcha"},
+    "grafico_linha": {"titulo": "Garrafas por ano", "itens": [{"rotulo": "1990", "valor": 2, "texto": "2 mi"},
+                      {"rotulo": "2000", "valor": 5, "texto": "5 mi"}, {"rotulo": "2010", "valor": 9, "texto": "9 mi"},
+                      {"rotulo": "2020", "valor": 14, "texto": "14 mi"}], "fonte": "IBRAVIN"},
+    "deslizar": {"antes": {"rotulo": "Granel", "valor": "R$ 3"}, "depois": {"rotulo": "Garrafa", "valor": "R$ 90"},
+                 "legenda": "o mesmo litro, depois de envelhecer"},
+    "revelacao": {"kicker": "Documentário", "titulo": "O ouro da *Serra*", "sub": "Uma riqueza que se mede em tempo"},
+    "pilha_cartoes": {"titulo": "O caminho do vinho", "itens": [{"titulo": "Colheita", "texto": "Uvas colhidas à mão em fevereiro"},
+                      {"titulo": "Fermentação", "texto": "Semanas em tanques de aço"},
+                      {"titulo": "Barrica", "texto": "Anos de madeira nativa"},
+                      {"titulo": "Garrafa", "texto": "Descanso antes de chegar à mesa"}]},
 }
 
 
-def catalogo(projeto, destino: Path, tema_nome=None, log=print) -> Path:
-    """Uma folha com um quadro de cada tipo, no tema do projeto (ou no pedido): para ver o visual sem gravar vídeo."""
+def catalogo(projeto, destino: Path, tema_nome=None, log=print, variante=0, so=None) -> Path:
+    """Uma folha com um quadro de cada tipo, no tema do projeto (ou no pedido): para ver o visual sem gravar vídeo.
+    `so`: só esses tipos; `variante`: o jeito de entrar, mexer a câmera e sair dos estilos que variam (0, 1...)."""
     from PIL import Image, ImageDraw
 
     cores = TEMAS.get(tema_nome) if tema_nome else tema(projeto)
     pasta = destino.parent / f"_catalogo_animation_ai_{tema_nome or 'projeto'}"
     shutil.rmtree(pasta, ignore_errors=True)
-    quadros = []
-    for tipo, exemplo in EXEMPLOS.items():
+
+    def um(item):
+        tipo, exemplo = item
         sub = pasta / tipo
         sub.mkdir(parents=True, exist_ok=True)
         animacoes._preparar_pasta(sub)
         dur = 6.0
         resolvidos, _ = resolver_tempos(tipo, exemplo, [], dur)
-        (sub / "index.html").write_text(montar_html(tipo, resolvidos, dur, cores, "Canal"), encoding="utf-8")
-        r = animacoes._hyperframes(projeto, ["snapshot", "--at", "5.8", "--describe=false", "-o", str(sub / "q"), "."], sub, 240)
+        (sub / "index.html").write_text(montar_html(tipo, resolvidos, dur, cores, "Canal", variante), encoding="utf-8")
+        r = animacoes._hyperframes(projeto, ["snapshot", "--at", "4.8", "--describe=false", "-o", str(sub / "q"), "."], sub, 240)
         achado = sorted((sub / "q").glob("*.png")) + sorted((sub / "q").glob("*.jpg"))
         achado = [a for a in achado if "contact" not in a.name]
         if r.returncode != 0 or not achado:
             log(f"  {tipo}: o quadro não saiu ({(r.stderr or r.stdout or '')[-160:]})")
-            continue
-        quadros.append((tipo, achado[0]))
+            return tipo, None
         log(f"  {tipo}: ok")
+        return tipo, achado[0]
+
+    itens = [(t, e) for t, e in EXEMPLOS.items() if not so or t in so]
+    with ThreadPoolExecutor(3) as executor:
+        quadros = [(t, a) for t, a in executor.map(um, itens) if a is not None]
     colunas, w, h = 4, 640, 360
     folha = Image.new("RGB", (colunas * (w + 10) + 10, ((len(quadros) + colunas - 1) // colunas) * (h + 40) + 10), (20, 20, 24))
     desenho = ImageDraw.Draw(folha)
