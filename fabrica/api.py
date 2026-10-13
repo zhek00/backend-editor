@@ -5,6 +5,7 @@ regerar imagens de IA, buscar material de acervo, fazer upload manual e refazer 
 """
 
 import asyncio
+import contextlib
 import json
 import mimetypes
 import os
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import tempos
 from . import texto as tx
 from . import youtube_publicar as ytpub
 from .config import RAIZ, carregar_perfil, config_geral
@@ -246,6 +248,18 @@ def _etapa(task_id: str, rotulo: str, funcao):
     apagado pelo × do editor e o teto de gasto (pago.py, que espera a confirmação sem derrubar a etapa)."""
     with TAREFAS_LOCK:
         nome = (TAREFAS.get(task_id) or {}).get("projeto")
+    # quanto a fase levou, com as novas tentativas, vai para o tempos.json (pedido do usuário em 2026-10-13: medir
+    # antes de acelerar)
+    with tempos.medir(PROJETOS / nome, rotulo, log=lambda m: _log_tarefa(task_id, m)) if nome else _sem_medida():
+        return _etapa_tentando(task_id, nome, rotulo, funcao)
+
+
+@contextlib.contextmanager
+def _sem_medida():
+    yield
+
+
+def _etapa_tentando(task_id: str, nome, rotulo: str, funcao):
     tentativa = 0
     while True:
         try:
@@ -313,6 +327,20 @@ def _executar_criacao(nome: str, task_id: str) -> None:
             CRIACOES_ATIVAS.discard(nome)
 
 
+def _esperar_o_agente(task_id: str, p, cenas_prontas) -> None:
+    # enquanto espera, a barra anda com os lotes que o agente já decidiu (de 15% a 35%): antes ela ficava parada
+    # nos 15% e a criação parecia travada
+    while True:
+        try:
+            cenas_prontas.result(timeout=5)  # o agente já tentou de novo sozinho; um erro que sobrou aparece aqui
+            return
+        except EsperaEsgotada:
+            andamento = roteirista.PROGRESSO.get(p.nome) or {}
+            if andamento.get("total"):
+                feitos, total = andamento["feitos"], andamento["total"]
+                _atualizar(task_id, progresso_pct=15 + int(20 * feitos / total),
+                           mensagem=f"Narração pronta! O agente já decidiu {feitos} de {total} lotes de cenas...")
+
 def _esteira(nome: str, task_id: str) -> None:
     p = Projeto(nome)
     log_w = lambda msg: _log_tarefa(task_id, msg)
@@ -369,18 +397,9 @@ def _esteira(nome: str, task_id: str) -> None:
         marcar("narracao")
     if cenas_prontas is not None:
         _atualizar(task_id, mensagem="Narração pronta! Esperando o agente terminar o JSON das cenas...")
-        # enquanto espera, a barra anda com os lotes que o agente já decidiu (de 15% a 35%): antes ela ficava parada
-        # nos 15% e a criação parecia travada
-        while True:
-            try:
-                cenas_prontas.result(timeout=5)  # o agente já tentou de novo sozinho; um erro que sobrou aparece aqui
-                break
-            except EsperaEsgotada:
-                andamento = roteirista.PROGRESSO.get(p.nome) or {}
-                if andamento.get("total"):
-                    feitos, total = andamento["feitos"], andamento["total"]
-                    _atualizar(task_id, progresso_pct=15 + int(20 * feitos / total),
-                               mensagem=f"Narração pronta! O agente já decidiu {feitos} de {total} lotes de cenas...")
+        # a narração já acabou: o que passar daqui é o agente de roteiro atrasando a criação
+        with tempos.medir(p, "Esperando o JSON de cenas", log=log_w):
+            _esperar_o_agente(task_id, p, cenas_prontas)
 
     # PASSO 2: Direção de Arte e Divisão de Cenas
     if "cenas" not in feitas:
@@ -394,13 +413,15 @@ def _esteira(nome: str, task_id: str) -> None:
     if motion_ia.pausado(p) and motion_ia.tudo_pedido(p) and animation_ai.ligado(p):
         _atualizar(task_id, etapa="motion", progresso_pct=40, mensagem="Criando as cenas animadas de todas as cenas...")
         try:
-            animation_ai.video_todo(p, log=log_w)
+            with tempos.medir(p, "Cenas animadas (vídeo todo)", log=log_w):
+                animation_ai.video_todo(p, log=log_w)
         except (Exception, SystemExit) as erro_anim:
             log_w(f"  as cenas animadas falharam, as que faltam seguem com foto: {erro_anim}")
     if motion_ia.tudo_em_motion(p):
         _atualizar(task_id, etapa="motion", progresso_pct=40, mensagem="Criando os clipes de motion de todas as cenas...")
         try:
-            motion_ia.todas_as_cenas(p, log=log_w)
+            with tempos.medir(p, "Motion (vídeo todo)", log=log_w):
+                motion_ia.todas_as_cenas(p, log=log_w)
         except (Exception, SystemExit) as erro_motion:
             log_w(f"  o motion de todas as cenas falhou, as que faltam seguem com foto: {erro_motion}")
 
@@ -475,7 +496,8 @@ def _esteira(nome: str, task_id: str) -> None:
     # o que o Completar cenas pôs depois da conferência (a rodada que aceita o que a busca achou) passa pelo Jev
     # agora: a errada busca de novo e, com a IA ligada, vira imagem de IA. Nunca para o vídeo
     try:
-        corrigir.conferir_completadas(p, log=log_w)
+        with tempos.medir(p, "Conferência das completadas", log=log_w):
+            corrigir.conferir_completadas(p, log=log_w)
     except ParadaPrecisaDeVoce:
         raise
     except (Exception, SystemExit) as erro_comp:
@@ -498,7 +520,8 @@ def _esteira(nome: str, task_id: str) -> None:
     if motion_ia.ligado(p):
         _atualizar(task_id, etapa="motion", progresso_pct=96, mensagem="Procurando onde o motion ajuda o roteiro...")
         try:
-            motion_ia.nas_uteis(p, log=log_w)
+            with tempos.medir(p, "Motion nas cenas com dado", log=log_w):
+                motion_ia.nas_uteis(p, log=log_w)
         except (Exception, SystemExit) as erro_motion:
             log_w(f"  o motion das cenas com dado falhou, elas seguem com a foto: {erro_motion}")
     # PASSO 6c: onde a fala tem lista, datas, número ou comparação, a cena animada de modelo pronto entra no lugar da
@@ -507,7 +530,8 @@ def _esteira(nome: str, task_id: str) -> None:
     if animation_ai.ligado(p):
         _atualizar(task_id, etapa="motion", progresso_pct=96, mensagem="Procurando onde uma cena animada ajuda o roteiro...")
         try:
-            animation_ai.nas_uteis(p, log=log_w)
+            with tempos.medir(p, "Cenas animadas (animation-ai)", log=log_w):
+                animation_ai.nas_uteis(p, log=log_w)
         except (Exception, SystemExit) as erro_anim:
             log_w(f"  as cenas animadas falharam, elas seguem com a foto: {erro_anim}")
 
@@ -517,7 +541,8 @@ def _esteira(nome: str, task_id: str) -> None:
         _atualizar(task_id, etapa="animacoes", progresso_pct=97,
                    mensagem="Animando os diagramas, textos na tela e mapas no tempo da narração...")
         try:
-            resumo_anim = animacoes.gerar(p, log=log_w, trava=trava_do_projeto(nome))
+            with tempos.medir(p, "Animações (diagramas, textos, mapas)", log=log_w):
+                resumo_anim = animacoes.gerar(p, log=log_w, trava=trava_do_projeto(nome))
             _atualizar(task_id, animacoes={"feitas": resumo_anim["feitas"], "prontas": resumo_anim["prontas"],
                                            "ficaram_com_foto": sorted(resumo_anim["falharam"])})
         except (Exception, SystemExit) as erro_anim:
@@ -528,14 +553,21 @@ def _esteira(nome: str, task_id: str) -> None:
     if trilha.ligada(p):
         _atualizar(task_id, etapa="trilha", progresso_pct=98, mensagem="Compondo a trilha sonora do vídeo...")
         try:
-            trilha.gerar(p, log=log_w)
+            with tempos.medir(p, "Trilha", log=log_w):
+                trilha.gerar(p, log=log_w)
         except (Exception, SystemExit) as erro_trilha:
             log_w(f"  a trilha não saiu agora, o render tenta de novo: {erro_trilha}")
 
     try:
-        _atualizar(task_id, qualidade=qualidade.registrar(p, "criação", log_w))
+        with tempos.medir(p, "Nota de qualidade", log=log_w):
+            _atualizar(task_id, qualidade=qualidade.registrar(p, "criação", log_w))
     except (Exception, SystemExit) as erro_q:
         log_w(f"  a nota de qualidade não saiu: {erro_q}")
+    with TAREFAS_LOCK:
+        comeco = str((TAREFAS.get(task_id) or {}).get("inicio") or "")[:19]
+    resumo_tempos = tempos.texto_do_resumo(p, desde=comeco or None)
+    if resumo_tempos:
+        log_w(f"  {resumo_tempos}")
     _atualizar(task_id, status="concluido", etapa="concluido", passo_atual=5, total_passos=5, progresso_pct=100,
                mensagem="Cenas prontas com sucesso! Tudo pronto para renderizar.", pronto_para_edicao=True,
                concluido=True, aguardando_ate=None)

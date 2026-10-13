@@ -43,7 +43,7 @@ def _espera(erro, tentativa):
     return float(achado.group(1)) + 1 if achado else min(60, 5 * 2 ** tentativa)
 
 
-def _registrar(projeto, etapa, modelo, uso):
+def _registrar(projeto, etapa, modelo, uso, segundos=None):
     if uso is None:
         return {}
     linha = {
@@ -54,6 +54,8 @@ def _registrar(projeto, etapa, modelo, uso):
         "tokens_escritos": getattr(uso, "candidates_token_count", 0) or 0,
         "tokens_pensamento": getattr(uso, "thoughts_token_count", 0) or 0,
     }
+    if segundos is not None:
+        linha["segundos"] = round(segundos, 1)  # o que a fábrica esperou, com as novas tentativas
     with _trava:
         arquivo = projeto.caminho("uso_gemini.json")
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
@@ -114,6 +116,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     tokens contra 1.692. max_tokens: o teto da resposta no lugar de gemini.max_tokens."""
     from google.genai import errors, types
 
+    relogio = time.monotonic()
     cfg = projeto.config.get("gemini") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     partes = _partes(types, pedido, imagens)
@@ -184,7 +187,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             time.sleep(3)
             continue
 
-        _registrar(projeto, etapa, modelo, resposta.usage_metadata)
+        _registrar(projeto, etapa, modelo, resposta.usage_metadata, time.monotonic() - relogio)
         try:
             return json.loads(resposta.text)
         except (TypeError, json.JSONDecodeError):

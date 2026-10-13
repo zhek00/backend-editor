@@ -67,6 +67,17 @@ def arquivo_final(projeto, vertical=False):
 
 
 def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
+    from . import tempos
+
+    # o render inteiro e as partes dele vão para o tempos.json (pedido do usuário em 2026-10-13: medir antes de
+    # acelerar)
+    with tempos.medir(projeto, "Render em pé (total)" if vertical else "Render (total)", log=log):
+        return _renderizar(projeto, log, sem_avatar, vertical)
+
+
+def _renderizar(projeto, log, sem_avatar, vertical):
+    from . import tempos
+
     cfg = configuracao(projeto, vertical)
     # a versão em pé tem pastas próprias: a limpeza dos clipes velhos de uma nunca apaga os da outra
     base = "render_vertical" if vertical else "render"
@@ -187,7 +198,7 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     pendentes = [t for t in tarefas if not t["destino"].exists()]
     processos = cfg.get("processos") or max(1, (os.cpu_count() or 4) // 2)
     log(f"  {len(pendentes)} clipes para renderizar, {len(tarefas) - len(pendentes)} já prontos")
-    with ThreadPoolExecutor(processos) as executor:
+    with tempos.medir(projeto, "Render: clipes", clipes=len(pendentes), processos=processos),             ThreadPoolExecutor(processos) as executor:
         futuros = {executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg): t for t in pendentes}
         for i, futuro in enumerate(as_completed(futuros), 1):
             try:
@@ -204,6 +215,14 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
             if i % 10 == 0 or i == len(futuros):
                 log(f"  clipes {i}/{len(futuros)}")
 
+    medida = tempos.medir(projeto, "Render: juntar e mixar")
+    with medida:
+        return _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
+                       musica_abertura, faixa_abertura, legenda, cfg)
+
+
+def _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
+            musica_abertura, faixa_abertura, legenda, cfg):
     arquivo_lista = projeto.caminho(base, "clipes.txt")
     arquivo_lista.write_text("".join(f"file '{t['destino']}'\n" for t in tarefas), encoding="utf-8")
     video = projeto.caminho(base, "video.mp4")

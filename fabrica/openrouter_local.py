@@ -82,11 +82,13 @@ def _chave():
     raise SystemExit("Falta a chave do OpenRouter no arquivo .env (OPENROUTER_API_KEY).")
 
 
-def _registrar(projeto, etapa, uso, modelo_usado):
+def _registrar(projeto, etapa, uso, modelo_usado, segundos=None):
     uso = uso or {}
     linha = {"quando": datetime.now().isoformat(timespec="seconds"), "etapa": etapa, "modelo": modelo_usado,
              "tokens_lidos": uso.get("prompt_tokens", 0), "tokens_escritos": uso.get("completion_tokens", 0),
              "custo_usd": uso.get("cost", 0) or 0}
+    if segundos is not None:
+        linha["segundos"] = round(segundos, 1)  # o que a fábrica esperou, com as novas tentativas (tempos.py)
     with _trava:
         arquivo = projeto.caminho("uso_openrouter.json")
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
@@ -438,7 +440,8 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
             ultimo_erro, erros = str(dados["error"])[:200], erros + 1
             time.sleep(min(30, 3 * 2 ** erros))
             continue
-        _registrar(projeto, etapa, dados.get("usage"), ("aimlapi:" if provedor == "aimlapi" else "") + str(dados.get("model") or modelo))
+        _registrar(projeto, etapa, dados.get("usage"), ("aimlapi:" if provedor == "aimlapi" else "") + str(dados.get("model") or modelo),
+                   time.time() - inicio)
         escolha = (dados.get("choices") or [{}])[0]
         if escolha.get("finish_reason") == "length" or not (escolha.get("message") or {}).get("content"):
             # o modelo gastou tudo pensando e não chegou a responder: tenta de novo UMA vez, já com o teto. Antes

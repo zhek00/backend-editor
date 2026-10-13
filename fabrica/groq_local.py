@@ -74,11 +74,13 @@ def _espera(resposta, tentativa):
     return min(60, 5 * 2 ** tentativa)
 
 
-def _registrar(projeto, etapa, modelo, uso):
+def _registrar(projeto, etapa, modelo, uso, segundos=None):
     """Cada chamada fica em uso_groq.json, para dar para ver quanto da cota diária o projeto gastou."""
     uso = uso or {}
     linha = {"quando": datetime.now().isoformat(timespec="seconds"), "etapa": etapa, "modelo": modelo,
              "tokens_lidos": uso.get("prompt_tokens", 0), "tokens_escritos": uso.get("completion_tokens", 0)}
+    if segundos is not None:
+        linha["segundos"] = round(segundos, 1)  # o que a fábrica esperou, com as novas tentativas
     with _trava:
         arquivo = projeto.caminho("uso_groq.json")
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
@@ -246,7 +248,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
         if r.status_code != 200:
             raise RuntimeError(f"O Groq falhou na etapa {etapa}. {r.status_code} {r.text[:300]}")
 
-        _registrar(projeto, etapa, modelo, r.json().get("usage"))
+        _registrar(projeto, etapa, modelo, r.json().get("usage"), time.time() - inicio)
         try:
             conteudo = r.json()["choices"][0]["message"]["content"]
             return json.loads(conteudo)

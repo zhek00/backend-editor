@@ -965,6 +965,14 @@ TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`
 - **Etapa da esteira nunca desiste** (`api._etapa`): 6 tentativas rápidas (5 a 60 s) e depois de 5 em 5 min
   (`ESPERA_LONGA`), sem limite. Antes, uma queda de uns 2 min de um serviço derrubava a criação. Só param o erro que
   esperar não resolve (`_ERRO_PERMANENTE`: chave, crédito) e o projeto apagado pelo × do editor.
+- **Quanto cada etapa leva** (`tempos.py`, pedido do usuário em 2026-10-13: medir antes de acelerar a criação). Cada
+  fase da esteira (`api._etapa`, com as novas tentativas, e as que rodam fora dele: motion, animation-ai, animações,
+  trilha, a espera pelo JSON de cenas do agente) e o render (total, clipes, juntar e mixar) gravam uma linha em
+  `projetos/NOME/tempos.json`; no fim da criação o registro diz "Tempo por etapa: ...", da mais demorada para a
+  menos. Cada chamada de modelo guarda os `segundos` que a fábrica esperou por ela, com as novas tentativas, no
+  `uso_*.json` (a do Claude Code vem do `duration_ms` dele). Não use a data dos arquivos para medir: ela mistura
+  produção com edição, regravação e a fábrica desligada (a "noite inteira" do nunca-deve-ter-dentro-de-casa-parte-2
+  foi a fábrica desligada).
 
 **Modelo de texto pago só com a confirmação da pessoa, e só depois de TODOS os gratuitos** (`fabrica/pago.py`,
 `openrouter.confirmar_pago`, pedido do usuário em 2026-10-06: o saldo do OpenRouter caiu de US$ 6,10 para US$ 1,97 em

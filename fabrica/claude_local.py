@@ -89,6 +89,8 @@ def _registrar(projeto, etapa, dados):
         "tokens_escritos": uso.get("output_tokens") or 0,
         "equivalente_api_usd": dados.get("total_cost_usd") or 0,
     }
+    if dados.get("duration_ms"):
+        linha["segundos"] = round(dados["duration_ms"] / 1000, 1)  # medido pelo próprio Claude Code
     with _trava:
         arquivo = projeto.caminho("uso_claude.json")
         historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []

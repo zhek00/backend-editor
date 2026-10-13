@@ -51,11 +51,13 @@ def _ler_historico(arquivo) -> list:
     return []
 
 
-def _registrar(projeto, etapa, uso, modelo):
+def _registrar(projeto, etapa, uso, modelo, segundos=None):
     uso = uso or {}
     linha = {"quando": datetime.now().isoformat(timespec="seconds"), "etapa": etapa, "modelo": modelo,
              "tokens_lidos": uso.get("input_tokens", 0), "tokens_escritos": uso.get("output_tokens", 0),
              "custo_usd": uso.get("cost", 0) or 0}
+    if segundos is not None:
+        linha["segundos"] = round(segundos, 1)  # o que a fábrica esperou, com as novas tentativas
     with _trava:
         arquivo = projeto.caminho("uso_jev.json")
         historico = _ler_historico(arquivo) + [linha]
@@ -120,6 +122,7 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
     processo, sem mexer no servidor que está no ar), quem julga é o modelo principal, que hoje é gratuito."""
     from . import cliente
 
+    relogio = time.monotonic()
     cfg = projeto.config.get("jev") or {}
     if cliente.atende(projeto, etapa) or \
             (os.environ.get("FABRICA_JULGAR_COM") or cfg.get("julgar_com") or "jev").strip().lower() == "principal":
@@ -150,7 +153,7 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
             ultimo_erro = f"o Jev recusou o pedido ({r.status_code} {r.text[:120]})"
             break
         dados = r.json()
-        _registrar(projeto, etapa, dados.get("usage"), dados.get("model", modelo))
+        _registrar(projeto, etapa, dados.get("usage"), dados.get("model", modelo), time.monotonic() - relogio)
         respostas = dados.get("answers")
         if not respostas:
             ultimo_erro = "o Jev respondeu sem answers"
