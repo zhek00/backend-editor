@@ -647,7 +647,9 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
                 estilo += f",MarginR={round((largura_tela - pip['x'] + 16) / largura_tela * 384)}"
         # no filtro do FFmpeg a barra invertida e os dois-pontos do Windows (E:\pasta) precisam ser trocados e escapados
         arquivo_legenda = str(legenda).replace("\\", "/").replace(":", "\\:")
-        pasta_fontes = next((f for f in ("/System/Library/Fonts/Supplemental", "C:/Windows/Fonts") if Path(f).is_dir()), None)
+        # Mac, Windows ou Linux (a VPS, com fonts-liberation e fonts-dejavu: PLANO-VPS.md)
+        pasta_fontes = next((f for f in ("/System/Library/Fonts/Supplemental", "C:/Windows/Fonts", "/usr/share/fonts")
+                             if Path(f).is_dir()), None)
         fontes = f":fontsdir='{pasta_fontes.replace(':', chr(92) + ':')}'" if pasta_fontes else ""
         partes.append(
             f"[{atual}]subtitles=filename='{arquivo_legenda}'{fontes}:force_style='{estilo}'[com_legenda]"

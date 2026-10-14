@@ -1164,6 +1164,91 @@ def cmd_servidor(a):
     uvicorn.run(app, host=a.host, port=a.porta, proxy_headers=True, forwarded_allow_ips="*")
 
 
+def cmd_trabalhador(a):
+    from . import producao
+
+    trabalhador = producao.Trabalhador(vagas=a.vagas, renders=a.renders, nome=a.nome or None, log=log)
+    try:
+        trabalhador.rodar()
+    except KeyboardInterrupt:
+        trabalhador.parar()
+
+
+def cmd_fila(a):
+    from . import fila
+    from .banco import banco
+
+    log("Fila de produção: " + (", ".join(f"{k} {v}" for k, v in sorted(fila.resumo().items())) or "vazia"))
+    for v in banco().todos("SELECT id, projeto, estado, etapa, progresso, mensagem, criado_em FROM videos "
+                           "ORDER BY criado_em DESC LIMIT %s", (a.ultimos,)):
+        log(f"  {v['criado_em']}  {v['id'][:8]}  {v['estado']:10s} {v['progresso'] or 0:3d}%  {v['projeto']}  "
+            f"{(v['mensagem'] or '')[:70]}")
+
+
+def cmd_enfileirar(a):
+    from . import fila
+
+    roteiro = Path(a.roteiro).read_text(encoding="utf-8")
+    v = fila.enfileirar(roteiro, cliente_id=a.cliente or None, titulo=a.titulo or Path(a.roteiro).stem)
+    log(f"Na fila: {v['projeto']} ({v['id']}), posição {fila.posicao_na_fila(v['id'])}")
+
+
+def cmd_cliente_criar(a):
+    from . import fila
+
+    cid, chave = fila.criar_cliente(a.nome, a.limite)
+    log(f"Cliente {a.nome}: id {cid}")
+    log(f"Chave da API (guarde agora, ela não aparece de novo): {chave}")
+
+
+def cmd_relatorio(a):
+    """Quantos terminaram sozinhos, em quanto tempo, por quanto, e o que mais falhou (o piloto do PLANO-VPS.md)."""
+    from collections import Counter
+    from datetime import datetime, timedelta, timezone
+
+    from .banco import agora, banco
+
+    linhas = banco().todos("SELECT estado, tentativas, iniciado_em, concluido_em, custo_usd, duracao_s, erro, mensagem "
+                           "FROM videos WHERE criado_em >= %s", (agora(-timedelta(days=a.dias)),))
+    if not linhas:
+        log(f"Nenhum vídeo nos últimos {a.dias:g} dia(s).")
+        return
+    por_estado = Counter(l["estado"] for l in linhas)
+    terminados = [l for l in linhas if l["estado"] in ("pronto", "erro", "cancelado", "expirado")]
+    prontos = [l for l in linhas if l["estado"] in ("pronto", "expirado") and l["concluido_em"] and l["iniciado_em"]]
+    ler = lambda s: datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)  # noqa: E731
+    horas = [(ler(l["concluido_em"]) - ler(l["iniciado_em"])).total_seconds() / 3600 for l in prontos]
+    custos = [l["custo_usd"] for l in prontos if l["custo_usd"] is not None]
+    minutos = [l["duracao_s"] / 60 for l in prontos if l["duracao_s"]]
+    log(f"Últimos {a.dias:g} dia(s): {len(linhas)} pedidos | " + ", ".join(f"{k} {v}" for k, v in por_estado.most_common()))
+    if terminados:
+        log(f"  terminaram sozinhos: {len(prontos)}/{len(terminados)} ({100 * len(prontos) / len(terminados):.0f}%), "
+            f"{sum(1 for l in prontos if (l['tentativas'] or 0) > 0)} precisaram de mais de uma tentativa")
+    if horas:
+        horas.sort()
+        fmt = lambda h: f"{h:.1f} h" if h >= 1 else f"{h * 60:.0f} min"  # noqa: E731
+        log(f"  tempo de produção: média {fmt(sum(horas) / len(horas))}, mediana {fmt(horas[len(horas) // 2])}, "
+            f"pior {fmt(horas[-1])}")
+    if custos:
+        log(f"  custo: média US$ {sum(custos) / len(custos):.2f}/vídeo, total US$ {sum(custos):.2f}"
+            + (f", US$ {sum(custos) / sum(minutos):.3f} por minuto de vídeo" if minutos else ""))
+    erros = Counter((l["erro"] or "").splitlines()[0][:90] for l in linhas if l["estado"] == "erro")
+    for texto, n in erros.most_common(5):
+        log(f"  erro ({n}x): {texto}")
+    esperando = [l for l in linhas if l["estado"] == "na_fila" and (l["mensagem"] or "").startswith("esperando")]
+    if esperando:
+        log(f"  {len(esperando)} esperando um serviço voltar (crédito, chave, limite)")
+
+
+def cmd_limpar_expirados(a):
+    from . import fila, limpeza_vps
+
+    devolvidos = fila.devolver_abandonados()
+    if devolvidos:
+        log(f"  {len(devolvidos)} vídeo(s) de trabalhador parado voltaram à fila")
+    log(f"  {len(limpeza_vps.expirados(log))} vídeo(s) expirados apagados")
+
+
 def main():
     # no Windows, com a saída indo para um arquivo (o backend escondido grava em fabrica.log), o Python usa a
     # codificação antiga do sistema: um aviso com um pedaço em chinês que o modelo devolveu derrubava a esteira
@@ -1255,6 +1340,37 @@ def main():
     s.add_argument("nome")
     s.add_argument("--escolher", type=int, help="usa a opção N como a thumbnail do vídeo")
     s.set_defaults(funcao=cmd_thumbs)
+
+    # produção em massa (PLANO-VPS.md): fila no banco, trabalhadores, limpeza em 3 dias
+    s = sub.add_parser("trabalhador", help="pega vídeos da fila e produz do roteiro ao vídeo entregue, sem parar")
+    s.add_argument("--vagas", type=int, default=int(os.environ.get("FABRICA_VAGAS", "4")),
+                   help="vídeos ao mesmo tempo nesta máquina (padrão 4, ou FABRICA_VAGAS)")
+    s.add_argument("--renders", type=int, default=int(os.environ.get("FABRICA_RENDERS", "1")),
+                   help="renders ao mesmo tempo (o render usa todos os núcleos; padrão 1, ou FABRICA_RENDERS)")
+    s.add_argument("--nome", default=os.environ.get("FABRICA_TRABALHADOR", ""), help="nome desta máquina na fila")
+    s.set_defaults(funcao=cmd_trabalhador)
+
+    s = sub.add_parser("fila", help="quantos vídeos em cada estado e os últimos pedidos")
+    s.add_argument("--ultimos", type=int, default=15)
+    s.set_defaults(funcao=cmd_fila)
+
+    s = sub.add_parser("enfileirar", help="põe um roteiro na fila de produção (o piloto e os testes)")
+    s.add_argument("roteiro", help="arquivo .txt com o roteiro")
+    s.add_argument("--titulo", default="")
+    s.add_argument("--cliente", default="", help="id do cliente (fabrica cliente-criar)")
+    s.set_defaults(funcao=cmd_enfileirar)
+
+    s = sub.add_parser("cliente-criar", help="cria um cliente da API /v1 e mostra a chave dele (uma vez só)")
+    s.add_argument("nome")
+    s.add_argument("--limite", type=int, default=None, help="vídeos por dia (vazio: sem limite)")
+    s.set_defaults(funcao=cmd_cliente_criar)
+
+    s = sub.add_parser("relatorio", help="o piloto e a operação: sucesso, tempo, custo e erros dos últimos dias")
+    s.add_argument("--dias", type=float, default=1.0)
+    s.set_defaults(funcao=cmd_relatorio)
+
+    s = sub.add_parser("limpar-expirados", help="apaga o que passou dos 3 dias (pasta, vídeo no R2, eventos)")
+    s.set_defaults(funcao=cmd_limpar_expirados)
 
     s = sub.add_parser("shorts", help="corta até 3 shorts do vídeo pronto, com título e legenda palavra por palavra (grátis)")
     s.add_argument("nome")

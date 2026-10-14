@@ -1,0 +1,24 @@
+# Uma máquina a mais produzindo (PLANO-VPS.md): só o trabalhador, pegando vídeos da fila do servidor principal.
+# Nesta máquina, na pasta deploy/, com o mesmo .env do principal mais POSTGRES_HOST (o IP privado do principal):
+#   docker compose -f docker-compose.trabalhador.yml up -d --build
+# Some máquinas até a fila não acumular; cada uma roda FABRICA_VAGAS vídeos ao mesmo tempo.
+name: fabrica-trabalhador
+
+services:
+  trabalhador:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: fabrica:latest
+    restart: unless-stopped
+    env_file: .env
+    command: ["fabrica", "trabalhador"]
+    environment:
+      FABRICA_BANCO: postgresql://fabrica:${POSTGRES_SENHA}@${POSTGRES_HOST}:5432/fabrica
+      FABRICA_MODO: fila
+      FABRICA_VAGAS: ${FABRICA_VAGAS:-5}
+      FABRICA_RENDERS: ${FABRICA_RENDERS:-1}
+      FABRICA_CHROMES: ${FABRICA_CHROMES:-4}
+    volumes:
+      - ./dados/projetos:/app/projetos
+    stop_grace_period: 30s

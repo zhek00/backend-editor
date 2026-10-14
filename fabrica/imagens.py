@@ -864,7 +864,9 @@ def _imagem_kie(prompt, img):
 def _fonte(tamanho):
     from PIL import ImageFont
 
-    for caminho in ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc"):
+    for caminho in ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc",
+                    "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         try:
             return ImageFont.truetype(caminho, tamanho)
         except OSError:

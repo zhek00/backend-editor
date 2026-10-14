@@ -1,0 +1,12 @@
+# HTTPS automático (Let's Encrypt) para a API /v1 e o MCP. Os domínios vêm do .env (API_DOMINIO, MCP_DOMINIO), com
+# o DNS de cada um apontando para o IP do servidor principal.
+{$API_DOMINIO} {
+	encode gzip
+	reverse_proxy api:8080
+}
+
+{$MCP_DOMINIO} {
+	reverse_proxy mcp:8092 {
+		flush_interval -1
+	}
+}

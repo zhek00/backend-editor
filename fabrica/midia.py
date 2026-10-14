@@ -2051,7 +2051,9 @@ def _escolher_pela_api(pendentes, blocos, folhas, instrucoes, cfg):
 def _fonte(tamanho):
     from PIL import ImageFont
 
-    for caminho in ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/System/Library/Fonts/Helvetica.ttc"):
+    for caminho in ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/System/Library/Fonts/Helvetica.ttc",
+                    "C:/Windows/Fonts/arialbd.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
         try:
             return ImageFont.truetype(caminho, tamanho)
         except OSError:

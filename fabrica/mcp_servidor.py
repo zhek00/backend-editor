@@ -36,6 +36,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.mcpserver import Image, MCPServer
 
+from . import mcp_fila
 from . import cli, cliente, clientes_mcp, custos, pacote
 from .config import RAIZ, carregar_perfil
 from .projeto import PROJETOS, Projeto
@@ -90,6 +91,8 @@ def _dono(nome: str) -> str:
 
 def _e_meu(nome: str) -> bool:
     """O projeto é de quem chama? Um cliente nunca vê, responde nem baixa o projeto de outro."""
+    if mcp_fila.ativo():
+        return mcp_fila.e_meu(nome, _cliente())
     return not _URL_PUBLICA or (bool(nome) and _dono(nome) == _cliente())
 
 
@@ -195,6 +198,16 @@ def criar_video(roteiro: str, nome: str = "", confirmar: bool = True, voz_do_com
     nome, voz, voz_do_computador, imagens_de_ia e confirmar=false (só a estimativa) são para os testes de quem vende,
     na própria máquina; pela internet eles são ignorados."""
     roteiro = roteiro or ""
+    if mcp_fila.ativo():
+        # produção em massa: só põe na fila; quem produz são os trabalhadores (PLANO-VPS.md)
+        if _URL_PUBLICA:
+            motivo = clientes_mcp.pode_comecar(_cliente())
+            if motivo:
+                return f"Não posso começar: {motivo}"
+        resposta = mcp_fila.criar(roteiro, _cliente(), _nome_automatico)
+        if resposta.startswith("Vídeo começou") and _URL_PUBLICA:
+            clientes_mcp.registrar_producao(_cliente(), resposta.split("NOME: ")[1].split(" ")[0])
+        return resposta
     perfil, voz_da_fabrica = _escolhas_da_fabrica()
     if _URL_PUBLICA:
         nome, voz, voz_do_computador, imagens_de_ia, confirmar = "", "", False, True, True
@@ -318,6 +331,8 @@ def _produzir(nome):
 
 def retomar_producoes(log=print) -> list:
     """Os vídeos do MCP que estavam sendo feitos quando o MCP parou voltam a andar sozinhos."""
+    if mcp_fila.ativo():
+        return []  # na produção em massa quem retoma são os trabalhadores (fila.devolver_abandonados)
     retomados = []
     for arquivo in sorted(PROJETOS.glob(f"*/{ARQUIVO_DO_ESTADO}")):
         nome = arquivo.parent.name
@@ -374,6 +389,8 @@ def andamento(nome: str) -> str:
 
 def _estado_curto(nome: str) -> str:
     """Uma linha: pronto, erro, cancelado, as tarefas esperando por grupo, ou a fábrica trabalhando."""
+    if mcp_fila.ativo():
+        return mcp_fila.estado_curto(nome)
     with _TRAVA:
         prod = dict(_PRODUCOES.get(nome) or {})
     if not prod:
@@ -392,6 +409,8 @@ def _estado_curto(nome: str) -> str:
 
 def _tempo_de_producao(nome: str) -> str:
     """Quanto tempo o vídeo já leva sendo produzido, do começo da produção até agora (ou até o fim)."""
+    if mcp_fila.ativo():
+        return mcp_fila.tempo(nome)
     with _TRAVA:
         prod = dict(_PRODUCOES.get(nome) or {})
     if not prod.get("inicio"):
@@ -514,6 +533,8 @@ def entregar_video(nome: str, pasta_do_cliente: str = "") -> str:
     material pago, para editar depois). Baixe os dois para a pasta do usuário. Os links valem 7 dias."""
     if not _e_meu(nome):
         return NAO_ACHEI
+    if mcp_fila.ativo():
+        return mcp_fila.entregar(nome, _URL_PUBLICA)
     destino = pacote.ENTREGAS / nome
     local = not _URL_PUBLICA and pasta_do_cliente
     if (PROJETOS / nome).exists():
@@ -550,6 +571,8 @@ def cancelar(nome: str) -> str:
     """Para a produção do projeto (as tarefas esperando resposta são soltas)."""
     if not _e_meu(nome):
         return NAO_ACHEI
+    if mcp_fila.ativo():
+        return mcp_fila.cancelar(nome)
     soltas = cliente.cancelar(nome)
     _gravar_estado(nome, estado="cancelado")
     return f"Cancelado: {soltas} tarefa(s) soltas. O que já foi feito fica salvo."
@@ -678,6 +701,8 @@ def _video_pronto(nome: str):
 
 def progresso(nome: str) -> dict:
     """O andamento em linguagem de produção: a etapa, quantas são, a porcentagem e uma frase."""
+    if mcp_fila.ativo():
+        return mcp_fila.progresso(nome, len(ETAPAS))
     with _TRAVA:
         prod = dict(_PRODUCOES.get(nome) or {})
         linhas = list(prod.get("log") or [])

@@ -28,3 +28,9 @@ vigia.pid
 
 # consumo no OpenRouter: registro central e a planilha viva (fabrica/consumo.py)
 relatorios/
+
+# produção em massa (PLANO-VPS.md): o banco SQLite do desenvolvimento e as entregas locais
+fabrica.db*
+entregas_vps/
+deploy/.env
+deploy/dados/

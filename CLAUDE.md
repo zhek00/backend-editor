@@ -910,6 +910,47 @@ a limpeza dos clipes velhos de uma versão nunca apaga os da outra, e **o vídeo
 
 O que o agente decide segue adiante: `mostrar` (a descrição) vai para a escolha do acervo, para o Jev e para a busca nova das reprovadas; `overlay` vira o texto da animação em camada; as armadilhas corrigem por código a busca que for só o nome ambíguo. Tipos de animação (`texto_tela`, `linha_do_tempo`, `mapa`, `diagrama`) ficam guardados em `visual` e viram animação (seção Animações, acima). As regras fixas acima continuam valendo depois dele.
 
+## Produção em massa na VPS (PLANO-VPS.md, desde 2026-10-14)
+
+Pedido do usuário: o frontend sai de cena; a pessoa só manda o roteiro e a fábrica constrói e renderiza sozinha, 200 a
+500 vídeos por dia, numa VPS com banco de dados, apagando vídeo e arquivos em no máximo 3 dias. Liga com
+`FABRICA_MODO=fila` (os comandos de sempre continuam iguais sem ela). O plano, as fases, o dimensionamento e o passo a
+passo de subir estão no PLANO-VPS.md.
+
+- **Banco** (`banco.py`): PostgreSQL na VPS (`FABRICA_BANCO`), SQLite no desenvolvimento e nos testes, o mesmo SQL
+  (`%s`, datas em texto ISO UTC). Tabelas `clientes` (só o hash da chave), `videos` (a fila: estado, etapa,
+  andamento, roteiro, custo, prazo) e `eventos`.
+- **Fila** (`fila.py`): `enfileirar` -> `pegar` (FOR UPDATE SKIP LOCKED; nunca dois trabalhadores no mesmo vídeo,
+  testado com 10 ao mesmo tempo num PostgreSQL de verdade) -> `concluir`. `esperar` devolve à fila para mais tarde sem
+  contar falha (crédito, chave, limite, serviço fora); `falhar` tenta de novo com espera crescente até 4 vezes
+  (`definitivo` para na hora); o vídeo de trabalhador sem sinal de vida há 10 min volta à fila; terminado (pronto, erro,
+  cancelado) expira em 3 dias.
+- **Trabalhador** (`producao.py`, `fabrica trabalhador --vagas N --renders M`): cria o projeto a partir do roteiro do
+  banco (perfil e voz do `mcp`), roda a esteira do site até o fim (`api.criar_ate_o_fim`, a mesma `_esteira`, com os
+  tempos), espelha o andamento no banco (`api.OUVINTES`), renderiza (um render por vez por máquina), sobe para o
+  armazenamento, conclui e apaga os arquivos de trabalho (`limpeza_vps.depois_da_entrega`: ficam só os JSON pequenos).
+  A cada hora: devolve os abandonados e apaga os expirados (`limpeza_vps.expirados`: pasta, R2, eventos, roteiro).
+  Vários vídeos ao mesmo tempo na mesma máquina: testado com 4 reais (modo offline), cada um com o próprio conteúdo;
+  os caches globais da fábrica são por projeto. Limites por máquina, somando os vídeos: `FABRICA_RENDERS` (render) e
+  `FABRICA_CHROMES` (gravações e conferências do HyperFrames, `animacoes._CHROMES`; padrão, metade dos núcleos).
+- **Sem paradas que esperam gente**: crédito e chave esperam e tentam de novo, com aviso (`alertas.py`,
+  `FABRICA_ALERTA_WEBHOOK`, um por motivo a cada 30 min); assunto sem foto em banco nenhum vira cartão animado com a
+  fala (`_esteira`, só no modo fila); consumo pago acima do teto do vídeo (`pago.GratisEsgotado`) para na hora, sem
+  tentar de novo.
+- **Entrega** (`armazenamento.py`): Cloudflare R2 com `FABRICA_R2_*` (link assinado feito na hora, válido até
+  expirar), pasta `entregas_vps` sem elas.
+- **API `/v1`** (`api_v1.py`): `Authorization: Bearer fab_...` (`fabrica cliente-criar`), POST/GET/DELETE
+  `/v1/videos`, `/v1/videos/{id}/arquivo` (armazenamento local), `/v1/saude`; limite por dia (429). Fora do
+  `FABRICA_TOKEN` do painel.
+- **MCP no modo fila** (`mcp_fila.py`): `criar_video` só enfileira (o mesmo roteiro em andamento devolve o mesmo
+  vídeo); `acompanhar`, `esperar`, `entregar_video` e `cancelar` leem o banco. Cliente do MCP = `mcp:NOME` no banco.
+- **Docker** (`deploy/`): uma imagem (Python 3.12, FFmpeg, Node 22, Chrome sem tela, fontes Liberation, HyperFrames
+  0.8.113 já baixado); `docker-compose.yml` do principal (PostgreSQL, API, MCP, trabalhador, Caddy com HTTPS, backup
+  diário) e `docker-compose.trabalhador.yml` das máquinas extras. No Linux as fontes são as Liberation e DejaVu
+  (`textos.FONTES_LINUX`).
+- **Operação**: `fabrica fila`, `fabrica relatorio --dias 1` (sucesso, tempo, custo, erros), `fabrica enfileirar`
+  (piloto), `fabrica limpar-expirados`.
+
 ## Como o sistema funciona por dentro
 
 Cada projeto vive em `projetos/NOME`. As etapas são estas.

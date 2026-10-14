@@ -115,6 +115,12 @@ app.add_middleware(
 )
 
 
+# a API da produção em massa (/v1): chave por cliente, fora do token do painel (PLANO-VPS.md)
+from .api_v1 import roteador as _roteador_v1  # noqa: E402
+
+app.include_router(_roteador_v1)
+
+
 @app.middleware("http")
 async def exigir_token(request: Request, call_next):
     """Tranca a API com FABRICA_TOKEN, sempre — local ou exposta na internet.
@@ -221,11 +227,26 @@ def _ler_criacao(nome: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# quem mais quer saber do andamento da criação: o trabalhador da produção em massa (producao.py) espelha no banco
+# (fila.atualizar) o que a esteira faz, sem ela saber de banco nenhum. Cada ouvinte recebe (task_id, campos) e
+# (task_id, linha do log); um ouvinte que falha nunca para a criação
+OUVINTES: list = []
+
+
+def _avisar(task_id: str, campos=None, linha=None) -> None:
+    for ouvinte in list(OUVINTES):
+        try:
+            ouvinte(task_id, campos, linha)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _atualizar(task_id: str, **campos) -> None:
     with TAREFAS_LOCK:
         if task_id in TAREFAS:
             TAREFAS[task_id].update(campos)
     _salvar_criacao(task_id)
+    _avisar(task_id, campos=campos)
 
 
 def _log_tarefa(task_id: str, msg) -> None:
@@ -237,6 +258,7 @@ def _log_tarefa(task_id: str, msg) -> None:
             salvar = t.get("tipo") == "criacao" and time.time() - t.get("_salvo_em", 0) > 5
     if salvar:
         _salvar_criacao(task_id)
+    _avisar(task_id, linha=str(msg))
 
 
 def _etapa(task_id: str, rotulo: str, funcao):
@@ -506,6 +528,19 @@ def _esteira(nome: str, task_id: str) -> None:
         # a repetida que não achou foto nova nos bancos vai para a imagem de IA (ia.ativa). Antes a criação parava
         # pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com a IA ligada)
         _etapa(task_id, "Imagens de IA", lambda: imagens.gerar(p, log=log_w))
+    if cenas_sem_arquivo(p) and os.environ.get("FABRICA_MODO", "").strip().lower() == "fila":
+        # produção em massa (PLANO-VPS.md): ninguém vai subir a foto. A cena vira um cartão animado com a própria fala
+        # (animation_ai.plano_de_reserva), de graça e na língua da narração; foto errada continua proibida
+        from . import animation_ai
+        por_n = {c["n"]: c for c in p.ler_json("cenas.json")["cenas"]}
+        pares = [([por_n[n]], animation_ai.plano_de_reserva(por_n[n].get("texto") or ""))
+                 for n in cenas_sem_arquivo(p) if n in por_n and (por_n[n].get("texto") or "").strip()]
+        if pares:
+            log_w(f"  {len(pares)} cena(s) sem foto em nenhum banco viram cartão animado com a fala")
+            try:
+                animation_ai._gravar_grupos(p, pares, log_w, frase_de_reserva=True)
+            except (Exception, SystemExit) as erro_cartao:
+                log_w(f"  o cartão animado das cenas sem foto falhou: {erro_cartao}")
     if cenas_sem_arquivo(p):
         # nada do assunto nos bancos nem em outra cena do mesmo assunto: pôr outra coisa seria gafe, então pede ajuda
         por_n = {c["n"]: c for c in p.ler_json("cenas.json")["cenas"]}
@@ -592,6 +627,26 @@ def iniciar_criacao(nome: str, tarefa: Optional[Dict[str, Any]] = None) -> str:
     _salvar_criacao(task_id)
     threading.Thread(target=_executar_criacao, args=(nome, task_id), name=f"criacao-{nome}", daemon=True).start()
     return task_id
+
+
+def criar_ate_o_fim(nome: str) -> Dict[str, Any]:
+    """A esteira inteira nesta mesma linha, até o fim (o trabalhador da produção em massa, producao.py). Continua de
+    onde parou, como o Retomar. Devolve o estado final da criação (status concluido ou erro, precisa_voce, erro)."""
+    tarefa = _ler_criacao(nome) or {}
+    tarefa = {**tarefa, "logs": tarefa.get("logs", [])}
+    tarefa["tarefa_id"] = f"criar_{nome}_{datetime.now():%Y%m%d_%H%M%S}"
+    tarefa.update(projeto=nome, tipo="criacao", status="processando", concluido=False, pronto_para_edicao=False,
+                  erro=None, precisa_voce=False, mensagem="Começando...")
+    tarefa.setdefault("inicio", datetime.now().isoformat())
+    tarefa.setdefault("progresso_pct", 5)
+    task_id = tarefa["tarefa_id"]
+    with TAREFAS_LOCK:
+        TAREFAS[task_id] = tarefa
+    _salvar_criacao(task_id)
+    _executar_criacao(nome, task_id)
+    with TAREFAS_LOCK:
+        final = dict(TAREFAS.pop(task_id, {}) or {})
+    return final
 
 
 def retomar_criacoes_interrompidas() -> None:
@@ -3247,5 +3302,6 @@ def criar_app(frontend_dir: Optional[str] = None):
             frontend_dir = str(padrao)
     if frontend_dir and Path(frontend_dir).exists():
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
-    retomar_criacoes_interrompidas()
+    if os.environ.get("FABRICA_MODO", "").strip().lower() != "fila":
+        retomar_criacoes_interrompidas()  # na produção em massa quem produz e retoma são os trabalhadores
     return app

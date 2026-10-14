@@ -1,0 +1,93 @@
+# O servidor principal da produção em massa (PLANO-VPS.md): banco, API /v1, MCP, um trabalhador, HTTPS e backup.
+# Na pasta deploy/, com o .env preenchido (copie de .env.vps.exemplo):  docker compose up -d --build
+# Mais máquinas produzindo: docker-compose.trabalhador.yml em cada uma, apontando para este banco.
+name: fabrica
+
+x-fabrica: &fabrica
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: fabrica:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    FABRICA_BANCO: postgresql://fabrica:${POSTGRES_SENHA}@banco:5432/fabrica
+    FABRICA_MODO: fila
+  depends_on:
+    banco:
+      condition: service_healthy
+
+services:
+  banco:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fabrica
+      POSTGRES_PASSWORD: ${POSTGRES_SENHA}
+      POSTGRES_DB: fabrica
+    volumes:
+      - ./dados/postgres:/var/lib/postgresql/data
+    # só na rede privada da VPS (os trabalhadores de outras máquinas): nunca aberto na internet
+    ports:
+      - "${POSTGRES_IP_PRIVADO:-127.0.0.1}:5432:5432"
+    command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=1GB"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fabrica -d fabrica"]
+      interval: 10s
+      retries: 10
+
+  api:
+    <<: *fabrica
+    command: ["fabrica", "servidor", "--host", "0.0.0.0", "--porta", "8080"]
+    volumes:
+      - ./dados/projetos:/app/projetos
+      - ./dados/entregas_vps:/app/entregas_vps
+
+  mcp:
+    <<: *fabrica
+    command: ["sh", "-c", "fabrica mcp --host 0.0.0.0 --porta 8092 --url-publica https://${MCP_DOMINIO}"]
+    volumes:
+      - ./dados/projetos:/app/projetos
+      - ./dados/clientes_mcp.json:/app/clientes_mcp.json
+
+  trabalhador:
+    <<: *fabrica
+    command: ["fabrica", "trabalhador"]
+    environment:
+      FABRICA_BANCO: postgresql://fabrica:${POSTGRES_SENHA}@banco:5432/fabrica
+      FABRICA_MODO: fila
+      FABRICA_VAGAS: ${FABRICA_VAGAS:-3}
+      FABRICA_RENDERS: ${FABRICA_RENDERS:-1}
+      FABRICA_CHROMES: ${FABRICA_CHROMES:-4}
+      FABRICA_TRABALHADOR: principal
+    volumes:
+      - ./dados/projetos:/app/projetos
+      - ./dados/entregas_vps:/app/entregas_vps
+    stop_grace_period: 30s
+
+  https:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMINIO: ${API_DOMINIO}
+      MCP_DOMINIO: ${MCP_DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./dados/caddy:/data
+    depends_on: [api, mcp]
+
+  # backup do banco todo dia, guardando os últimos 7 (os vídeos não precisam: duram 3 dias e ficam no R2)
+  backup:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_SENHA}
+    volumes:
+      - ./dados/backups:/backups
+    entrypoint: ["sh", "-c", "while true; do pg_dump -h banco -U fabrica -d fabrica -Fc -f /backups/fabrica-$$(date +%F).dump && find /backups -name 'fabrica-*.dump' -mtime +7 -delete; sleep 86400; done"]
+    depends_on:
+      banco:
+        condition: service_healthy

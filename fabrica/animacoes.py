@@ -445,12 +445,19 @@ def _preparar_pasta(pasta) -> None:
     (pasta / "meta.json").write_text(json.dumps({"id": pasta.name, "name": pasta.name}), encoding="utf-8")
 
 
+# quantas gravações e conferências do HyperFrames (cada uma abre um Chrome) rodam ao mesmo tempo NESTA máquina, somando
+# todos os vídeos: com vários vídeos ao mesmo tempo no trabalhador (producao.py), cada um com animation_ai.paralelo
+# Chromes, a máquina passava a disputar os núcleos com o render. FABRICA_CHROMES no ambiente; sem ele, metade dos núcleos
+_CHROMES = threading.BoundedSemaphore(max(1, int(os.environ.get("FABRICA_CHROMES") or max(2, (os.cpu_count() or 4) // 2))))
+
+
 def _hyperframes(projeto, args, pasta, limite):
     npx = node_pronto()
     versao = config(projeto).get("versao", VERSAO_PADRAO)
     ambiente = {**os.environ, "DO_NOT_TRACK": "1", "HYPERFRAMES_NO_TELEMETRY": "1", "HYPERFRAMES_SKIP_SKILLS": "1"}
-    return subprocess.run([npx, "--yes", f"hyperframes@{versao}", *args], cwd=pasta, env=ambiente,
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limite)
+    with _CHROMES:
+        return subprocess.run([npx, "--yes", f"hyperframes@{versao}", *args], cwd=pasta, env=ambiente,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limite)
 
 
 # texto fora da tela ou fora do card: o HyperFrames marca só como informação, mas num clipe de tela inteira é defeito

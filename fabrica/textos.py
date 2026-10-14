@@ -210,6 +210,14 @@ def para_vertical(camadas_horizontais, largura, altura, pasta, prefixo="v"):
 # acentos como Ã e Á, que saem como quadrados.
 VERSAO_FONTES = 2  # sobe quando a escolha de fontes muda, para o render refazer os textos já prontos
 PASTA_WINDOWS = "C:/Windows/Fonts/"
+FONTES_LINUX = {
+    "negrito": ["/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
+    "normal": ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+               "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+    "serifa": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+               "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"],
+}
 FONTES_WINDOWS = {
     "documentario": {
         "destaque": ["ariblk.ttf", "arialbd.ttf"],
@@ -235,6 +243,14 @@ def _fonte(cfg, nome, tamanho):
     for arquivo in FONTES_WINDOWS.get(tema, FONTES_WINDOWS["documentario"]).get(nome, []):
         try:
             return ImageFont.truetype(PASTA_WINDOWS + arquivo, tamanho)
+        except OSError:
+            continue
+    # Linux (a VPS da produção em massa, PLANO-VPS.md): as Liberation têm as medidas da Arial e da Times, com acentos
+    serifada = tema == "selado"
+    for caminho in (FONTES_LINUX["serifa" if serifada else "negrito"] if nome != "lista_item" or serifada
+                    else FONTES_LINUX["normal"]):
+        try:
+            return ImageFont.truetype(caminho, tamanho)
         except OSError:
             continue
     return ImageFont.load_default(tamanho)
