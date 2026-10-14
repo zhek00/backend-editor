@@ -247,3 +247,26 @@ def test_pasta_do_plano_nao_apaga_o_de_outro_trecho(tmp_path):
     # o trecho velho que ninguém mais mostra pode ser substituído
     cenas[0]["anim_trecho"] = [94]
     assert a._pasta_para_gravar(p, [100]).name == "0100"
+
+
+def test_texto_de_tela_na_lingua_da_fala_e_recusa_antiga_pedida_de_novo(tmp_path, monkeypatch):
+    # everything-you-need-to-answer (2026-10-14): roteiro em inglês, instruções "Português do Brasil", e 10 frases de
+    # nota 85 a 95 recusadas por "palavras que a fala não diz", guardadas para sempre
+    assert "Português do Brasil." not in a.instrucoes_util() and "MESMA LÍNGUA" in a.instrucoes_util()
+    assert "MESMA LÍNGUA" in a.instrucoes()
+    assert not a._vale(None)
+    assert a._vale({"nota": 30, "tipo": "", "dados": {}})
+    assert a._vale({"nota": 90, "tipo": "lista", "dados": {"itens": []}})
+    assert not a._vale({"nota": 90, "tipo": "", "dados": {}, "recusada": ["palavras que a fala não diz: loja"]})
+    assert a._vale({"nota": 90, "tipo": "", "dados": {}, "recusada": ["x"], "versao": a.VERSAO_RECUSA})
+
+
+def test_tela_em_outra_lingua_e_recusada():
+    # cena 338 do everything-you-need-to-answer: "As que se destacaram" passou num roteiro em inglês, porque a
+    # conferência das palavras só olha as de 4 letras ou mais e tolera uma
+    fala = "Waitrose, Marks and Spencer, Booths, and Morrisons. The four on the trust list made different choices."
+    itens = [{"texto": "Waitrose", "palavra": "Waitrose"}, {"texto": "Booths", "palavra": "Booths"}]
+    assert any("outra língua" in e for e in a.conferir("lista", {"titulo": "As que se destacaram", "itens": itens}, fala))
+    assert not a.conferir("lista", {"titulo": "The trust list", "itens": itens}, fala)
+    assert a._lingua("a cada dois ou três anos, cria um único filhote que depende dos pais") == "pt"
+    assert a._lingua("Waitrose") is None  # sem sinal claro, não recusa nada

@@ -121,7 +121,7 @@
     o = o || {};
     const c = src
       ? el(`<div class="card" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><img alt="" src="${esc(src)}" style="object-position:${o.pos || "50% 45%"}">${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai)
-      : el(`<div class="card vazio" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${s.fundo ? `<img class="textura" alt="" src="${esc(s.fundo)}">` : ""}${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai);
+      : el(`<div class="card vazio" ${PERMITE} style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${o.sombra ? '<i class="sombra"></i>' : ""}</div>`, o.pai);
     if (src && o.kb) tl.fromTo(c.querySelector("img"), { scale: 1.16 }, { scale: 1.0, duration: Math.max(0.5, DUR - o.kb), ease: "none" }, o.kb);
     return c;
   }
@@ -244,7 +244,7 @@
   // baralho: uma carta com foto por item, cada uma entrando no seu segundo e empurrando as anteriores para trás
   R.baralho = function () {
     const itens = (s.itens || []).filter(it => it && (it.texto || it.titulo));
-    fundo(s.fundo, { desfoque: 20, forte: true });
+    fundo(s.fundo, { desfoque: 8, forte: true });  // com 20, o vídeo todo ficava fosco
     if (s.titulo) {
       const ti = texto(el(`<div class="bloco" ${PERMITE} style="left:0;top:34px;width:1920px;text-align:center"></div>`),
                        "leve", "margin:0 auto", 1700, 80, 30);
@@ -264,7 +264,10 @@
       const foto = it.foto || (proprias ? null : s.fundo) || null;
       const c = carta(foto, 0, 0, 1000, 560, { sombra: true, kb: t, pos: it.foto ? "50% 45%" : POS[i % POS.length], pai: emb });
       emb.pelicula = el(`<i class="pelicula" ${PERMITE}></i>`, c);
-      const caixa = el(`<div class="bloco" ${PERMITE} style="left:54px;bottom:60px"></div>`, c);
+      // cartão de texto (sem foto): o texto no meio, grande, e não colado embaixo de um vazio escuro
+      const caixa = foto
+        ? el(`<div class="bloco" ${PERMITE} style="left:54px;bottom:60px"></div>`, c)
+        : el(`<div class="bloco" ${PERMITE} style="left:70px;top:150px"></div>`, c);
       emb.caixa = caixa;
       const nome = texto(caixa, "gigante sombra-txt", "font-size:112px", 890, 250, 44);
       escreve(nome, it.titulo || it.texto, t + 0.08, { passo: 0.06, jeito: "curto" });
@@ -293,7 +296,7 @@
 
   // comparar: um lado grande no meio; o outro entra e a tela divide (amarelo contra vermelho)
   R.comparar = function () {
-    fundo(s.fundo, { desfoque: 18, forte: true });
+    fundo(s.fundo, { desfoque: 8, forte: true });
     const lados = TIPO === "comparar" ? [s.esq || {}, s.dir || {}] : [s.antes || {}, s.depois || {}];
     const t0 = T(lados[0].t, 0.3), t1 = Math.max(T(lados[1].t, DUR * 0.45), t0 + 0.8);
     const neutro = !!s.neutro;
@@ -344,7 +347,7 @@
   R.ligacao = function () {
     const itens = (s.itens || []).filter(it => it && (it.texto || it.data));
     if (itens.length < 2) { R.frase(); return; }
-    fundo(s.fundo, { desfoque: 22, forte: true });
+    fundo(s.fundo, { desfoque: 8, forte: true });
     const destino = itens[itens.length - 1], fontes = itens.slice(0, -1);
     const k = fontes.length, w = Math.min(520, (1700 - (k - 1) * 30) / k), h = 250;
     const x0 = (1920 - (k * w + (k - 1) * 30)) / 2;
@@ -359,9 +362,9 @@
       entra(c, t, "sobe", 0.5);
       linha(svg, `M ${x + w / 2} ${60 + h} C ${x + w / 2} ${60 + h + 90}, 960 ${330}, 960 ${405}`, tDest - 0.15 + i * 0.08, 0.55);
     });
-    // sem foto nem textura, o cartão do destino seria um retângulo escuro vazio: fica só a frase (cenas 71 e 296)
+    // sem foto, o cartão do destino seria um retângulo vazio atrás da frase: fica só a frase (cenas 71 e 296)
     const fotoDest = destino.foto || (fontes.some(it => it.foto) ? null : s.fundo) || null;
-    const cd = fotoDest || s.fundo
+    const cd = fotoDest
       ? carta(fotoDest, 410, 410, 1100, 360, { sombra: true, kb: tDest, pos: "50% 55%" })
       : el(`<div class="bloco" ${PERMITE} style="left:410px;top:410px;width:1100px;height:360px"></div>`);
     entra(cd, Math.max(0, tDest - 0.35), "baixo", 0.55);

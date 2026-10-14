@@ -334,6 +334,39 @@ def _inventadas(textos, fala) -> list:
     return list(dict.fromkeys(fora))
 
 
+# palavras curtas que só uma das duas línguas tem: a conferência das palavras olha só as de 4 letras ou mais, e
+# "As que se destacaram" passou como título de uma cena num roteiro em inglês (everything-you-need-to-answer, cena 338)
+_SO_PORTUGUES = {"que", "os", "da", "das", "dos", "de", "em", "na", "nas", "nos", "um", "uma", "para", "com", "por",
+                 "nao", "mais", "seu", "sua", "ao", "pelo", "pela", "foi", "sao", "esta", "como", "quando", "muito",
+                 "tambem", "mas", "ja", "ate", "sem", "quem", "onde", "cada", "voce"}
+_SO_INGLES = {"the", "and", "of", "to", "is", "are", "was", "were", "that", "with", "for", "you", "your", "it", "this",
+              "they", "we", "have", "has", "what", "which", "from", "but", "not", "will", "their", "there"}
+
+
+def _lingua(texto):
+    """"en", "pt" ou None, pelas palavras que só uma das duas tem."""
+    palavras = re.findall(r"[a-z]+", _normal(texto or ""))
+    en = sum(p in _SO_INGLES for p in palavras)
+    pt = sum(p in _SO_PORTUGUES for p in palavras)
+    if en >= 2 and en > pt:
+        return "en"
+    if pt >= 2 and pt > en:
+        return "pt"
+    return None
+
+
+def _outra_lingua(textos, fala) -> list:
+    """As palavras da tela que são da outra língua e a fala não diz (a tela traduzida, em vez da fala resumida)."""
+    lingua = _lingua(fala)
+    if lingua is None:
+        return []
+    estranhas = _SO_PORTUGUES if lingua == "en" else _SO_INGLES
+    ditas = set(re.findall(r"[a-z]+", _normal(fala)))
+    fora = [w for texto in textos for w in re.findall(r"[a-z]+", _normal(re.sub(r"\*", "", texto)))
+            if w in estranhas and w not in ditas]
+    return list(dict.fromkeys(fora))
+
+
 SIMPLES = ("frase", "pergunta", "palavra_chave", "revelacao")
 
 
@@ -423,6 +456,10 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
     novos = [n for n in tela if n not in ditos]
     if novos and not (_EXTENSO.search(fala or "") and not _numeros(fala)):
         erros.append(f"número que a fala não diz: {', '.join(f'{n:g}' for n in novos[:3])}")
+    traduzidas = _outra_lingua(textos, fala)
+    if traduzidas:
+        erros.append(f"o texto de tela está em outra língua que a fala ({', '.join(traduzidas[:4])}): escreva na "
+                     "língua da fala, com as palavras dela")
     fora = _inventadas(textos, f"{fala} {extras}")
     if len(fora) > 1:
         erros.append(f"palavras que a fala não diz: {', '.join(fora[:5])} (use as palavras da fala)")
@@ -485,7 +522,7 @@ REGRAS
   que ela é falada): dê a "palavra" de cada item no momento em que a COISA é dita, pelo nome dela ("castanheira",
   não "como"). Item é uma coisa diferente citada em série; nunca pique uma frase comum em pedaços nem repita o mesmo
   trecho em dois itens.
-- Nunca use travessão (—). Português do Brasil."""
+- Nunca use travessão (—). {IDIOMA_DA_TELA}"""
 
 
 def _pedido(lote, anterior, erros_por_id) -> str:
@@ -1588,6 +1625,10 @@ ESQUEMA_UTIL = {
     "required": ["trechos"],
 }
 VERSAO_UTIL = 2  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
+# a recusa da conferência guardada antes desta versão é pedida de novo (as outras decisões seguem valendo): até
+# 2026-10-14 as instruções mandavam escrever em português do Brasil, e no everything-you-need-to-answer (roteiro em
+# inglês) 10 frases de nota 85 a 95 foram recusadas por "palavras que a fala não diz" e nunca mais perguntadas
+VERSAO_RECUSA = 2
 
 
 def instrucoes_util(tipos=None) -> str:
@@ -1617,7 +1658,7 @@ REGRAS DA CENA
   que ela é falada): dê a "palavra" de cada item no momento em que a COISA é dita, pelo nome dela ("castanheira",
   não "como"). Item é uma coisa diferente citada em série; nunca pique uma frase comum em pedaços nem repita o mesmo
   trecho em dois itens.
-- Nunca use travessão (—). Português do Brasil."""
+- Nunca use travessão (—). {IDIOMA_DA_TELA}"""
 
 
 def _itens_util(projeto, grupos, todas) -> list:
@@ -1647,6 +1688,12 @@ def _pedido_util(lote, erros) -> str:
     return "\n\n".join(partes)
 
 
+# o texto na tela é a fala resumida: na língua dela. Antes era sempre "Português do Brasil", e num roteiro em inglês a
+# conferência recusava toda cena (palavras que a fala não diz)
+IDIOMA_DA_TELA = ("Escreva o texto de tela na MESMA LÍNGUA da fala do trecho: fala em inglês, tela em inglês; fala em "
+                  "português, português do Brasil. Nunca traduza.")
+
+
 def _marca_util(item, tipos=None) -> str:
     base = [VERSAO_UTIL, item["fala"]] + ([sorted(tipos)] if tipos and list(tipos) != DE_COMPLEMENTO else [])
     return hashlib.sha1(json.dumps(base, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
@@ -1662,7 +1709,14 @@ def decidir(projeto, itens, log=print, tipos=None) -> dict:
     arquivo = projeto.pasta / "animation_ai" / "decisoes.json"
     guardadas = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else {}
     tipos = list(tipos or DE_COMPLEMENTO)
-    saida = {it["id"]: guardadas[_marca_util(it, tipos)] for it in itens if _marca_util(it, tipos) in guardadas}
+    # o plano guardado passa de novo pela conferência: a regra pode ter ficado mais exigente depois (o título em
+    # português num roteiro em inglês, cena 338 do everything-you-need-to-answer). Reprovado agora, é pedido de novo
+    saida = {}
+    for it in itens:
+        guardada = guardadas.get(_marca_util(it, tipos))
+        if _vale(guardada) and not (guardada.get("tipo") and conferir(guardada["tipo"], guardada.get("dados") or {},
+                                                                      it["fala"], it["extras"], 1, 99)):
+            saida[it["id"]] = guardada
     novos = [it for it in itens if it["id"] not in saida]
     por_lote = max(1, int(cfg.get("trechos_por_lote", 6)))
     for k in range(0, len(novos), por_lote):
@@ -1694,7 +1748,8 @@ def decidir(projeto, itens, log=print, tipos=None) -> dict:
                 if problemas:
                     erros[it["id"]] = problemas
                     ainda.append(it)
-                    saida[it["id"]] = {"nota": nota, "tipo": "", "dados": {}, "recusada": problemas[:3]}
+                    saida[it["id"]] = {"nota": nota, "tipo": "", "dados": {}, "recusada": problemas[:3],
+                                       "versao": VERSAO_RECUSA}
                 else:
                     saida[it["id"]] = {"nota": nota, "tipo": tipo, "dados": dados}
             pendentes = ainda
@@ -1706,6 +1761,13 @@ def decidir(projeto, itens, log=print, tipos=None) -> dict:
         arquivo.parent.mkdir(parents=True, exist_ok=True)
         arquivo.write_text(json.dumps(guardadas, ensure_ascii=False, indent=1), encoding="utf-8")
     return saida
+
+
+def _vale(guardada) -> bool:
+    """A decisão guardada ainda vale: a recusa de antes de VERSAO_RECUSA é pedida de novo."""
+    if not guardada:
+        return False
+    return not guardada.get("recusada") or int(guardada.get("versao") or 1) >= VERSAO_RECUSA
 
 
 def escolher(itens, decisoes, cfg, duracao_video, ocupados=()) -> list:

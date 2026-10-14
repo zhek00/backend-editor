@@ -450,8 +450,10 @@ se a frase dela tiver estrutura e nota alta (`imagens._motion_antes_da_ia` com `
   sozinha (`minimo=1`; com o mínimo de 2 a foto achada se perdia e os cartões saíam vazios), vários itens na mesma
   cena e a foto não mostra nenhum, ela não vai para cartão nenhum (`exigir_combina`), e sem foto própria em nenhum
   item a do fundo vai só para o cartão do item que ela mostra (cena 34 do brasil-selvagem: "bichos-preguiça" saía
-  sobre o macaco-prego). Cartão sem foto leva a do fundo bem desfocada (`img.textura`): a cor e a luz, sem a coisa
-  que ela mostra; o destino da ligação sem foto nem fundo fica sem cartão, só a frase. Texto dentro de cartão entra
+  sobre o macaco-prego). Cartão sem foto é um cartão de texto desenhado (`.card.vazio`: faixa e brilho da cor de destaque, o texto
+  no meio); até 2026-10-14 levava a foto do fundo desfocada, e na tela parecia imagem quebrada ("as imagens estão
+  foscas"). O fundo dos cartões, do comparar e da ligação tem desfoque de 8 px (eram 18 a 22, e o vídeo todo
+  ficava fosco). O destino da ligação sem foto própria fica sem cartão, só a frase. Texto dentro de cartão entra
   com o `curto` (26 px): os 70 px do `sobe` passavam da borda. O comparar aceita o nome do lado em `texto` (o modelo
   às vezes manda assim, e os títulos sumiam; o motor.js também só lê `titulo`).
 - **Cenas animadas depois de renumerar** (2026-10-13, no teste do impacto no brasil-selvagem): narrar de novo
@@ -979,6 +981,14 @@ TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`
   criação esperou pelo agente (o tempos.json mediu). Agora cada bloco vira partes de até 3 lotes, que rodam ao mesmo
   tempo (as maiores primeiro); o primeiro lote de uma parte no meio do bloco vê a fala logo antes dele no lugar das
   cenas decididas. As fronteiras dos lotes não mudaram, então os lotes guardados em `cenas_lotes` continuam valendo.
+- **Texto de tela na língua da fala** (animation-ai, 2026-10-14): as instruções mandavam "Português do Brasil", e no
+  everything-you-need-to-answer (roteiro em inglês) a conferência recusou, com razão, 10 frases de nota 85 a 95 por
+  "palavras que a fala não diz"; recusa guardada nunca era pedida de novo. Agora as instruções pedem a língua da fala
+  (`IDIOMA_DA_TELA`); a recusa guardada antes de `VERSAO_RECUSA` é pedida de novo (`_vale`); a conferência recusa
+  tela com palavras curtas da outra língua que a fala não diz (`_outra_lingua`: "As que se destacaram" passava, porque
+  só palavras de 4 letras ou mais eram olhadas, com uma de tolerância); e todo plano guardado passa de novo pela
+  conferência antes de ser usado (`decidir`). Pedidas de novo, as notas mudam (o modelo da cadeia pode ser outro): das
+  13 frases, 2 viraram cena animada e 10 ficaram com nota baixa.
 - **Esquema no modo estrito do Groq** (`groq_local._formato_do_esquema`, 2026-10-14): o gpt-oss exige
   `additionalProperties: false` e todos os campos obrigatórios em todo objeto; sem isso recusava "invalid JSON
   schema" e a chamada perdia a rota ("prompts de IA em sequência", "animation-ai: onde ajuda"). O esquema que cabe

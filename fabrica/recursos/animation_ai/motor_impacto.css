@@ -19,11 +19,13 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--
 .card { position: absolute; border-radius: 30px; overflow: hidden; background: #15171C;
         box-shadow: 0 50px 110px rgba(0,0,0,.65), 0 0 0 2px rgba(255,255,255,.10); }
 .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.card.vazio { background: radial-gradient(120% 90% at 20% 15%, rgba(255,255,255,.10), transparent 55%),
-                          linear-gradient(135deg, #1C2230, #0E1118); }
-/* o cartão sem foto própria leva a foto da cena desfocada: a cor e a luz dela, sem a coisa que ela mostra */
-.card img.textura { position: absolute; left: -10%; top: -10%; width: 120%; height: 120%; object-fit: cover;
-                    filter: blur(30px) brightness(.55) saturate(1.2); }
+/* o cartão sem foto própria é um cartão de texto desenhado: fundo limpo, a faixa e o brilho da cor de destaque.
+   Antes levava a foto da cena desfocada, e na tela parecia imagem quebrada ("as imagens estão foscas",
+   everything-you-need-to-answer, 2026-10-14) */
+.card.vazio { background: radial-gradient(90% 120% at 100% 0%, rgba(255,210,63,.22), transparent 60%),
+                          radial-gradient(70% 90% at 0% 100%, rgba(255,77,61,.12), transparent 65%),
+                          linear-gradient(135deg, #20242E, #111319);
+              box-shadow: 0 50px 110px rgba(0,0,0,.65), 0 0 0 2px rgba(255,210,63,.35), inset 14px 0 0 var(--acc, #FFD23F); }
 .card .sombra { position: absolute; left: 0; right: 0; bottom: 0; height: 62%; display: block;
                 background: linear-gradient(to bottom, transparent, rgba(0,0,0,.88)); }
 .embrulho { position: absolute; }
