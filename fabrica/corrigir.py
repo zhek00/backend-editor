@@ -1217,8 +1217,13 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
         for n, a in refazer.items():
             cena = por_n[n]
             base = (cena.get("prompt_manual") or cena.get("prompt") or "").strip()
-            correcao = (f"{base}\nIMPORTANT: the previous image was wrong ({a['legenda'][:200]}). The image must clearly "
-                        f"show: {cena.get('mostrar') or cena.get('sujeito') or cena.get('busca')}.")
+            # o que mostrar sem pedir texto: o pedido com texto em português saía desenhado na imagem (cena 8 do
+            # everything-you-need-to-answer, imagens.o_que_mostrar)
+            alvo_da_cena = imagens.o_que_mostrar(cena) or (None if cena.get("visual") == "texto_tela" else
+                                                            cena.get("sujeito") or cena.get("busca"))
+            correcao = (f"{base}\nIMPORTANT: the previous image was wrong ({a['legenda'][:200]})."
+                        + (f" The image must clearly show: {alvo_da_cena}." if alvo_da_cena else "")
+                        + " No text, letters or words anywhere in the image.")
             # a imagem atual fica guardada: se a nova não sair (provedor fora do ar, sem saldo), ela volta. Sem isso, as
             # 9 cenas do virou-filme-em-1996 ficaram vazias quando o saldo da Kie acabou no meio
             guarda = projeto.imagem(n).with_name(f"{projeto.imagem(n).stem}_guarda{projeto.imagem(n).suffix}")

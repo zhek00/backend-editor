@@ -2093,6 +2093,15 @@ def restaurar_antiga(payload: RestoreAntigaPayload):
         return _restaurar_antiga(payload)
 
 
+def _copiar_com_data_nova(origem, destino) -> None:
+    """Copia e põe a data de agora no arquivo. A prévia do editor e o endereço da mídia levam a data do arquivo como
+    versão, e o navegador guarda cada versão por um ano: com o copy2 (que copia a data antiga), a imagem restaurada
+    voltava a uma versão que o navegador já tinha, e o editor seguia mostrando a imagem de antes (cena 8 do
+    everything-you-need-to-answer, 2026-10-14: "restaurar não faz nada")."""
+    shutil.copyfile(origem, destino)
+    os.utime(destino, None)
+
+
 def _restaurar_antiga(payload: RestoreAntigaPayload):
     pasta = PROJETOS / payload.name
     if not pasta.exists():
@@ -2114,12 +2123,12 @@ def _restaurar_antiga(payload: RestoreAntigaPayload):
         rel_path = f"midia/{payload.n:04d}{ext}"
         destino = p.pasta / rel_path
         destino.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(arq_antigo), str(destino))
+        _copiar_com_data_nova(str(arq_antigo), str(destino))
 
         capa_antiga = arq_antigo.with_name(arq_antigo.stem + "_capa.jpg")
         capa_rel = f"midia/{payload.n:04d}_capa.jpg"
         if capa_antiga.exists():
-            shutil.copy2(str(capa_antiga), str(p.pasta / capa_rel))
+            _copiar_com_data_nova(str(capa_antiga), str(p.pasta / capa_rel))
         else:
             try:
                 _frame_do_video(destino, p.pasta / capa_rel, 0.5)
@@ -2137,7 +2146,7 @@ def _restaurar_antiga(payload: RestoreAntigaPayload):
     else:
         destino = p.imagem(payload.n)
         destino.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(arq_antigo), str(destino))
+        _copiar_com_data_nova(str(arq_antigo), str(destino))
         cena["tipo"] = "ia"
         cena["midia"] = None
 

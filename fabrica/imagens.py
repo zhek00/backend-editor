@@ -346,6 +346,21 @@ def _motion_antes_da_ia(projeto, apenas, pendentes, log):
     return pendentes
 
 
+_PEDE_TEXTO = re.compile(r"texto|escrit|letreiro|legenda|t[ií]tulo|tela com|text|words?|caption",
+                         re.I)
+
+
+def o_que_mostrar(cena):
+    """O "mostrar" da cena para o pedido da imagem, ou None quando ele pede texto. A imagem de IA não tem texto (o
+    texto vai na tela pela animação), e o "mostrar" é escrito em português: na cena 8 do everything-you-need-to-answer
+    (roteiro em inglês) o pedido levou "Tela com texto exibindo a metodologia do teste: dez supermercados, três
+    semanas", e a imagem saiu com "DEZ SUPERMERCADOS" escrito num caderno, apesar do "Do not include: text"."""
+    mostrar = (cena.get("mostrar") or "").strip()
+    if not mostrar or cena.get("visual") in ("texto_tela", "diagrama", "mapa", "linha_do_tempo") or _PEDE_TEXTO.search(mostrar):
+        return None
+    return mostrar
+
+
 def prompt_final(cena, perfil, com_referencia):
     img = perfil.get("imagens") or {}
     personagem = perfil.get("personagem") or {}
@@ -365,9 +380,9 @@ def prompt_final(cena, perfil, com_referencia):
                       "framing. Nothing modern in the image.")
     elif img.get("estilo"):
         partes.append(f"Style: {img['estilo'].strip()}")
-    if cena.get("ia_motivo") and (cena.get("mostrar") or "").strip():
+    if cena.get("ia_motivo") and o_que_mostrar(cena):
         # a cena veio para a IA porque a foto do banco mostrava outra coisa: o que ela tem que mostrar, sem erro
-        partes.append(f"The image must clearly show: {cena['mostrar'].strip()}")
+        partes.append(f"The image must clearly show: {o_que_mostrar(cena)}")
     if img.get("evitar"):
         partes.append(f"Do not include: {img['evitar'].strip()}")
     return "\n".join(partes)

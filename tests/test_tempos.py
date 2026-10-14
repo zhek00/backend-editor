@@ -67,3 +67,27 @@ def test_chamada_de_modelo_guarda_os_segundos(tmp_path, monkeypatch):
     groq_local._registrar(p, "julgar mídia", "qwen", {"prompt_tokens": 10, "completion_tokens": 2})
     linhas = json.loads((tmp_path / "uso_groq.json").read_text(encoding="utf-8"))
     assert linhas[0]["segundos"] == 12.3 and "segundos" not in linhas[1]
+
+
+def test_imagem_de_ia_nunca_pede_texto():
+    # cena 8 do everything-you-need-to-answer: "Tela com texto exibindo a metodologia..." virou texto em português
+    # desenhado na imagem
+    from fabrica import imagens
+
+    assert imagens.o_que_mostrar({"mostrar": "Tela com texto exibindo a metodologia do teste", "visual": "foto_real"}) is None
+    assert imagens.o_que_mostrar({"mostrar": "Mapa do Reino Unido", "visual": "mapa"}) is None
+    assert imagens.o_que_mostrar({"mostrar": "Galinha caipira ciscando no quintal", "visual": "foto_real"}) == \
+        "Galinha caipira ciscando no quintal"
+
+
+def test_restaurar_poe_data_nova(tmp_path):
+    # com o copy2, a imagem restaurada voltava à versão (data) que o navegador já tinha guardado
+    import os
+    from fabrica import api
+
+    velho = tmp_path / "antiga.png"
+    velho.write_bytes(b"x")
+    os.utime(velho, (1_000_000, 1_000_000))
+    destino = tmp_path / "0008.png"
+    api._copiar_com_data_nova(str(velho), str(destino))
+    assert destino.read_bytes() == b"x" and destino.stat().st_mtime > 1_000_000 + 10
