@@ -336,7 +336,7 @@ def _inventadas(textos, fala) -> list:
 
 # palavras curtas que só uma das duas línguas tem: a conferência das palavras olha só as de 4 letras ou mais, e
 # "As que se destacaram" passou como título de uma cena num roteiro em inglês (everything-you-need-to-answer, cena 338)
-_SO_PORTUGUES = {"que", "os", "da", "das", "dos", "de", "em", "na", "nas", "nos", "um", "uma", "para", "com", "por",
+_SO_PORTUGUES = {"o", "que", "os", "da", "das", "dos", "de", "em", "na", "nas", "nos", "um", "uma", "para", "com", "por",
                  "nao", "mais", "seu", "sua", "ao", "pelo", "pela", "foi", "sao", "esta", "como", "quando", "muito",
                  "tambem", "mas", "ja", "ate", "sem", "quem", "onde", "cada", "voce"}
 _SO_INGLES = {"the", "and", "of", "to", "is", "are", "was", "were", "that", "with", "for", "you", "your", "it", "this",
@@ -355,22 +355,44 @@ def _lingua(texto):
     return None
 
 
-def _outra_lingua(textos, fala) -> list:
-    """As palavras da tela que são da outra língua e a fala não diz (a tela traduzida, em vez da fala resumida)."""
-    lingua = _lingua(fala)
+# fala em inglês: palavra com acento ou cedilha, ou com terminação de português, é tela traduzida ("Avaliação" e
+# "O Teste" passavam como uma palavra só fora da fala, dentro da tolerância, everything-you-need-to-answer)
+_JEITO_DE_PORTUGUES = re.compile(r"[ãõçáéíóúâêô]|(?:ção|ções|cao|coes|mente|dade|dades|agem|eiro|eira|ado|ados|"
+                                 r"ada|adas|ido|idos|ida|idas)$")  # "assado" sob "ROASTED", cena 220
+
+
+def lingua_do_video(projeto):
+    """"en", "pt" ou None, pelo roteiro inteiro: a fala de uma cena só ("Ten supermarkets. Three weeks.") é curta demais
+    para dizer, e "O Teste" passava nela."""
+    try:
+        return _lingua(projeto.roteiro()[:20000])
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def _outra_lingua(textos, fala, lingua=None) -> list:
+    """As palavras da tela que são da outra língua e a fala não diz (a tela traduzida, em vez da fala resumida).
+    lingua: a do vídeo inteiro (lingua_do_video), quando se sabe; senão, a da fala."""
+    lingua = lingua or _lingua(fala)
     if lingua is None:
         return []
     estranhas = _SO_PORTUGUES if lingua == "en" else _SO_INGLES
     ditas = set(re.findall(r"[a-z]+", _normal(fala)))
-    fora = [w for texto in textos for w in re.findall(r"[a-z]+", _normal(re.sub(r"\*", "", texto)))
-            if w in estranhas and w not in ditas]
+    fora = []
+    for texto in textos:
+        for bruta in re.findall(r"[^\W\d_]+", re.sub(r"\*", "", texto).lower()):
+            w = _normal(bruta)
+            if w in ditas:
+                continue
+            if w in estranhas or (lingua == "en" and _JEITO_DE_PORTUGUES.search(bruta)):
+                fora.append(w)
     return list(dict.fromkeys(fora))
 
 
 SIMPLES = ("frase", "pergunta", "palavra_chave", "revelacao")
 
 
-def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simples=0) -> list:
+def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simples=0, lingua=None) -> list:
     """Os erros do plano de um trecho, para devolver ao modelo. Lista vazia: pode desenhar.
     simples: quantos trechos do vídeo já são frase ou pergunta. No primeiro teste (leite), o modelo pôs frase em 10 de
     18 trechos, inclusive em "esquenta igual, engrossa igual e queima igual", que é uma lista."""
@@ -456,7 +478,7 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
     novos = [n for n in tela if n not in ditos]
     if novos and not (_EXTENSO.search(fala or "") and not _numeros(fala)):
         erros.append(f"número que a fala não diz: {', '.join(f'{n:g}' for n in novos[:3])}")
-    traduzidas = _outra_lingua(textos, fala)
+    traduzidas = _outra_lingua(textos, fala, lingua)
     if traduzidas:
         erros.append(f"o texto de tela está em outra língua que a fala ({', '.join(traduzidas[:4])}): escreva na "
                      "língua da fala, com as palavras dela")
@@ -551,6 +573,7 @@ def planejar(projeto, itens, log=print, forcar=False) -> dict:
     """{id: {"tipo", "dados"}} para cada trecho, conferido; o que não passar vira a frase da própria fala.
     Os planos ficam em animation_ai/planos.json pela fala do trecho: rodar de novo não pede ao modelo nem grava de novo
     o que não mudou (forcar pede tudo de novo)."""
+    lingua = lingua_do_video(projeto)
     from . import openrouter_local
 
     cfg = config(projeto)
@@ -584,7 +607,8 @@ def planejar(projeto, itens, log=print, forcar=False) -> dict:
                 tipo, dados = str(t.get("tipo") or "").strip(), t.get("dados") or {}
                 feitos = [planos[i]["tipo"] for i in sorted(planos) if i < item["id"]]
                 problemas = conferir(tipo, dados, item["fala"], item["extras"], item["posicao"], item["total"],
-                                     tuple(feitos[-2:]), sum(t in SIMPLES for t in planos_tipos(planos)))
+                                     tuple(feitos[-2:]), sum(t in SIMPLES for t in planos_tipos(planos)),
+                                     lingua=lingua)
                 if problemas:
                     erros[item["id"]] = problemas
                     ainda.append(item)
@@ -1260,6 +1284,45 @@ def _pasta_para_gravar(projeto, numeros):
             return pasta
         k += 1
 
+def _planos_conferidos(projeto, pares, todas, log=print) -> list:
+    """Os planos guardados passam de novo pela conferência antes de regravar: a regra pode ter ficado mais exigente
+    depois (os títulos em português "O Teste", "Avaliação" num roteiro em inglês, everything-you-need-to-answer). O
+    reprovado é pedido de novo ao modelo; sem plano novo que passe, a cena fica com a animação de antes."""
+    saida = []
+    for g, plano in pares:
+        if plano.get("tipo") == "dirigida":
+            saida.append((g, plano))
+            continue
+        item = _itens_util(projeto, [g], todas)[0]
+        problemas = conferir(plano["tipo"], plano["dados"], item["fala"], item["extras"], 1, 99,
+                             lingua=item.get("lingua"))
+        if not problemas:
+            saida.append((g, plano))
+            continue
+        log(f"  animation-ai: o plano guardado da cena {g[0]['n']} não passa mais na conferência ({problemas[0][:90]}); "
+            "pedindo de novo")
+        nova = decidir(projeto, [item], log, tipos_do_tema(projeto, COMO_MOTION)).get(item["id"]) or {}
+        if nova.get("tipo") and nova.get("nota", 0) >= float(config(projeto).get("limiar", 70)):
+            saida.append((g, {"tipo": nova["tipo"], "dados": nova["dados"]}))
+        else:
+            # a animação reprovada (texto em outra língua, palavra que a fala não diz) é pior que a foto: a cena volta ao
+            # que tinha antes dela (cena 242 do everything-you-need-to-answer, "Pilares da reputação")
+            numeros = {c["n"] for c in g}
+            desfazer(projeto, numeros)
+            with _TRAVA_CENAS:
+                dados = projeto.ler_json("cenas.json")
+                for c in dados["cenas"]:
+                    if c["n"] in numeros:
+                        c["anim_falhou"] = {"motivo": "plano reprovado na conferência: " + problemas[0][:200],
+                                            "fala": _marca_fala(c)}
+                projeto.salvar_json("cenas.json", dados)
+            vazias = [c["n"] for c in projeto.ler_json("cenas.json")["cenas"] if c["n"] in numeros
+                      and not (c.get("midia") or {}).get("arquivo") and not projeto.imagem(c["n"]).exists()]
+            log(f"  animation-ai: cena {g[0]['n']} sem plano novo que passe; voltou ao que tinha antes da animação"
+                + (f" (as cenas {', '.join(map(str, vazias))} estavam sem imagem antes dela: use o Continuar carregamento)"
+                   if vazias else ""))
+    return saida
+
 def regravar(projeto, numeros=None, log=print) -> list:
     """Grava de novo as cenas animadas que já existem, com o plano delas (partes.json): pega as mudanças do desenho
     (as fotos dos itens, VERSAO) sem perguntar nada ao modelo. numeros: só os trechos que têm alguma dessas cenas.
@@ -1285,6 +1348,8 @@ def regravar(projeto, numeros=None, log=print) -> list:
                         itens.append(it)
                 dados["itens"] = itens
             pares.append((grupo, {"tipo": partes["tipo"], "dados": dados}))
+    pares = _planos_conferidos(projeto, pares, todas, log)
+    escolher_desenhos(projeto, pares)
     feitas = []
     for g, plano in pares:
         try:
@@ -1382,6 +1447,9 @@ def gravar(projeto, trecho, plano, log=print):
     canal = str(cfg.get("canal") or "")  # o nome do canal no canto, do perfil (animation_ai.canal); vazio, sem nome
     pasta = _pasta_para_gravar(projeto, [c["n"] for c in trecho])
     if e_impacto(cores):
+        # o desenho escolhido para variar (escolher_desenhos); o de sempre da receita não vai, e a assinatura não muda
+        if plano.get("desenho") and plano["desenho"] != RECEITA_IMPACTO.get(tipo, "frase"):
+            resolvidos["_layout"] = plano["desenho"]
         creditos = fotos_impacto(projeto, trecho, tipo, resolvidos, ini, pasta, log)
         eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
     else:
@@ -1483,6 +1551,70 @@ def _itens_para_planejar(projeto, grupos) -> list:
     return itens
 
 
+# a receita de cada tipo no motor do impacto (motor_impacto.js, QUAL) e os outros desenhos dela (R.grade, R.faixas,
+# R.telacheia, R.versus). Pedido do usuário em 2026-10-14: 15 dos 19 trechos animados do everything-you-need-to-answer
+# saíram como o mesmo baralho de cartões, e o vídeo parecia sempre igual
+RECEITA_IMPACTO = {
+    "numero": "heroi", "porcentagem": "heroi", "medidor": "heroi", "proporcao": "heroi",
+    "frase": "frase", "pergunta": "frase", "fato": "frase", "palavra_chave": "frase", "citacao": "frase",
+    "definicao": "frase", "manchete": "frase", "documento": "frase",
+    "lista": "baralho", "destaques": "baralho", "checklist": "baralho", "cartoes": "baralho", "pilha_cartoes": "baralho",
+    "ranking": "baralho", "passos": "baralho",
+    "comparar": "comparar", "antes_depois": "comparar", "deslizar": "comparar",
+    "causa_efeito": "ligacao", "linha_do_tempo": "ligacao",
+    "abertura": "titulo", "capitulo": "titulo", "revelacao": "titulo", "encerramento": "titulo",
+}
+DESENHOS = {"baralho": ("baralho", "grade", "faixas", "telacheia"), "comparar": ("comparar", "versus")}
+SEGUNDOS_POR_ITEM_NA_TELA_CHEIA = 1.2  # menos que isso, cada item passa rápido demais (3,5 s com 4 itens, cena 338)
+
+
+def desenhos_possiveis(tipo, dados, dur) -> list:
+    """Os desenhos em que este plano cabe; o primeiro é o de sempre da receita."""
+    receita = RECEITA_IMPACTO.get(tipo, "frase")
+    if receita == "comparar" and tipo != "comparar":
+        return ["comparar"]  # o versus é só para os dois lados com título (antes e depois tem valores contando)
+    opcoes = list(DESENHOS.get(receita, (receita,)))
+    if receita == "baralho":
+        n = len([it for it in (dados or {}).get("itens") or [] if isinstance(it, dict) and (it.get("texto") or it.get("titulo"))])
+        if not 2 <= n <= 4:
+            opcoes.remove("grade")
+        if not 2 <= n <= 5:
+            opcoes = [o for o in opcoes if o not in ("faixas", "telacheia")]
+        elif dur / n < SEGUNDOS_POR_ITEM_NA_TELA_CHEIA:
+            opcoes.remove("telacheia")
+    return opcoes
+
+
+def escolher_desenhos(projeto, pares) -> None:
+    """Põe plano["desenho"] em cada (cenas, plano) a gravar: em ordem de tempo, junto com as cenas animadas que já estão
+    no vídeo, cada uma ganha, entre os desenhos em que cabe, um diferente do da cena animada anterior e o menos usado
+    até ali. Escolhido antes de gravar (a gravação roda em paralelo), sai sempre o mesmo."""
+    if not pares or not e_impacto(tema(projeto)):
+        return
+    no_lote = {g[0]["n"] for g, _ in pares}
+    linha = []
+    for trecho, grupo in trechos_animados(projeto.ler_json("cenas.json")["cenas"]):
+        if grupo[0]["n"] in no_lote:
+            continue
+        partes = _partes_do_trecho(projeto, trecho) or {}
+        desenho = (partes.get("resolvidos") or {}).get("_layout") or RECEITA_IMPACTO.get(partes.get("tipo"), "frase")
+        linha.append((float(grupo[0]["ini"]), desenho, None))
+    for g, plano in pares:
+        if plano.get("tipo") != "dirigida":
+            linha.append((float(g[0]["ini"]), None, (g, plano)))
+    usados, anterior = {}, None
+    for _, desenho, par in sorted(linha, key=lambda x: x[0]):
+        if par is not None:
+            g, plano = par
+            dur = max(float(g[-1]["fim"]) - float(g[0]["ini"]), 1.0)
+            opcoes = desenhos_possiveis(plano["tipo"], plano.get("dados"), dur)
+            livres = [o for o in opcoes if o != anterior] or opcoes
+            desenho = min(livres, key=lambda o: (usados.get(o, 0), opcoes.index(o)))
+            plano["desenho"] = desenho
+        usados[desenho] = usados.get(desenho, 0) + 1
+        anterior = desenho
+
+
 def _gravar_grupos(projeto, pares, log=print, frase_de_reserva=True) -> list:
     """Grava cada (cenas, plano) e põe no lugar da mídia. Com frase_de_reserva, o desenho reprovado vai como a frase da
     fala (cenas pedidas pela pessoa); sem ela (complemento), a cena fica com a foto. Devolve as cenas feitas."""
@@ -1504,6 +1636,7 @@ def _gravar_grupos(projeto, pares, log=print, frase_de_reserva=True) -> list:
         except (Exception, SystemExit) as erro:
             return g, plano["tipo"], str(erro) or erro.__class__.__name__
 
+    escolher_desenhos(projeto, pares)
     feitas = []
     with ThreadPoolExecutor(max(1, int(config(projeto).get("paralelo", 2)))) as executor:
         for g, tipo, erro in executor.map(um, pares):
@@ -1665,6 +1798,7 @@ def _itens_util(projeto, grupos, todas) -> list:
     mapa = projeto.ler_json("roteiro_mapa.json") if projeto.existe("roteiro_mapa.json") else {}
     nomes = {b.get("id"): b.get("nome") or "" for b in mapa.get("blocos") or []}
     por_n = {c["n"]: c for c in todas}
+    lingua = lingua_do_video(projeto)
     itens = []
     for g in grupos:
         antes, depois = por_n.get(g[0]["n"] - 1) or {}, por_n.get(g[-1]["n"] + 1) or {}
@@ -1672,7 +1806,8 @@ def _itens_util(projeto, grupos, todas) -> list:
                       "ini": float(g[0]["ini"]), "fim": float(g[-1]["fim"]), "bloco": nomes.get(g[0].get("bloco"), ""),
                       "fala": " ".join((c.get("texto") or "").strip() for c in g), "motivo": estrutura(g),
                       "foto": _o_que_a_foto_mostra(g[0]), "antes": (antes.get("texto") or "")[-160:],
-                      "depois": (depois.get("texto") or "")[:160], "extras": nomes.get(g[0].get("bloco"), "")})
+                      "depois": (depois.get("texto") or "")[:160], "extras": nomes.get(g[0].get("bloco"), ""),
+                      "lingua": lingua})
     return itens
 
 
@@ -1715,7 +1850,8 @@ def decidir(projeto, itens, log=print, tipos=None) -> dict:
     for it in itens:
         guardada = guardadas.get(_marca_util(it, tipos))
         if _vale(guardada) and not (guardada.get("tipo") and conferir(guardada["tipo"], guardada.get("dados") or {},
-                                                                      it["fala"], it["extras"], 1, 99)):
+                                                                      it["fala"], it["extras"], 1, 99,
+                                                                      lingua=it.get("lingua"))):
             saida[it["id"]] = guardada
     novos = [it for it in itens if it["id"] not in saida]
     por_lote = max(1, int(cfg.get("trechos_por_lote", 6)))
@@ -1744,7 +1880,7 @@ def decidir(projeto, itens, log=print, tipos=None) -> dict:
                     saida[it["id"]] = {"nota": nota, "tipo": "", "dados": {}}
                     continue
                 problemas = (["use só os tipos do catálogo deste pedido"] if tipo not in tipos
-                             else conferir(tipo, dados, it["fala"], it["extras"], 1, 99))
+                             else conferir(tipo, dados, it["fala"], it["extras"], 1, 99, lingua=it.get("lingua")))
                 if problemas:
                     erros[it["id"]] = problemas
                     ainda.append(it)

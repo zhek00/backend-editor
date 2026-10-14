@@ -174,9 +174,10 @@ roteirista:
                              # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas
   esforco_claude: medium     # low, medium ou high: quanto o Claude pensa em cada lote de cenas
   cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
-  paralelo: 8                # blocos do roteiro decididos ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10: o
-                             # Nemotron Ultra grátis leva 1,5 a 4 min por lote, e no teste-frango a busca esperou 9,5 min
-                             # pelas cenas. O limite do OpenRouter grátis (20 por minuto) aguenta folgado
+  paralelo: 16               # partes do roteiro decididas ao mesmo tempo. Eram 4, depois 8 (pedido do usuário em
+                             # 2026-10-10), 16 desde 2026-10-14: o Nemotron Ultra grátis leva ~4 min por lote, e com 8
+                             # saíam 2 lotes por minuto (o JSON de cenas do everything-you-need-to-answer levou 25 min no
+                             # teste). Com 16 são uns 4 pedidos por minuto, longe do limite do OpenRouter grátis (20)
   lotes_por_trecho: 3        # bloco grande é decidido em partes de até 3 lotes, ao mesmo tempo. Dentro de uma parte os
                              # lotes saem em fila; no everything-you-need-to-answer (2026-10-14) um bloco com 65% do
                              # roteiro andou sozinho, lote a lote, por 1h20. Menos = mais rápido, menos continuidade

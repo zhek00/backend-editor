@@ -270,3 +270,13 @@ def test_tela_em_outra_lingua_e_recusada():
     assert not a.conferir("lista", {"titulo": "The trust list", "itens": itens}, fala)
     assert a._lingua("a cada dois ou três anos, cria um único filhote que depende dos pais") == "pt"
     assert a._lingua("Waitrose") is None  # sem sinal claro, não recusa nada
+
+
+def test_titulo_traduzido_de_uma_palavra_e_recusado():
+    # "O Teste" e "Avaliação" passavam: uma palavra só fora da fala, dentro da tolerância
+    fala = "Ten supermarkets. Three weeks. We tested every hot chicken counter and the results were not what we expected."
+    for titulo in ("O Teste", "Avaliação", "Pilares da reputação"):
+        assert a._outra_lingua([titulo], fala), titulo
+    for titulo in ("The Test", "Very average", "Ten supermarkets"):
+        assert not a._outra_lingua([titulo], fala), titulo
+    assert not a._outra_lingua(["O que mais importa"], "o que mais importa é a qualidade de cada frango assado")

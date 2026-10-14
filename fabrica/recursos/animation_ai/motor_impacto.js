@@ -72,6 +72,10 @@
   }
   function brilho(x, y, r, cor, ini) {
     const b = el(`<div class="brilho" ${PERMITE} style="left:${x - r}px;top:${y - r}px;width:${2 * r}px;height:${2 * r}px;background:${cor}"></div>`);
+    // atrás de tudo, logo depois do fundo: desenhado por cima, ele embaçava os cartões (comparar, cena 220 do
+    // everything-you-need-to-answer)
+    const bg = palco.querySelector(".bg");
+    palco.insertBefore(b, bg ? bg.nextSibling : palco.firstChild);
     janela(b, ini);
     tl.fromTo(b, { scale: 0.85 }, { scale: 1.15, duration: 1.2, ease: "sine.inOut", yoyo: true,
                                      repeat: Math.max(0, Math.ceil((DUR - ini) / 1.2) - 1) }, ini);
@@ -294,6 +298,142 @@
     });
   };
 
+  // ---- outros desenhos dos tipos de itens (lista, destaques, checklist...). Pedido do usuário em 2026-10-14: 15 dos 19
+  // trechos animados do everything-you-need-to-answer saíram como o baralho, e o vídeo ficava sempre igual
+  const itensDe = (max) => (s.itens || []).filter(it => it && (it.texto || it.titulo)).slice(0, max);
+  const simboloDe = (i) => {
+    const marca = { errado: "✕", alerta: "!", estrela: "★", certo: "✓" }[s.marca] || (TIPO === "checklist" ? "✓" : null);
+    return ["lista", "passos", "ranking", "pilha_cartoes"].includes(TIPO) ? String(i + 1) : marca;
+  };
+  function tituloNoAlto(top) {
+    if (!s.titulo) return;
+    const ti = texto(el(`<div class="bloco" ${PERMITE} style="left:0;top:${top}px;width:1920px;text-align:center"></div>`),
+                     "leve", "margin:0 auto", 1700, 80, 30);
+    escreve(ti, limpo(s.titulo), T(s.t_titulo, 0.2), { passo: 0.06 });
+  }
+
+  // grade: os itens lado a lado, cada um com a sua foto; quem entra fica aceso e os de antes escurecem um pouco
+  R.grade = function () {
+    const itens = itensDe(4);
+    if (itens.length < 2) { R.baralho(); return; }
+    fundo(s.fundo, { desfoque: 8, forte: true });
+    tituloNoAlto(40);
+    const k = itens.length, gap = 40, w = Math.min(500, (1640 - (k - 1) * gap) / k), h = 540;
+    const x0 = (1920 - (k * w + (k - 1) * gap)) / 2, y = 175;
+    const feitos = [];
+    itens.forEach((it, i) => {
+      const t = T(it.t, 0.4 + i * 0.8);
+      const emb = el(`<div class="embrulho" ${PERMITE} style="left:${x0 + i * (w + gap)}px;top:${y}px;width:${w}px;height:${h}px"></div>`);
+      const c = carta(it.foto || null, 0, 0, w, h, { sombra: true, kb: t, pai: emb });
+      emb.pelicula = el(`<i class="pelicula" ${PERMITE}></i>`, c);
+      const caixa = it.foto
+        ? el(`<div class="bloco" ${PERMITE} style="left:30px;bottom:36px"></div>`, c)
+        : el(`<div class="bloco" ${PERMITE} style="left:34px;top:110px"></div>`, c);
+      escreve(texto(caixa, "medio sombra-txt", "font-size:62px", w - 64, 230, 28), it.titulo || it.texto, t + 0.08,
+              { passo: 0.05, jeito: "curto" });
+      const simbolo = simboloDe(i);
+      if (simbolo) entra(el(`<div class="selo" ${PERMITE} style="left:-28px;top:-28px">${esc(simbolo)}</div>`, emb), t + 0.25, "carimbo", 0.4);
+      entra(emb, Math.max(0, t - 0.1), "baixo", 0.5);
+      feitos.forEach(ant => tl.to(ant.pelicula, { opacity: 0.45, duration: 0.4, ease: "power2.out" }, Math.max(0, t - 0.1)));
+      feitos.push(emb);
+    });
+    // no fim, todos acesos de novo: a lista inteira na tela
+    const ultimo = T(itens[itens.length - 1].t, DUR * 0.6);
+    if (ultimo + 1.2 < FIM) feitos.forEach(ant => tl.to(ant.pelicula, { opacity: 0, duration: 0.4 }, ultimo + 1.0));
+  };
+
+  // faixas: linhas largas empilhadas, como um placar; cada uma desliza do lado com miniatura, número e texto grande
+  R.faixas = function () {
+    const itens = itensDe(5);
+    if (itens.length < 2) { R.baralho(); return; }
+    fundo(s.fundo, { desfoque: 8, forte: true });
+    tituloNoAlto(36);
+    const n = itens.length, gap = 22, top0 = 140, alt = Math.min(150, (630 - (n - 1) * gap) / n);
+    const fotoW = Math.round(alt * 1.7);
+    const feitos = [];
+    itens.forEach((it, i) => {
+      const t = T(it.t, 0.4 + i * 0.7);
+      const y = top0 + i * (alt + gap);
+      const fx = el(`<div class="faixa-item" ${PERMITE} style="left:230px;top:${y}px;width:1460px;height:${alt}px"></div>`);
+      if (it.foto) carta(it.foto, 0, 0, fotoW, alt, { pai: fx, kb: t });
+      const inicioTexto = it.foto ? fotoW + 40 : 50;
+      const simbolo = simboloDe(i);
+      let x = inicioTexto;
+      if (simbolo) {
+        el(`<div class="faixa-num" ${PERMITE} style="left:${x}px;height:${alt}px;line-height:${alt}px">${esc(simbolo)}</div>`, fx);
+        x += 110;
+      }
+      const bloco = el(`<div class="bloco" ${PERMITE} style="left:${x}px;top:0;height:${alt}px;display:flex;align-items:center"></div>`, fx);
+      escreve(texto(bloco, "gigante sombra-txt uma-linha", `font-size:${Math.round(alt * 0.56)}px`, 1460 - x - 40, alt - 16, 30),
+              it.titulo || it.texto, t + 0.1, { passo: 0.05, jeito: "curto" });
+      fx.pelicula = el(`<i class="pelicula" ${PERMITE}></i>`, fx);
+      entra(fx, Math.max(0, t - 0.1), "esquerda", 0.45);
+      feitos.forEach(ant => tl.to(ant.pelicula, { opacity: 0.35, duration: 0.35 }, Math.max(0, t - 0.1)));
+      feitos.push(fx);
+    });
+  };
+
+  // tela cheia: cada item toma a tela inteira com a sua foto, em cortes no ritmo da fala; sem foto, um fundo de cor
+  R.telacheia = function () {
+    const itens = itensDe(5);
+    if (itens.length < 2) { R.baralho(); return; }
+    const ts = itens.map((it, i) => T(it.t, 0.3 + i * (DUR - 0.6) / itens.length));
+    itens.forEach((it, i) => {
+      const t = i ? Math.max(0, ts[i] - 0.12) : 0;
+      const fim = i + 1 < itens.length ? ts[i + 1] + 0.25 : undefined;
+      const camada = el(`<div class="camada" ${PERMITE}></div>`);
+      if (it.foto) {
+        const img = el(`<img alt="" src="${esc(it.foto)}">`, camada);
+        tl.fromTo(img, { scale: 1.02 }, { scale: 1.14, duration: (fim || DUR) - t, ease: "none" }, t);
+        el(`<i class="escuro lado-baixo" ${PERMITE}></i>`, camada);
+      } else {
+        el(`<div class="bg vazio" ${PERMITE} style="left:0;top:0;width:100%;height:100%"></div>`, camada);
+      }
+      const simbolo = simboloDe(i) || String(i + 1);
+      el(`<div class="contador" ${PERMITE}>${esc(simbolo)}<span ${PERMITE}>/${itens.length}</span></div>`, camada);
+      const bloco = el(`<div class="bloco" ${PERMITE} style="left:120px;top:430px"></div>`, camada);
+      escreve(texto(bloco, "gigante sombra-txt", "font-size:170px", 1680, 330, 64), it.titulo || it.texto,
+              Math.max(t + 0.1, ts[i] - 0.05), { passo: 0.07, jeito: "soco", d: 0.45 });
+      if (i + 1 < itens.length) tl.to(bloco, { autoAlpha: 0, duration: 0.15, ease: "power2.in" }, Math.max(0, ts[i + 1] - 0.15));
+      janela(camada, t, fim);
+      tl.fromTo(camada, { clipPath: "inset(0% 0% 0% 100%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.35, ease: "power3.inOut" }, t);
+      if (i) flash(t + 0.05);
+    });
+    tituloNoAlto(40);
+  };
+
+  // versus: a tela cortada na diagonal, um lado contra o outro, com o selo VS no meio
+  R.versus = function () {
+    if (TIPO !== "comparar") { R.comparar(); return; }
+    const lados = [s.esq || {}, s.dir || {}];
+    const t0 = T(lados[0].t, 0.3), t1 = Math.max(T(lados[1].t, DUR * 0.45), t0 + 0.8);
+    fundo(null);
+    const CORTE = ["polygon(0 0, 57% 0, 43% 100%, 0 100%)", "polygon(57% 0, 100% 0, 100% 100%, 43% 100%)"];
+    lados.forEach((lado, k) => {
+      const tlado = k ? t1 : t0;
+      const metade = el(`<div class="camada" ${PERMITE} style="clip-path:${CORTE[k]}"></div>`);
+      const foto = lado.foto || null;
+      if (foto) {
+        const img = el(`<img alt="" src="${esc(foto)}" style="object-position:${k ? "70% 50%" : "30% 50%"}">`, metade);
+        tl.fromTo(img, { scale: 1.15 }, { scale: 1.0, duration: Math.max(0.5, DUR - tlado), ease: "none" }, tlado);
+        el(`<i class="escuro forte" ${PERMITE}></i>`, metade);
+      } else {
+        el(`<div class="bg vazio" ${PERMITE} style="left:0;top:0;width:100%;height:100%"></div>`, metade);
+      }
+      el(`<i class="tinta ${k ? "vermelha" : ""}" ${PERMITE}></i>`, metade);
+      entra(metade, Math.max(0, tlado - 0.1), k ? "direita" : "esquerda", 0.5);
+      const bloco = el(`<div class="bloco" ${PERMITE} style="${k ? "right:110px;top:150px;text-align:right" : "left:110px;top:430px"}"></div>`);
+      escreve(texto(bloco, "gigante sombra-txt", "font-size:150px", 760, 240, 50), `*${limpo(lado.titulo || lado.texto)}*`, tlado + 0.1,
+              { cor: k && !s.neutro ? "vermelha" : "escura", passo: 0.07 });
+      (lado.itens || []).slice(0, 2).forEach((it, i) => escreve(texto(bloco, "leve", "font-size:46px;margin-top:12px", 760, 120, 26),
+              limpo(it.texto), T(it.t, tlado + 0.5 + i * 0.4), { passo: 0.05 }));
+    });
+    entra(el(`<div class="selo vs" ${PERMITE}>VS</div>`), t1 + 0.05, "carimbo", 0.45);
+    flash(t1);
+    if (s.legenda) escreve(texto(el(`<div class="bloco" ${PERMITE} style="left:0;top:720px;width:1920px;text-align:center"></div>`),
+                                  "serif", "font-size:50px;margin:0 auto;color:#fff", 1600, 64, 28), limpo(s.legenda), Math.min(t1 + 0.9, FIM), { passo: 0.05 });
+  };
+
   // comparar: um lado grande no meio; o outro entra e a tela divide (amarelo contra vermelho)
   R.comparar = function () {
     fundo(s.fundo, { desfoque: 8, forte: true });
@@ -402,7 +542,10 @@
     abertura: "titulo", capitulo: "titulo", revelacao: "titulo", encerramento: "titulo",
   };
   camera();
-  (R[QUAL[TIPO]] || R.frase)();
+  // s._layout: outro desenho do mesmo tipo (grade, faixas, telacheia; versus no comparar), escolhido pelo Python
+  // para duas cenas animadas seguidas não saírem iguais
+  const receita = s._layout && R[s._layout] ? s._layout : QUAL[TIPO];
+  (R[receita] || R.frase)();
   // o acabamento fica por cima de tudo, de propósito: a conferência não conta como texto escondido
   el(`<div class="vinheta" ${PERMITE}></div>`, root);
   el(`<div class="faixa" ${PERMITE}></div>`, root);

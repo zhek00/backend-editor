@@ -981,6 +981,15 @@ TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`
   criação esperou pelo agente (o tempos.json mediu). Agora cada bloco vira partes de até 3 lotes, que rodam ao mesmo
   tempo (as maiores primeiro); o primeiro lote de uma parte no meio do bloco vê a fala logo antes dele no lugar das
   cenas decididas. As fronteiras dos lotes não mudaram, então os lotes guardados em `cenas_lotes` continuam valendo.
+- **Desenhos variados no impacto** (`animation_ai.escolher_desenhos`, `DESENHOS`, motor `R.grade`, `R.faixas`,
+  `R.telacheia`, `R.versus`, 2026-10-14): 15 dos 19 trechos animados do everything-you-need-to-answer saíram como o
+  mesmo baralho de cartões (sete tipos caem na mesma receita, e a IA escolhe "lista" quase sempre). Os tipos de itens
+  ganharam a grade (lado a lado), as faixas (placar com miniatura) e a tela cheia (cada item na tela inteira, em
+  cortes; só com 1,2 s ou mais por item), e o comparar ganhou o versus (diagonal com o selo VS). Antes de gravar, em
+  ordem de tempo e junto com as cenas animadas que já estão no vídeo, cada trecho ganha, entre os desenhos em que cabe
+  (`desenhos_possiveis`), um diferente do anterior e o menos usado; vai em `dados._layout` (o de sempre da receita
+  não vai, e a assinatura não muda). `RECEITA_IMPACTO` repete o `QUAL` do motor, e um teste confere os dois. O
+  `regravar` passa os planos guardados de novo pela conferência e pede de novo o que reprovar (`_planos_conferidos`).
 - **Texto de tela na língua da fala** (animation-ai, 2026-10-14): as instruções mandavam "Português do Brasil", e no
   everything-you-need-to-answer (roteiro em inglês) a conferência recusou, com razão, 10 frases de nota 85 a 95 por
   "palavras que a fala não diz"; recusa guardada nunca era pedida de novo. Agora as instruções pedem a língua da fala

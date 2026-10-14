@@ -92,3 +92,42 @@ def test_nome_da_animacao_nao_pisa_no_arquivo_de_outra_cena(tmp_path):
     p = SimpleNamespace(ler_json=lambda nome: {"cenas": cenas})
     assert nome_livre(p, 34, ("_anim.mp4", "_anim_capa.jpg")) == "0034_2"
     assert nome_livre(p, 35, ("_anim.mp4", "_anim_capa.jpg")) == "0035"
+
+
+def test_receitas_do_python_batem_com_as_do_motor():
+    js = (a.RECURSOS / "motor_impacto.js").read_text(encoding="utf-8")
+    qual = js[js.index("const QUAL"):]
+    qual = dict(re.findall(r"(\w+):\s*\"(\w+)\"", qual[:qual.index("};")]))
+    assert qual == a.RECEITA_IMPACTO
+    for desenhos in a.DESENHOS.values():
+        for d in desenhos:
+            assert f"R.{d} = function" in js, d
+
+
+def test_desenhos_possiveis():
+    itens = lambda n: {"itens": [{"texto": f"item {i}"} for i in range(n)]}
+    assert a.desenhos_possiveis("lista", itens(3), 6.0) == ["baralho", "grade", "faixas", "telacheia"]
+    # cena 338 do everything-you-need-to-answer: 4 itens em 3,5 s, a tela cheia passaria rápido demais
+    assert a.desenhos_possiveis("lista", itens(4), 3.5) == ["baralho", "grade", "faixas"]
+    assert a.desenhos_possiveis("lista", itens(6), 9.0) == ["baralho"]
+    assert a.desenhos_possiveis("comparar", {}, 6.0) == ["comparar", "versus"]
+    assert a.desenhos_possiveis("antes_depois", {}, 6.0) == ["comparar"]
+    assert a.desenhos_possiveis("frase", {}, 6.0) == ["frase"]
+
+
+def test_duas_cenas_animadas_seguidas_nunca_saem_iguais(tmp_path):
+    cenas = [{"n": n, "ini": n * 10.0, "fim": n * 10.0 + 6, "midia": None} for n in range(1, 9)]
+    p = SimpleNamespace(pasta=tmp_path, config={}, perfil={}, ler_json=lambda nome: {"cenas": cenas})
+    lista = {"tipo": "lista", "dados": {"itens": [{"texto": "a"}, {"texto": "b"}, {"texto": "c"}]}}
+    pares = [([c], {"tipo": lista["tipo"], "dados": dict(lista["dados"])}) for c in cenas[:6]]
+    pares.append(([cenas[6]], {"tipo": "comparar", "dados": {}}))
+    pares.append(([cenas[7]], {"tipo": "comparar", "dados": {}}))
+    a.escolher_desenhos(p, pares)
+    desenhos = [pl["desenho"] for _, pl in pares]
+    assert desenhos[:4] == ["baralho", "grade", "faixas", "telacheia"]  # os quatro antes de repetir
+    assert all(x != y for x, y in zip(desenhos, desenhos[1:]))
+    assert desenhos[6:] in (["comparar", "versus"], ["versus", "comparar"])
+    # sempre o mesmo resultado
+    pares2 = [(g, {"tipo": pl["tipo"], "dados": pl["dados"]}) for g, pl in pares]
+    a.escolher_desenhos(p, pares2)
+    assert [pl["desenho"] for _, pl in pares2] == desenhos
