@@ -649,24 +649,45 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
     PROGRESSO[projeto.nome] = {"feitos": 0, "total": sum(-(-len(ks) // por_lote) for ks in por_bloco.values())}
 
     ordem = sorted(por_bloco)
-
-    def decidir_bloco(id_bloco):
-        """Os lotes de um bloco, em ordem. Cada lote vê as últimas cenas decididas no próprio bloco; o primeiro
-        vê só o nome e a âncora do bloco anterior, para os blocos poderem rodar em paralelo e o pedido (e o
-        cache) ser sempre o mesmo, rode na ordem que rodar."""
-        bloco, ks = blocos[id_bloco], por_bloco[id_bloco]
-        posicao = ordem.index(id_bloco)
-        anterior = blocos[ordem[posicao - 1]] if posicao else None
+    # cada bloco vira partes de até lotes_por_trecho lotes, e as partes rodam em paralelo. Dentro de uma parte os
+    # lotes saem em fila (cada um vê as cenas decididas no anterior): no everything-you-need-to-answer (2026-10-14)
+    # o mapa pôs 65% do roteiro no bloco 10, que andou sozinho, lote a lote, por 1h20 dos 1h35 que a criação esperou
+    # pelo agente. As fronteiras dos lotes são as de sempre (o tamanho sai do bloco inteiro), então os lotes já
+    # guardados em cenas_lotes valem: a marca do arquivo não leva o resumo (arquivo_do_lote)
+    por_parte = max(1, int(cfg.get("lotes_por_trecho", 3)))
+    partes = []
+    for id_bloco in ordem:
+        ks = por_bloco[id_bloco]
         # lotes do mesmo tamanho, em vez de 10 + 10 + uma sobra de 1 ou 2 cenas que custava um pedido inteiro
         quantos = -(-len(ks) // por_lote)
         tamanho = -(-len(ks) // quantos)
+        lotes = [ks[i:i + tamanho] for i in range(0, len(ks), tamanho)]
+        partes += [(id_bloco, lotes[i:i + por_parte]) for i in range(0, len(lotes), por_parte)]
+
+    def fala_antes(k, quantas=2):
+        """O que é falado logo antes da cena k: o começo de uma parte no meio do bloco não vê as cenas de antes
+        (elas são decididas ao mesmo tempo, em outra parte), só a fala."""
+        return " ".join(" ".join(f["texto"] for f in unidades[cortes[j]["primeira_frase"]:cortes[j]["ultima_frase"] + 1])
+                        for j in range(max(0, k - quantas), k))
+
+    def decidir_parte(parte):
+        """Os lotes de uma parte, em ordem. Cada lote vê as últimas cenas decididas na própria parte; o primeiro
+        do bloco vê só o nome e a âncora do bloco anterior, e o primeiro de uma parte no meio do bloco vê a fala
+        que vem antes dele: assim as partes rodam em paralelo e o pedido (e o cache) é sempre o mesmo, rode na
+        ordem que rodar."""
+        id_bloco, lotes = parte
+        bloco = blocos[id_bloco]
+        posicao = ordem.index(id_bloco)
+        anterior = blocos[ordem[posicao - 1]] if posicao else None
         brutas, locais = {}, {}
-        for inicio in range(0, len(ks), tamanho):
-            lote = ks[inicio:inicio + tamanho]
+        for lote in lotes:
             anteriores = [k for k in sorted(locais) if k < lote[0]][-3:]
             if anteriores:
                 resumo = "\n".join(f"CENA {k + 1}: {locais[k].get('descricao', '')} "
                                    f"({locais[k].get('visual', '')}, {locais[k].get('busca', '')})" for k in anteriores)
+            elif lote[0] != por_bloco[id_bloco][0]:
+                resumo = (f"(meio do bloco {bloco['id']}; as cenas de antes são decididas à parte. A fala logo antes "
+                          f"da cena {lote[0] + 1}: \"{fala_antes(lote[0])}\")")
             elif anterior:
                 resumo = f"(começo do bloco; o bloco anterior foi {anterior['id']}. {anterior['nome']}, âncora: {anterior['ancora']})"
             else:
@@ -714,10 +735,11 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
                     andamento["feitos"] = min(andamento["feitos"] + 1, andamento["total"])
         return brutas
 
-    # os blocos não dependem um do outro, então vários rodam ao mesmo tempo (roteirista.paralelo)
+    # as partes não dependem uma da outra, então várias rodam ao mesmo tempo (roteirista.paralelo). As maiores
+    # primeiro: a última a sair é a que segura a criação
     brutas = {}
     with ThreadPoolExecutor(max_workers=max(1, int(cfg.get("paralelo", 4)))) as grupo:
-        for resultado in grupo.map(decidir_bloco, ordem):
+        for resultado in grupo.map(decidir_parte, sorted(partes, key=lambda pt: -sum(len(l) for l in pt[1]))):
             brutas.update(resultado)
 
     # o reaproveitamento pode apontar para uma cena de outro bloco, então só é resolvido com tudo decidido

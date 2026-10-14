@@ -109,6 +109,49 @@ def _esforco(modelo, raciocinio):
     return None
 
 
+def _formato_do_esquema(esquema, estrito) -> dict:
+    """O json_schema do pedido. O modo estrito do Groq (gpt-oss) exige additionalProperties: false e todos os campos
+    obrigatórios em todo objeto: sem isso ele recusava o pedido inteiro ("invalid JSON schema", 2026-10-14, nas
+    etapas "animation-ai: onde ajuda" e "prompts de IA em sequência"), e cada chamada dessas perdia uma rota da
+    cadeia. Quando o esquema cabe, o additionalProperties é posto aqui; quando não cabe (o "dados" livre do
+    animation-ai, campo opcional), vai sem o modo estrito."""
+    if estrito:
+        convertido = _estrito(esquema)
+        if convertido is not None:
+            return {"name": "cenas", "strict": True, "schema": convertido}
+    return {"name": "cenas", "strict": False, "schema": esquema}
+
+
+def _estrito(no):
+    """Uma cópia do esquema com additionalProperties: false em todo objeto, ou None se algum objeto não couber no
+    modo estrito (sem a lista de campos, ou com campo opcional)."""
+    if isinstance(no, list):
+        itens = [_estrito(x) for x in no]
+        return None if any(x is None for x in itens) else itens
+    if not isinstance(no, dict):
+        return no
+    if no.get("type") == "object":
+        campos = no.get("properties")
+        if not campos or set(no.get("required") or []) != set(campos):
+            return None
+    saida = {}
+    for chave, valor in no.items():
+        if isinstance(valor, (dict, list)):
+            if chave == "properties":
+                convertidos = {k: _estrito(v) for k, v in valor.items()}
+                if any(v is None for v in convertidos.values()):
+                    return None
+                saida[chave] = convertidos
+                continue
+            valor = _estrito(valor)
+            if valor is None:
+                return None
+        saida[chave] = valor
+    if no.get("type") == "object":
+        saida["additionalProperties"] = False
+    return saida
+
+
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
               na_cadeia=False, raciocinio=None):
     """imagens é uma lista de caminhos de JPG enviados junto do pedido, para modelos com visão.
@@ -142,7 +185,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
         ],
         "response_format": {
             "type": "json_schema",
-            "json_schema": {"name": "cenas", "strict": "gpt-oss" in modelo, "schema": esquema},
+            "json_schema": _formato_do_esquema(esquema, "gpt-oss" in modelo),
         },
     }
     if na_cadeia:
@@ -223,8 +266,14 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             return mimo(f"o Groq está fora do ar (erro {r.status_code})")
         if r.status_code == 400:
             texto = r.text.lower()
+            formato = corpo["response_format"].get("json_schema") or {}
+            esquema_recusado = "json_schema" in texto or "json schema" in texto
+            # o modo estrito recusou o esquema: tenta sem ele antes de largar o esquema
+            if esquema_recusado and formato.get("strict"):
+                corpo["response_format"]["json_schema"] = {**formato, "strict": False, "schema": esquema}
+                continue
             # modelo sem suporte a esquema: pede só JSON e descreve o formato no texto
-            if "json_schema" in texto and corpo["response_format"]["type"] == "json_schema":
+            if esquema_recusado and corpo["response_format"]["type"] == "json_schema":
                 corpo["response_format"] = {"type": "json_object"}
                 corpo["messages"][0]["content"] += (
                     "\n\nResponda somente com um JSON neste esquema:\n" + json.dumps(esquema, ensure_ascii=False))

@@ -973,6 +973,18 @@ TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`
   `uso_*.json` (a do Claude Code vem do `duration_ms` dele). Não use a data dos arquivos para medir: ela mistura
   produção com edição, regravação e a fábrica desligada (a "noite inteira" do nunca-deve-ter-dentro-de-casa-parte-2
   foi a fábrica desligada).
+- **Bloco grande do roteiro em partes** (`roteirista.planejar_grupos`, `roteirista.lotes_por_trecho`, 2026-10-14):
+  os lotes de um bloco saem em fila (cada um vê as 3 últimas cenas do anterior), e só blocos diferentes rodam juntos.
+  No everything-you-need-to-answer o mapa pôs 65% do roteiro no bloco 10, que andou sozinho por 1h20 dos 1h35 que a
+  criação esperou pelo agente (o tempos.json mediu). Agora cada bloco vira partes de até 3 lotes, que rodam ao mesmo
+  tempo (as maiores primeiro); o primeiro lote de uma parte no meio do bloco vê a fala logo antes dele no lugar das
+  cenas decididas. As fronteiras dos lotes não mudaram, então os lotes guardados em `cenas_lotes` continuam valendo.
+- **Esquema no modo estrito do Groq** (`groq_local._formato_do_esquema`, 2026-10-14): o gpt-oss exige
+  `additionalProperties: false` e todos os campos obrigatórios em todo objeto; sem isso recusava "invalid JSON
+  schema" e a chamada perdia a rota ("prompts de IA em sequência", "animation-ai: onde ajuda"). O esquema que cabe
+  ganha o `additionalProperties` na hora; o que não cabe (o `dados` livre, campo opcional) vai sem o modo estrito, e
+  um "invalid JSON schema" que ainda vier tenta sem o estrito antes do JSON simples (antes só "json_schema", com
+  sublinhado, ligava essa volta).
 
 **Modelo de texto pago só com a confirmação da pessoa, e só depois de TODOS os gratuitos** (`fabrica/pago.py`,
 `openrouter.confirmar_pago`, pedido do usuário em 2026-10-06: o saldo do OpenRouter caiu de US$ 6,10 para US$ 1,97 em

@@ -177,6 +177,9 @@ roteirista:
   paralelo: 8                # blocos do roteiro decididos ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10: o
                              # Nemotron Ultra grátis leva 1,5 a 4 min por lote, e no teste-frango a busca esperou 9,5 min
                              # pelas cenas. O limite do OpenRouter grátis (20 por minuto) aguenta folgado
+  lotes_por_trecho: 3        # bloco grande é decidido em partes de até 3 lotes, ao mesmo tempo. Dentro de uma parte os
+                             # lotes saem em fila; no everything-you-need-to-answer (2026-10-14) um bloco com 65% do
+                             # roteiro andou sozinho, lote a lote, por 1h20. Menos = mais rápido, menos continuidade
 
 claude:
   via: assinatura           # assinatura usa o Claude Code do Mac. api usa créditos da ANTHROPIC_API_KEY
