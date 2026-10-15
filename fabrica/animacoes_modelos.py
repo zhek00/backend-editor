@@ -126,7 +126,7 @@ def numero(d, dur):
         prefixo, sufixo = json.dumps(d.get("prefixo", "")), json.dumps(d.get("sufixo", ""))
         js.append(f"""const contador = {{ v: 0 }};
 tl.to(contador, {{ v: {valor}, duration: 0.8, ease: "power2.out", onUpdate: () => {{
-  document.getElementById("n-numero").textContent = {prefixo} + contador.v.toLocaleString("pt-BR", {{
+  document.getElementById("n-numero").textContent = {prefixo} + contador.v.toLocaleString(document.documentElement.lang || "pt-BR", {{
     minimumFractionDigits: {casas}, maximumFractionDigits: {casas} }}) + {sufixo};
 }} }}, {t:.2f});""")
     if medidor is not None:

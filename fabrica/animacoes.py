@@ -29,6 +29,8 @@ import shutil
 import subprocess
 import threading
 import unicodedata
+
+from . import idioma
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -337,7 +339,8 @@ O TEMPO MANDA: todo "t" é o segundo em que aquela palavra é falada, tirado da 
 entra quando é falado, nunca antes. Elemento que não é falado no trecho (um rótulo, um título) entra junto com a
 palavra mais próxima do sentido dele.
 
-Textos: português do Brasil, com acentos. Curtos (veja os limites de cada campo). Só o que a narração diz ou o fato
+Textos: na MESMA LÍNGUA da narração deste trecho (narração em inglês, textos em inglês; em português, português do
+Brasil com acentos). Curtos (veja os limites de cada campo). Só o que a narração diz ou o fato
 direto dela; nunca invente número, data ou nome. Títulos e rótulos em poucas palavras.
 """
 
@@ -379,13 +382,13 @@ def _erros_para_o_modelo(erros_conferencia) -> list:
     return saida
 
 
-def _montar_html(partes, dur, largura, altura, estilo) -> str:
+def _montar_html(partes, dur, largura, altura, estilo, lang="pt-BR") -> str:
     """A página da camada: fundo transparente, o véu escuro que entra e sai, e o conteúdo do modelo."""
     dur = round(dur, 3)
     cores = "".join(f"--{k}: {v};" for k, v in estilo.items() if k != "escurecer")
     saida = max(dur - 0.35, 0.0)
     return f"""<!doctype html>
-<html lang="pt-BR">
+<html lang="{lang}">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width={largura}, height={altura}" />
@@ -582,6 +585,31 @@ def _novo_item(cenas_do_trecho, palavras) -> dict | None:
     }
 
 
+def _textos_dos_dados(dados) -> list:
+    """Todo texto que a animação escreve na tela (os valores de texto dos dados, em qualquer nível)."""
+    saida = []
+    if isinstance(dados, dict):
+        for chave, valor in dados.items():
+            if chave in ("t", "palavra", "cor", "icone", "forma", "estilo"):
+                continue
+            saida += _textos_dos_dados(valor)
+    elif isinstance(dados, list):
+        for valor in dados:
+            saida += _textos_dos_dados(valor)
+    elif isinstance(dados, str):
+        saida.append(dados)
+    return saida
+
+
+def _lingua_da_tela(dados, lingua, fala) -> list:
+    """O erro para o modelo quando a animação escreve em outra língua que a do roteiro (idioma.py)."""
+    fora = idioma.outra_lingua(_textos_dos_dados(dados), lingua, fala)
+    if not fora:
+        return []
+    return [f"o texto da tela está em outra língua que a do vídeo ({', '.join(fora[:4])}): escreva tudo em "
+            f"{idioma.nome(lingua)}, com as palavras da narração"]
+
+
 def _trechos(projeto, cenas, candidatas) -> list:
     """Agrupa cenas de animação seguidas, do mesmo bloco, em trechos de até duracao_maxima segundos."""
     maximo = float(config(projeto).get("duracao_maxima", DURACAO_MAXIMA))
@@ -660,7 +688,8 @@ def _animar(projeto, item, vizinhas, forcar, log, limite=None):
         """Escreve a página da camada com a duração pelo conteúdo e devolve essa duração."""
         duracao = duracao_do_conteudo(projeto, dados, limite)
         (pasta / "index.html").write_text(
-            _montar_html(partes_do_modelo(modelo, dados, duracao), duracao, largura, altura, estilo), encoding="utf-8")
+            _montar_html(partes_do_modelo(modelo, dados, duracao), duracao, largura, altura, estilo,
+                         idioma.locale(projeto)), encoding="utf-8")
         return duracao
 
     destino_atual = projeto.pasta / item["arquivo"] if item.get("arquivo") else None
@@ -671,10 +700,17 @@ def _animar(projeto, item, vizinhas, forcar, log, limite=None):
     pasta.mkdir(parents=True, exist_ok=True)
     _preparar_pasta(pasta)
     escolha = None
+    lingua = idioma.lingua(projeto)
+    sugestao = (item.get("pedido") or {}).get("texto_tela") or ""
+    if sugestao and idioma.outra_lingua(sugestao, lingua, fala):
+        # o overlay sugerido pelo roteirista veio em outra língua (o "10 SUPERMERCADOS" de um vídeo em inglês): não vai
+        # nem como sugestão, para não puxar o modelo para ela
+        item = {**item, "pedido": {**item.get("pedido", {}), "texto_tela": ""}}
     if not forcar and item.get("modelo") in MODELOS:
         # a mesma fala: só o tempo (outra voz) ou o design mudou, então reaproveita o que o modelo escolheu
         dados = _remapear(item.get("dados"), item.get("tempos") or [], tempos)
         dados, erros = conferir_dados(item["modelo"], dados, dur, tempos, fala)
+        erros = erros or _lingua_da_tela(dados, lingua, fala)  # o plano antigo em outra língua é feito de novo
         if not erros:
             duracao = desenhar(item["modelo"], dados)
             if not _conferir(projeto, pasta):
@@ -683,10 +719,12 @@ def _animar(projeto, item, vizinhas, forcar, log, limite=None):
         erros = []
         for tentativa in range(int(config(projeto).get("tentativas", 3))):
             resposta = openrouter_local.perguntar(
-                projeto, "animação da cena", INSTRUCOES, _pedido(item, ancora, vizinhas, erros), ESQUEMA, log=log,
+                projeto, "animação da cena", INSTRUCOES + "\n" + idioma.regra_da_tela(projeto),
+                _pedido(item, ancora, vizinhas, erros), ESQUEMA, log=log,
                 modelo=openrouter_local.principal(projeto), temperatura=0.4 if tentativa else 0.2)
             modelo = str(resposta.get("modelo") or "").strip()
             dados, erros = conferir_dados(modelo, resposta.get("dados"), dur, tempos, fala)
+            erros = erros or _lingua_da_tela(dados, lingua, fala)
             if not erros:
                 duracao = desenhar(modelo, dados)
                 erros = _erros_para_o_modelo(_conferir(projeto, pasta))

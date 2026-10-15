@@ -28,7 +28,7 @@
   const esc = v => String(v == null ? "" : v).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   // *trecho* no texto vira destaque na cor do canal
   const rico = v => esc(v).replace(/\*(.+?)\*/g, '<span class="d">$1</span>');
-  const fmt = (v, casas) => Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+  const fmt = (v, casas) => Number(v).toLocaleString(document.documentElement.lang || "pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
   const T = (v, padrao) => (typeof v === "number" && isFinite(v) ? v : padrao);
   const lerp = (a, b, k) => a + (b - a) * k;
   // sorteio com semente (mulberry32) e um hash de inteiro: o mesmo número dá sempre o mesmo resultado

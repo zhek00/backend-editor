@@ -635,6 +635,10 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
     m = mapa(projeto, log)
     cfg = projeto.config.get("roteirista") or {}
     por_lote = cfg.get("cenas_por_lote", 10)
+    # o overlay (texto na tela) na língua do roteiro; vai nas instruções, fora da marca dos lotes guardados (só muda o
+    # pedido de roteiro que não é em português). Pedido do usuário em 2026-10-14 (idioma.py)
+    from . import idioma
+    regra_tela = "" if idioma.lingua(projeto) == "pt" else "\n\n" + idioma.regra_da_tela(projeto)
     mapa_texto = _mapa_para_o_modelo(m)
     perfil_texto = _perfil_do_nicho(projeto)
     from . import aprendizados
@@ -710,7 +714,7 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
                 for tentativa in range(2):
                     extra = ("\n\nA RESPOSTA ANTERIOR FOI RECUSADA. Corrija:\n- " + "\n- ".join(problemas)) if problemas else ""
                     try:
-                        respostas = _modelo_agente(projeto).perguntar(projeto, "roteirista: cenas", PROMPT_CENAS,
+                        respostas = _modelo_agente(projeto).perguntar(projeto, "roteirista: cenas", PROMPT_CENAS + regra_tela,
                                                                       pedido + extra, ESQUEMA_CENAS, log=log).get("cenas", [])
                     except (RuntimeError, SystemExit) as e:
                         log(f"  o agente não decidiu as cenas {lote[0] + 1} a {lote[-1] + 1} ({str(e)[:90]})")

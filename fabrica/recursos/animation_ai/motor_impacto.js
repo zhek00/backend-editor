@@ -23,7 +23,7 @@
   const T = (v, padrao) => (typeof v === "number" && isFinite(v) ? v : padrao);
   const esc = v => String(v == null ? "" : v).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const limpo = v => String(v == null ? "" : v).replace(/\*/g, "").trim();
-  const fmt = (v, casas) => Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 });
+  const fmt = (v, casas) => Number(v).toLocaleString(document.documentElement.lang || "pt-BR", { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 });
   const FIM = Math.max(0.6, DUR - 0.5);
 
   function el(html, pai) {

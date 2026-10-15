@@ -298,7 +298,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
         # a API do Google com a GEMINI_API_KEY (faturamento do AI Studio): no MCP ela descreve e escolhe as imagens no
         # lugar do Claude do cliente (mcp.visao_pela_fabrica). Quem não responde passa a vez na cadeia
         from . import gemini_local
-        resposta = gemini_local.perguntar(projeto, etapa, instrucoes + REGRA_DO_ALFABETO, pedido, esquema, log=log,
+        resposta = gemini_local.perguntar(projeto, etapa, instrucoes + regra_do_idioma(projeto), pedido, esquema, log=log,
                                           modelo=rota[7:], imagens=imagens, temperatura=temperatura, na_cadeia=True,
                                           raciocinio=_raciocinio_gemini(projeto, etapa))
         faltam = [k for k in (esquema or {}).get("required", []) if not isinstance(resposta, dict) or k not in resposta]
@@ -310,7 +310,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
                                cadeia=cadeia, raciocinio=raciocinio)
     from . import groq_local
     tabela = raciocinio if raciocinio is not None else ((projeto.config.get("openrouter") or {}).get("raciocinio_por_modelo") or {})
-    sistema = instrucoes + REGRA_DO_ALFABETO
+    sistema = instrucoes + regra_do_idioma(projeto)
     obrigatorias = (esquema or {}).get("required", [])
     resposta = None
     for tentativa in range(2):
@@ -321,7 +321,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
         if not faltam and not quebrados:
             return resposta
         # as mesmas conferências da rota do OpenRouter: chaves que faltaram e pedaços de outro alfabeto
-        sistema = instrucoes + REGRA_DO_ALFABETO + (
+        sistema = instrucoes + regra_do_idioma(projeto) + (
             f"\n\nATENÇÃO: a resposta anterior não trouxe as chaves {', '.join(faltam)}. Use exatamente os nomes de "
             "chave do esquema." if faltam else
             "\n\nATENÇÃO: a resposta anterior misturou caracteres de outros alfabetos no meio do texto. Escreva tudo "
@@ -343,7 +343,7 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
     traduzir=False é a própria chamada de tradução dos trechos de outro alfabeto, que não traduz de novo."""
     cfg = projeto.config.get("openrouter") or {}
     # o Space Bunny e o Qwen misturam chinês no meio da resposta: o aviso vai antes, em todo pedido
-    instrucoes = instrucoes + REGRA_DO_ALFABETO
+    instrucoes = instrucoes + regra_do_idioma(projeto)
     rota = modelo
     url, chave, modelo, provedor = _rota(rota)
     if isinstance(pedido, list):
@@ -490,6 +490,24 @@ REGRA_DO_ALFABETO = (
     "\n\nIDIOMA: escreva todo o texto da resposta em português do Brasil (ou em inglês só onde o pedido mandar "
     "inglês, como nos termos de busca), sempre com o alfabeto latino. Nunca escreva em chinês, japonês, coreano, "
     "cirílico ou outro alfabeto, nem no meio de uma palavra. Não comente o seu raciocínio na resposta.")
+
+
+def regra_do_idioma(projeto) -> str:
+    """A REGRA_DO_ALFABETO e, num roteiro em outra língua, a exceção do que aparece na tela: o texto interno da fábrica
+    (descrições, motivos, notas) segue em português, mas o que o público vê vai na língua do roteiro. Antes, a regra
+    mandava TUDO em português, e o overlay do roteirista saiu "10 SUPERMERCADOS • 3 SEMANAS" num vídeo para americanos
+    (cena 8 do everything-you-need-to-answer, 2026-10-14)."""
+    from . import idioma
+
+    try:
+        codigo = idioma.lingua(projeto)
+    except Exception:  # noqa: BLE001
+        codigo = "pt"
+    if codigo == "pt":
+        return REGRA_DO_ALFABETO
+    return (REGRA_DO_ALFABETO + f"\nEXCEÇÃO OBRIGATÓRIA: este vídeo é em {idioma.nome(codigo)}. Todo texto que vai "
+            f"aparecer na tela ou para o público (overlay, texto na tela, títulos, rótulos, legendas, título e descrição "
+            f"do YouTube, shorts, thumbnail) vai em {idioma.nome(codigo)}, nunca em português.")
 
 
 def _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota):

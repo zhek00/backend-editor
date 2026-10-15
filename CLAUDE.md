@@ -1031,6 +1031,16 @@ TODOS os gratuitos da cadeia, e o consumo vai para a planilha (`fabrica consumo`
   (`desenhos_possiveis`), um diferente do anterior e o menos usado; vai em `dados._layout` (o de sempre da receita
   não vai, e a assinatura não muda). `RECEITA_IMPACTO` repete o `QUAL` do motor, e um teste confere os dois. O
   `regravar` passa os planos guardados de novo pela conferência e pede de novo o que reprovar (`_planos_conferidos`).
+- **Tudo que aparece na tela vai na língua do roteiro** (`idioma.py`, pedido do usuário em 2026-10-14, "fix this
+  now"): um vídeo para americanos saiu com "10 SUPERMERCADOS • 3 SEMANAS • DEZENAS DE FRANGOS" na tela. A regra global
+  do `openrouter_local` (REGRA_DO_ALFABETO) mandava toda resposta em português; ela segue para os textos internos
+  (descrições, motivos, notas do Jev), mas `regra_do_idioma(projeto)` acrescenta, em roteiro de outra língua, que o
+  que aparece na tela ou para o público vai na língua dele. `idioma.lingua(projeto)` lê o roteiro inteiro (pt, en, es);
+  `idioma.regra_da_tela` vai nos pedidos de texto de tela: o overlay do roteirista (nas instruções, fora da marca dos
+  lotes guardados), as animações de diagrama e texto na tela (`animacoes.py`), a publicação e os shorts. Última
+  barreira: `animacoes._lingua_da_tela` recusa o plano com texto em outra língua (o antigo é feito de novo) e não
+  manda o overlay de outra língua nem como sugestão; o animation-ai já conferia. Os números das animações saem no
+  formato da língua (`<html lang>` e `toLocaleString` pela página: 1,500 em inglês).
 - **Texto de tela na língua da fala** (animation-ai, 2026-10-14): as instruções mandavam "Português do Brasil", e no
   everything-you-need-to-answer (roteiro em inglês) a conferência recusou, com razão, 10 frases de nota 85 a 95 por
   "palavras que a fala não diz"; recusa guardada nunca era pedida de novo. Agora as instruções pedem a língua da fala
