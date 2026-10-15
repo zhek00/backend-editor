@@ -93,17 +93,19 @@ def _prioridade_da_ia(cena) -> int:
     personagem, que só a IA desenha)."""
     if cena.get("personagem") or cena.get("prompt_manual") or cena.get("imagem_da_pessoa"):
         return 0
+    if cena.get("ia_motivo") or cena.get("ia_reserva"):
+        # o Jev reprovou a foto do banco: a IA completa, mesmo acima do teto (pedido do usuário em 2026-10-15: "o
+        # vídeo jamais deve ter cenas vazias"). Mandar de volta ao banco punha uma foto sem julgamento no lugar
+        return 0
     if cena.get("teto_ia"):
         # já teve a chance no banco pelo teto: se voltou para a IA, a foto do assunto não existia ou foi reprovada
         # pelo Jev (nunca outra coisa no vídeo). Uma vez só, senão a cena ia e voltava entre o banco e a IA
         return 0
     if cena.get("onde_existe") == "nao_existe":
         return 1  # um momento que ninguém fotografou
-    if cena.get("ia_motivo") or cena.get("ia_reserva"):
-        return 2  # o banco trouxe outra coisa e o Jev reprovou
     if cena.get("epoca") or cena.get("onde_existe") == "arquivo":
-        return 3
-    return 4
+        return 2
+    return 3
 
 
 def _teto_da_ia(projeto, pendentes, log):

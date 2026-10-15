@@ -104,3 +104,16 @@ def test_sem_teto_ou_offline_nada_muda(tmp_path, monkeypatch):
     p = _projeto(tmp_path, cenas)
     p.config["ia"]["ativa"] = False
     assert imagens._teto_da_ia(p, cenas, log=lambda *_: None) == cenas
+
+
+def test_cena_reprovada_pelo_jev_vai_para_a_ia_mesmo_com_o_teto_cheio(tmp_path, monkeypatch):
+    # "o vídeo jamais deve ter cenas vazias": com as vagas acabadas, a foto reprovada pelo Jev vira IA, sem voltar ao
+    # banco (onde entraria uma foto do assunto sem julgamento)
+    cenas = [_cena(n) for n in range(1, 11)]
+    cenas[4].update(ia_motivo="o Jev deu 10% de chance de combinar com a narração", ia_reserva={"midia": {}})
+    p = _projeto(tmp_path, cenas, com_imagem=(1, 2, 3))  # as 3 vagas (35% de 10) já estão ocupadas
+    buscar, buscadas = _banco(acha=set(range(1, 11)))
+    monkeypatch.setattr(midia, "buscar", buscar)
+    seguem = imagens._teto_da_ia(p, cenas[3:], log=lambda *_: None)
+    assert [c["n"] for c in seguem] == [5]
+    assert 5 not in buscadas and buscadas == [4, 6, 7, 8, 9, 10]
