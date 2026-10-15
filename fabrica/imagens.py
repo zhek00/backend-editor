@@ -88,11 +88,88 @@ def gerar(projeto, apenas=None, log=print, direto=False, conferir=True):
     return resultado
 
 
+def _prioridade_da_ia(cena) -> int:
+    """Quem fica com a IA quando o vídeo passa do teto: menor primeiro. 0 nunca sai da IA (a escolha da pessoa e o
+    personagem, que só a IA desenha)."""
+    if cena.get("personagem") or cena.get("prompt_manual") or cena.get("imagem_da_pessoa"):
+        return 0
+    if cena.get("teto_ia"):
+        # já teve a chance no banco pelo teto: se voltou para a IA, a foto do assunto não existia ou foi reprovada
+        # pelo Jev (nunca outra coisa no vídeo). Uma vez só, senão a cena ia e voltava entre o banco e a IA
+        return 0
+    if cena.get("onde_existe") == "nao_existe":
+        return 1  # um momento que ninguém fotografou
+    if cena.get("ia_motivo") or cena.get("ia_reserva"):
+        return 2  # o banco trouxe outra coisa e o Jev reprovou
+    if cena.get("epoca") or cena.get("onde_existe") == "arquivo":
+        return 3
+    return 4
+
+
+def _teto_da_ia(projeto, pendentes, log):
+    """No máximo midia.teto_da_ia das cenas do vídeo com imagem de IA (pedido do usuário em 2026-10-15: o
+    everything-you-need-to-answer saiu com 54%, 183 de 340 cenas). A IA fica com as cenas de prioridade mais alta; as
+    outras voltam ao banco, onde a busca da própria cena e depois a foto do assunto do bloco (o tapa-buraco, com os
+    mesmos filtros, midia._preencher_vazias) preenchem. O exato sai (fica em exato_original): ele é o que a busca da
+    cena já não achou, e no everything era a busca inteira ("Lidl UK roast chicken hot counter"). A espécie do animal
+    continua obrigatória. Cena que nem assim achou foto vai para a IA: cena vazia trava o render.
+    Devolve os pendentes que seguem para a IA."""
+    teto = midia.teto_da_ia(projeto)
+    if not teto or projeto.offline or not pendentes:
+        return pendentes
+    dados = projeto.ler_json("cenas.json")
+    todas = dados["cenas"]
+    vagas = int(teto * len(todas))
+    nos_pendentes = {c["n"] for c in pendentes}
+    ja = sum(1 for c in todas if c["n"] not in nos_pendentes and not c.get("midia") and projeto.imagem(c["n"]).exists())
+    livres = max(0, vagas - ja)
+    ordem = sorted(pendentes, key=lambda c: (_prioridade_da_ia(c), c["n"]))
+    sempre = [c for c in ordem if _prioridade_da_ia(c) == 0]
+    resto = [c for c in ordem if _prioridade_da_ia(c) != 0]
+    ficam = sempre + resto[:max(0, livres - len(sempre))]
+    saem = {c["n"] for c in resto[max(0, livres - len(sempre)):]}
+    if not saem:
+        return pendentes
+    log(f"  teto de IA ({teto:.0%}, {vagas} de {len(todas)} cenas; {ja} já têm imagem de IA): "
+        f"{len(saem)} cena(s) vão buscar foto do assunto no banco em vez da IA")
+    for c in todas:
+        if c["n"] not in saem:
+            continue
+        c["teto_ia"] = True
+        if c.get("tipo") not in midia.TIPOS_REAIS:
+            c["tipo"] = "foto_real"
+        c["busca"] = next((b.strip() for b in (c.get("busca"), c.get("busca_reserva"), c.get("busca_alternativa"),
+                                                 c.get("sujeito")) if (b or "").strip()), "")
+        if c.get("exato"):
+            c["exato_original"] = c["exato"]
+        # VAZIO, não apagado: sem o campo, midia.exigido_da_cena deduz um nome próprio da fala e volta a exigir ele
+        c["exato"] = ""
+        c.pop("sem_midia_real", None)
+    projeto.salvar_json("cenas.json", dados)
+    try:
+        midia.buscar(projeto, apenas=saem, log=log)
+    except (Exception, SystemExit) as erro:
+        # o teto economiza, nunca para o vídeo: o que a busca não resolveu segue para a IA
+        log(f"  a busca do teto de IA falhou, as cenas seguem para a IA: {str(erro)[:160]}")
+    dados = projeto.ler_json("cenas.json")
+    sem_foto = [c for c in dados["cenas"] if c["n"] in saem and not c.get("midia")]
+    log(f"  teto de IA: {len(saem) - len(sem_foto)} cena(s) ficaram com foto de banco"
+        + (f"; {len(sem_foto)} sem nenhuma foto do assunto seguem para a IA mesmo acima do teto" if sem_foto else ""))
+    for c in sem_foto:
+        c["sem_midia_real"] = True
+    if sem_foto:
+        projeto.salvar_json("cenas.json", dados)
+    seguem = {c["n"] for c in ficam} | {c["n"] for c in sem_foto}
+    return [c for c in dados["cenas"] if c["n"] in seguem]
+
+
 def _gerar(projeto, apenas=None, log=print, direto=False):
     cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]
     pendentes = pendentes_ia(projeto, cenas)
     if pendentes and not projeto.offline:
         pendentes = _motion_antes_da_ia(projeto, apenas, pendentes, log)
+    if pendentes and not projeto.offline:
+        pendentes = _teto_da_ia(projeto, pendentes, log)
     from .midia import ia_ativa
 
     if pendentes and not ia_ativa(projeto):

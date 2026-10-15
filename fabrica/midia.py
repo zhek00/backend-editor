@@ -269,6 +269,17 @@ def ia_ativa(projeto) -> bool:
     return bool((projeto.config.get("ia") or {}).get("ativa", True))
 
 
+def teto_da_ia(projeto):
+    """ia.teto no config.yaml: a fração máxima das cenas com imagem de IA (0,35), ou None sem teto ou sem IA."""
+    if not ia_ativa(projeto):
+        return None
+    try:
+        teto = float((projeto.config.get("ia") or {}).get("teto") or 0)
+    except (TypeError, ValueError):
+        return None
+    return teto if 0 < teto < 1 else None
+
+
 def precisa_ia(cena) -> bool:
     return cena.get("tipo", "ia") not in TIPOS_REAIS or bool(cena.get("sem_midia_real"))
 
@@ -1019,9 +1030,12 @@ def _buscar_cenas(projeto, dados, alvo, geral, buscador, log, permissivo):
         _segunda_leva(projeto, [por_n[n] for n in sorted(adiadas)], candidatos, segunda_leva, na_segunda,
                       buscador, descricoes if conferir else None, aplicar, log)
 
-    if not projeto.offline and not ia_ativa(projeto):
-        # sem IA, uma cena vazia vira buraco no vídeo: melhor uma imagem na dúvida do que nenhuma
-        _preencher_vazias(projeto, dados, alvo, candidatos, buscador, usados, falhas_de_download, log, descricoes)
+    if not projeto.offline:
+        # sem IA, uma cena vazia vira buraco no vídeo: melhor uma imagem do assunto do que nenhuma. Com a IA ligada,
+        # o mesmo vale para as cenas que passaram do teto de IA (teto_ia, imagens._teto_da_ia)
+        sem_ia = alvo if not ia_ativa(projeto) else [c for c in alvo if c.get("teto_ia")]
+        if sem_ia:
+            _preencher_vazias(projeto, dados, sem_ia, candidatos, buscador, usados, falhas_de_download, log, descricoes)
 
     encontrados, sem_resposta = 0, 0
     for cena in alvo:

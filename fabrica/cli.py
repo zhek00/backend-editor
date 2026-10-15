@@ -250,6 +250,13 @@ def etapa_imagens(p, a, aprovado=False):
             raise SystemExit("Cancelado.")
     log("Imagens de IA")
     log(f"  revisão em {imagens.gerar(p, log=log, direto=getattr(a, 'direto', False))}")
+    if midia.teto_da_ia(p) and not p.offline:
+        # as fotos do assunto que o teto de IA pôs no lugar da IA passam pelo Jev, como no site depois do Completar:
+        # a que mostrar outra coisa vai para a IA (nunca outra coisa no vídeo)
+        try:
+            corrigir.conferir_completadas(p, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  a conferência das fotos do teto de IA falhou, seguindo sem ela: {str(erro)[:160]}")
 
 
 def etapa_motion_total(p, a, aprovado=False):

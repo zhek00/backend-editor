@@ -639,6 +639,15 @@ def planejar_grupos(projeto, unidades, cortes, log=print):
     # pedido de roteiro que não é em português). Pedido do usuário em 2026-10-14 (idioma.py)
     from . import idioma
     regra_tela = "" if idioma.lingua(projeto) == "pt" else "\n\n" + idioma.regra_da_tela(projeto)
+    from .midia import teto_da_ia
+    teto = teto_da_ia(projeto)
+    if teto:
+        # nas instruções, fora da marca dos lotes guardados: não invalida as decisões já pagas
+        regra_tela += (f"\n\nTETO DE IMAGEM DE IA: no máximo {teto:.0%} das cenas do vídeo podem ser imagem de IA. "
+                       "Marque onde_existe \"nao_existe\" só para o que ninguém fotografou de fato; tudo o que um "
+                       "banco de imagens pode ter (lugar, objeto, comida, bicho, gente fazendo algo comum) é \"banco\", "
+                       "mesmo que a foto não seja daquela marca ou daquele lugar exato. O exato é só o nome essencial "
+                       "(\"Lidl\"), nunca a busca inteira (\"Lidl UK roast chicken hot counter\").")
     mapa_texto = _mapa_para_o_modelo(m)
     perfil_texto = _perfil_do_nicho(projeto)
     from . import aprendizados

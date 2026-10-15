@@ -154,8 +154,12 @@ groq:
   contexto_depois: 2         # cenas seguintes mostradas só para dar contexto
 
 ia:
-  ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA, obrigatoriamente e
-                             # sem teto (conferida pelo Jev). false: vídeo só com banco de imagens, nenhuma IA
+  ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA (conferida pelo Jev).
+                             # false: vídeo só com banco de imagens, nenhuma IA
+  teto: 0.35                 # no máximo 35% das cenas do vídeo com imagem de IA (pedido do usuário em 2026-10-15: o
+                             # everything-you-need-to-answer saiu com 54%). A IA fica com quem mais precisa (momento que
+                             # ninguém fotografou, foto reprovada, época); as cenas acima do teto ganham foto de banco do
+                             # assunto do bloco (imagens._teto_da_ia). 0 ou vazio: sem teto
 
 roteirista:
   # O agente de roteiro lê o roteiro inteiro (fabrica mapa) e decide as cenas bloco a bloco, com o assunto
