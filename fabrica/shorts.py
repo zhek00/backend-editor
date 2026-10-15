@@ -132,7 +132,7 @@ escolhe até {cfg['quantidade']} trechos que viram Shorts. Responda só em JSON:
 - titulo: o gancho que fica no alto da tela, até 50 letras, uma ou duas palavras entre *asteriscos* (o destaque).
   Ele instiga, não resume. Nada que o trecho não entrega.
 - titulo_post: o título do Short no YouTube, até 90 letras, com a palavra-chave no começo.
-- Português do Brasil correto e natural, com as palavras da própria fala. Nunca use travessão (—)."""
+- Na língua da própria fala (a do roteiro), correta e natural, com as palavras dela. Nunca use travessão (—)."""
 
 
 def escolher(projeto, log=print, forcar=False) -> list:
@@ -155,7 +155,8 @@ def escolher(projeto, log=print, forcar=False) -> list:
         if erros:
             pedido += "\n\nA RESPOSTA ANTERIOR TEVE ESTES PROBLEMAS: " + "; ".join(erros[:6])
         try:
-            resposta = openrouter_local.perguntar(projeto, "shorts: escolha dos trechos", _instrucoes(cfg), pedido,
+            resposta = openrouter_local.perguntar(projeto, "shorts: escolha dos trechos",
+                                                  _instrucoes(cfg) + "\n" + idioma.regra_da_tela(projeto), pedido,
                                                   ESQUEMA, log=log, modelo=openrouter_local.principal(projeto))
         except (Exception, SystemExit) as erro:
             log(f"  shorts: o modelo não respondeu ({str(erro)[:100]}); trechos pela regra")

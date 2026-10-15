@@ -889,6 +889,7 @@ def com_variante(cores) -> bool:
 
 
 def montar_html(tipo, dados, dur, cores, canal="", variante=0) -> str:
+    lang = (dados or {}).get("_locale") or "pt-BR"  # a língua do vídeo (idioma.locale), para a página e os números
     variaveis = "".join(f"--{k}:{v};" for k, v in cores.items() if not k.startswith("_"))
     estilo = {k[1:]: v for k, v in cores.items() if k.startswith("_")}
     dados_js = json.dumps({"tipo": tipo, "s": dados, "dur": round(dur, 3), "canal": canal, "estilo": estilo,
@@ -897,7 +898,7 @@ def montar_html(tipo, dados, dur, cores, canal="", variante=0) -> str:
     css = (RECURSOS / f"{motor}.css").read_text(encoding="utf-8")
     js = (RECURSOS / f"{motor}.js").read_text(encoding="utf-8")
     return f"""<!doctype html>
-<html lang="pt-BR">
+<html lang="{lang}">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
@@ -1451,6 +1452,9 @@ def gravar(projeto, trecho, plano, log=print):
         if plano.get("desenho") and plano["desenho"] != RECEITA_IMPACTO.get(tipo, "frase"):
             resolvidos["_layout"] = plano["desenho"]
         creditos = fotos_impacto(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+        from . import idioma
+        if idioma.locale(projeto) != "pt-BR":
+            resolvidos["_locale"] = idioma.locale(projeto)  # números no formato da língua (1,500 em inglês)
         eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
     else:
         creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)

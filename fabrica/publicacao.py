@@ -127,7 +127,7 @@ INSTRUCOES = """Você prepara a publicação de um vídeo do YouTube a partir do
 - thumbs: 3 opções DIFERENTES de texto para a thumbnail, cada uma com l1 e l2 (de 1 a 4 palavras cada linha, as
   duas juntas até 6 palavras). Elas COMPLETAM o título, nunca o repetem: a curiosidade, o número forte ou o contraste
   do vídeo. Uma palavra de l2 entre *asteriscos* vira o destaque colorido. Nada que o vídeo não entrega.
-Regras: português do Brasil, nunca use travessão (—), nunca use dados que o roteiro não diz."""
+Regras: na língua do roteiro (veja LÍNGUA abaixo), nunca use travessão (—), nunca use dados que o roteiro não diz."""
 
 
 def assinatura(projeto, caps) -> str:
@@ -147,7 +147,10 @@ def _textos_do_modelo(projeto, caps, log=print):
               f"ROTEIRO NARRADO:\n{roteiro[:24000]}")
     # pela cadeia de principais, os gratuitos primeiro: sem o modelo, a chamada ia para o openrouter.modelo (o Jev),
     # que mandou para o DeepSeek pago sem perguntar
-    return openrouter_local.perguntar(projeto, "publicacao", INSTRUCOES, pedido, ESQUEMA, log=log,
+    from . import idioma
+
+    return openrouter_local.perguntar(projeto, "publicacao", INSTRUCOES + "\n" + idioma.regra_da_tela(projeto),
+                                      pedido, ESQUEMA, log=log,
                                       modelo=openrouter_local.principal(projeto))
 
 
