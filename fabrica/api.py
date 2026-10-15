@@ -1634,7 +1634,10 @@ def _recusar_se_ocupado(nome: str, prefixos: tuple, acao: str) -> None:
 
 @app.delete("/api/projetos/{nome}")
 def apagar_projeto(nome: str):
-    """Apaga a pasta inteira do projeto em projetos/<nome>."""
+    """Manda o projeto para a lixeira (projetos/_lixeira), com tudo o que já foi pago: `fabrica restaurar NOME` volta
+    ele. Antes a pasta era apagada, e recriar o vídeo pagava a produção inteira de novo (lixeira.py)."""
+    from . import lixeira
+
     pasta = PROJETOS / nome
     if not pasta.exists() or not (pasta / "projeto.json").exists():
         raise HTTPException(status_code=404, detail=f"Projeto '{nome}' não encontrado.")
@@ -1644,21 +1647,16 @@ def apagar_projeto(nome: str):
     if raiz_resolvida not in pasta_resolvida.parents:
         raise HTTPException(status_code=403, detail="Acesso negado.")
 
-    ultimo_erro = None
-    for tentativa in range(5):
-        try:
-            shutil.rmtree(pasta_resolvida)
-            return {"ok": True, "nome": nome}
-        except PermissionError as e:
-            ultimo_erro = e
-            time.sleep(0.4)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Não foi possível apagar o projeto: {e}")
-
-    raise HTTPException(
-        status_code=409,
-        detail=f"Não foi possível apagar o projeto: um arquivo ainda está em uso ({ultimo_erro}).",
-    )
+    try:
+        lixeira.mandar(nome)
+        return {"ok": True, "nome": nome, "lixeira": True}
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Não foi possível apagar o projeto: um arquivo ainda está em uso ({e}).",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Não foi possível apagar o projeto: {e}")
 
 
 @app.get("/api/projetos/{nome}/custos")
@@ -3248,4 +3246,7 @@ def criar_app(frontend_dir: Optional[str] = None):
     if frontend_dir and Path(frontend_dir).exists():
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
     retomar_criacoes_interrompidas()
+    # a cada 15 min, o que a chave do OpenRouter gastou contra o que a fábrica registrou (relatorios/vazamento.csv)
+    from . import consumo
+    consumo.vigiar(log=print)
     return app

@@ -52,6 +52,7 @@ uv run fabrica revisar NOME       # abre a página com todas as cenas
 uv run fabrica refazer NOME 12 31 # troca o que aparece nessas cenas
 uv run fabrica custo NOME         # estimativa e consumo do Claude
 uv run fabrica status NOME        # o que já está pronto
+uv run fabrica restaurar NOME     # volta um projeto excluído no editor (lixeira, 7 dias), sem pagar nada de novo
 uv run fabrica estimar roteiro.txt --perfil perfis/canal.yaml   # duração, sem gastar
 ```
 
@@ -596,6 +597,16 @@ render não desenha e a API manda `None` ao editor. **Não trazer de volta.** O 
 de título (`[TITULO]`, `textos.camadas_titulo`, com o tema e as cores de `textos_na_tela` no perfil), o símbolo do canal
 (`[SIMBOLO]`), as animações em camada e os clipes do Motion IA. `cenas._momento_falado` continua: ele põe o efeito
 sonoro no tempo da palavra.
+
+## Lixeira: excluir não joga fora o que foi pago
+
+`fabrica/lixeira.py` (pedido do usuário em 2026-10-15: "precisamos ser precisos na criação de vídeos, sem gasto à toa").
+O × do editor (`DELETE /api/projetos/NOME`) apagava a pasta inteira. No everything-you-need-to-answer o projeto
+excluído foi recriado e a produção inteira foi paga de novo: 214 imagens de IA e a escolha, a descrição e o Jev de 340
+cenas. Agora a pasta vai para `projetos/_lixeira/NOME__DATA` e volta com `fabrica restaurar NOME` (`--como OUTRO` se o
+nome já estiver em uso; sem nome, lista a lixeira). Fica 7 dias (`lixeira.DIAS`) e depois é apagada de verdade, a cada
+exclusão. A lixeira não aparece em nenhuma lista porque não tem `projeto.json`: **toda listagem de projetos tem de
+exigir o `projeto.json`**. Para refazer um vídeo do zero de propósito, restaure e use o editor.
 
 ## Aprendizados do canal
 
@@ -1147,6 +1158,11 @@ junto: dos US$ 19,31 que a conta tinha gastado, só US$ 8,02 estavam nos projeto
   semana o painel cobrou US$ 15,46 contra US$ 3,14 registrados; conferido hora a hora, a fábrica registra 100% do que
   faz (o Jev é cobrado com alguns minutos de atraso, mas no valor informado). O que aparecer como Unknown não é a
   fábrica: outra coisa está usando a chave.
+- **Vigia de vazamento** (`consumo.conferir_vazamento`, ligado pelo servidor na partida, a cada 15 min): compara o que a
+  chave gastou (GET /api/v1/key) com o que a fábrica registrou no CSV e anota cada janela em
+  `relatorios/vazamento.csv` (cobrado, registrado, sem registro). Acima de US$ 0,02 numa janela, o log da fábrica
+  diz "VAZAMENTO" com o horário. Diferença numa janela em que a fábrica não fez nada não é dela. `fabrica consumo`
+  mostra as janelas com diferença. Sem resposta do OpenRouter, a janela é pulada (nunca usa número velho).
 - **Processo que já estava rodando** (servidor, MCP) só registra depois de reiniciado (DESLIGAR e LIGAR).
 - **Google Planilhas que se atualiza sozinho** (pedido do usuário em 2026-10-09): a fábrica serve o registro em
   `/consumo/openrouter.csv` e o total oficial em `/consumo/oficial.csv`, pelo túnel (`consumo.url_publica`,

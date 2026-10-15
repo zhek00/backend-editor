@@ -167,6 +167,86 @@ def _ao_sair():
             pass
 
 
+# ------------------------------------------------------------------ vigia de vazamento
+
+# Pedido do usuário em 2026-10-15: numa semana o OpenRouter cobrou US$ 15,46 e o registro tinha US$ 3,14, e não se sabe
+# quem gastou o resto. Conferido hora a hora, a fábrica registra tudo o que faz (o Jev é cobrado alguns minutos depois,
+# no valor que informa). O vigia compara, a cada INTERVALO_VIGIA, o que a chave gastou com o que a fábrica registrou e
+# anota a diferença por janela em VAZAMENTO: diferença numa janela em que a fábrica não fez nada não é dela.
+VAZAMENTO = PASTA / "vazamento.csv"
+ESTADO_VIGIA = PASTA / "vigia_vazamento.json"
+INTERVALO_VIGIA = 15 * 60
+TOLERANCIA = 0.02  # US$: o atraso de minutos da cobrança do Jev cabe aqui
+CAMPOS_VAZAMENTO = ["inicio", "fim", "cobrado_usd", "registrado_usd", "sem_registro_usd"]
+
+
+def _uso_da_chave():
+    """O total gasto pela chave agora, ou None sem resposta (o vigia pula a janela, nunca usa um número velho)."""
+    import httpx
+    from . import openrouter_local
+
+    try:
+        h = {"Authorization": f"Bearer {openrouter_local._chave()}"}
+        return float(httpx.get("https://openrouter.ai/api/v1/key", headers=h, timeout=20).json()["data"]["usage"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _registrado_total() -> float:
+    return sum(float(r.get("custo_usd") or 0) for r in ler())
+
+
+def conferir_vazamento(log=print):
+    """Uma janela do vigia: anota o cobrado, o registrado e a diferença desde a última conferência. Devolve a
+    diferença em US$ (None na primeira vez ou sem resposta da OpenRouter). Nunca levanta erro."""
+    try:
+        cobrado = _uso_da_chave()
+        if cobrado is None:
+            return None
+        registrado = _registrado_total()
+        agora = datetime.now().isoformat(timespec="seconds")
+        anterior = json.loads(ESTADO_VIGIA.read_text(encoding="utf-8")) if ESTADO_VIGIA.exists() else None
+        PASTA.mkdir(parents=True, exist_ok=True)
+        ESTADO_VIGIA.write_text(json.dumps({"quando": agora, "cobrado": cobrado, "registrado": registrado}),
+                                encoding="utf-8")
+        if not anterior:
+            return None
+        d_cobrado = cobrado - float(anterior["cobrado"])
+        d_registrado = registrado - float(anterior["registrado"])
+        diferenca = d_cobrado - d_registrado
+        novo = not VAZAMENTO.exists()
+        with _trava, open(VAZAMENTO, "a", encoding="utf-8", newline="") as f:
+            escritor = csv.DictWriter(f, fieldnames=CAMPOS_VAZAMENTO)
+            if novo:
+                escritor.writeheader()
+            escritor.writerow({"inicio": anterior["quando"], "fim": agora, "cobrado_usd": round(d_cobrado, 6),
+                               "registrado_usd": round(d_registrado, 6), "sem_registro_usd": round(diferenca, 6)})
+        if diferenca > TOLERANCIA:
+            log(f"VAZAMENTO: o OpenRouter cobrou US$ {d_cobrado:.4f} entre {anterior['quando'][11:16]} e "
+                f"{agora[11:16]}, e a fábrica registrou US$ {d_registrado:.4f}. US$ {diferenca:.4f} foram gastos "
+                f"por outra coisa com a mesma chave (relatorios/vazamento.csv).")
+        return diferenca
+    except Exception:  # noqa: BLE001 - o vigia nunca derruba a fábrica
+        return None
+
+
+def vigiar(log=print) -> None:
+    """Liga o vigia num fio de fundo (o servidor chama na partida)."""
+    def laco():
+        while True:
+            conferir_vazamento(log=log)
+            time.sleep(INTERVALO_VIGIA)
+
+    threading.Thread(target=laco, daemon=True, name="vigia-vazamento").start()
+
+
+def ler_vazamento() -> list:
+    if not VAZAMENTO.exists():
+        return []
+    with open(VAZAMENTO, encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
 def _oficial():
     """O total da conta na OpenRouter; sem resposta, o último guardado."""
     import httpx

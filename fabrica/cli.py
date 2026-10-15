@@ -443,6 +443,14 @@ def cmd_consumo(a):
     linhas = consumo.ler()
     custo = sum(float(r["custo_usd"] or 0) for r in linhas)
     log(f"  {len(linhas)} chamada(s) registradas, US$ {custo:.4f}")
+    janelas = consumo.ler_vazamento()
+    if janelas:
+        fora = [j for j in janelas if float(j["sem_registro_usd"]) > consumo.TOLERANCIA]
+        total = sum(float(j["sem_registro_usd"]) for j in janelas)
+        log(f"  vigia de vazamento: {len(janelas)} janela(s) conferidas, US$ {total:.4f} cobrados sem registro da fábrica")
+        for j in fora[-10:]:
+            log(f"    {j['inicio'][:16]} a {j['fim'][11:16]}: cobrado US$ {float(j['cobrado_usd']):.4f}, "
+                f"registrado US$ {float(j['registrado_usd']):.4f}")
 
 
 def cmd_publicacao(a):
@@ -899,6 +907,23 @@ def formatar_gasto_real(r):
     return "\n".join(linhas)
 
 
+def cmd_restaurar(a):
+    from . import lixeira
+
+    if not a.nome:
+        itens = lixeira.listar()
+        if not itens:
+            log("A lixeira está vazia.")
+        for nome, quando, _ in itens:
+            log(f"  {nome}  (excluído em {quando:%d/%m %H:%M})")
+        return
+    try:
+        destino = lixeira.restaurar(a.nome, a.como)
+    except (FileNotFoundError, FileExistsError) as e:
+        raise SystemExit(str(e))
+    log(f"Restaurado em {destino}, com tudo o que já foi pago. Ele já aparece no editor.")
+
+
 def cmd_status(a):
     p = Projeto(a.nome)
     log(f"Projeto {p.nome}{' (offline)' if p.offline else ''} com o perfil {p.perfil.get('nome', '?')}")
@@ -1212,6 +1237,12 @@ def main():
         s.add_argument("--vertical", action="store_true",
                        help="no render, monta só a versão em pé (9:16) em final_vertical.mp4; no tudo, monta as duas")
         s.set_defaults(funcao=funcao)
+
+    s = sub.add_parser("restaurar", help="volta um projeto excluído da lixeira, com tudo o que já foi pago; "
+                                         "sem nome, lista a lixeira")
+    s.add_argument("nome", nargs="?")
+    s.add_argument("--como", help="restaura com outro nome, se este já estiver em uso")
+    s.set_defaults(funcao=cmd_restaurar)
 
     s = sub.add_parser("trilha", help="o modelo compõe a trilha pelos blocos do roteiro e o código toca (grátis)")
     s.add_argument("nome")
