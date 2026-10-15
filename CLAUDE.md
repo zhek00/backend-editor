@@ -1141,6 +1141,12 @@ junto: dos US$ 19,31 que a conta tinha gastado, só US$ 8,02 estavam nos projeto
   projeto e Chamadas. As contas são fórmulas, calculadas por quem abre.
 - `uv run fabrica consumo [--importar]` refaz a planilha; `--importar` traz o histórico dos projetos sem repetir.
 - O detalhe por dia e modelo da própria OpenRouter (/api/v1/activity) pede chave de gerenciamento: a fábrica não tem.
+- **Toda chamada leva o nome da fábrica e o projeto** (`openrouter_local.cabecalhos` e `sessao`, 2026-10-15): o
+  cabeçalho `X-Title: Fabrica TipLabs` em texto, visão, Jev e imagens, e o `session_id` com o nome do projeto nas de
+  texto e visão (aba Logs > Sessions do painel: o custo de cada vídeo). Antes tudo aparecia como "App: Unknown", e numa
+  semana o painel cobrou US$ 15,46 contra US$ 3,14 registrados; conferido hora a hora, a fábrica registra 100% do que
+  faz (o Jev é cobrado com alguns minutos de atraso, mas no valor informado). O que aparecer como Unknown não é a
+  fábrica: outra coisa está usando a chave.
 - **Processo que já estava rodando** (servidor, MCP) só registra depois de reiniciado (DESLIGAR e LIGAR).
 - **Google Planilhas que se atualiza sozinho** (pedido do usuário em 2026-10-09): a fábrica serve o registro em
   `/consumo/openrouter.csv` e o total oficial em `/consumo/oficial.csv`, pelo túnel (`consumo.url_publica`,

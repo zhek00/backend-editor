@@ -17,7 +17,7 @@ from datetime import datetime
 
 import httpx
 
-from .openrouter_local import _chave
+from .openrouter_local import _chave, cabecalhos
 from .util import gravar_cache, ler_cache
 
 URL = "https://openrouter.ai/api/alpha/decisions"
@@ -133,7 +133,7 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
             raise RuntimeError(f"O modelo principal não julgou na etapa {etapa} ({e}).") from None
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     corpo = {"model": modelo, "state": estado, "questions": perguntas}
-    cabecalho = {"Authorization": f"Bearer {_chave()}"}
+    cabecalho = cabecalhos()  # com o nome da fábrica: o painel do OpenRouter separa o que é dela
 
     ultimo_erro = ""
     for tentativa in range(cfg.get("tentativas", 2)):

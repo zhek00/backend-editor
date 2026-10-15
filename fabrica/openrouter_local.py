@@ -82,6 +82,22 @@ def _chave():
     raise SystemExit("Falta a chave do OpenRouter no arquivo .env (OPENROUTER_API_KEY).")
 
 
+# O nome da fábrica em toda chamada ao OpenRouter. Pedido do usuário em 2026-10-15: o painel mostrava todo o uso como
+# "App: Unknown", e US$ 12 de uma semana não estavam em nenhum registro da fábrica (que registra 100% do que faz,
+# conferido hora a hora): com o nome, o que aparecer como Unknown não é a fábrica.
+APP = {"HTTP-Referer": "https://tiplabs.fabrica", "X-Title": "Fabrica TipLabs"}
+
+
+def cabecalhos(chave=None) -> dict:
+    return {"Authorization": f"Bearer {chave or _chave()}", **APP}
+
+
+def sessao(projeto) -> str:
+    """O session_id do OpenRouter: o nome do projeto. Na aba Sessions do painel, o custo de cada vídeo."""
+    nome = getattr(projeto, "nome", None) or str(projeto or "fora-de-projeto")
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", nome)[:120]
+
+
 def _registrar(projeto, etapa, uso, modelo_usado, segundos=None):
     uso = uso or {}
     linha = {"quando": datetime.now().isoformat(timespec="seconds"), "etapa": etapa, "modelo": modelo_usado,
@@ -383,7 +399,11 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
         raciocinio = corpo.pop("reasoning", None)
         if raciocinio and raciocinio.get("effort"):
             corpo["reasoning_effort"] = raciocinio["effort"]
-    cabecalho = {"Authorization": f"Bearer {chave}"}
+    if provedor == "aimlapi":
+        cabecalho = {"Authorization": f"Bearer {chave}"}
+    else:
+        cabecalho = cabecalhos(chave)
+        corpo["session_id"] = sessao(projeto)  # o custo de cada vídeo na aba Sessions do painel do OpenRouter
 
     ultimo_erro, erros, pediu_sem_quebra = "", 0, False
     inicio, orcamento = time.time(), cfg.get("espera_maxima", 300)

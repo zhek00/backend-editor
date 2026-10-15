@@ -678,7 +678,7 @@ def _imagem_openrouter(prompt, img):
     """Gera imagem por um modelo de imagem do OpenRouter (padrão: Grok Imagine Image 2.0). A imagem volta na própria
     resposta, em base64 ou como endereço. Usa a chave do OpenRouter que a fábrica já tem no .env."""
     import base64
-    from .openrouter_local import _chave
+    from .openrouter_local import cabecalhos
 
     modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
                                               and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
@@ -689,7 +689,7 @@ def _imagem_openrouter(prompt, img):
              "image_config": {"aspect_ratio": img.get("proporcao", "16:9")}, "usage": {"include": True}}
     with httpx.Client(timeout=180.0, follow_redirects=True) as cliente:
         r = cliente.post("https://openrouter.ai/api/v1/chat/completions", json=corpo,
-                         headers={"Authorization": f"Bearer {_chave()}"})
+                         headers=cabecalhos())
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):
@@ -718,7 +718,7 @@ def _imagem_openrouter_images(prompt, img, modelo):
     """GPT Image (openai/gpt-image-1) e GPT-5.4 Image 2 pela interface de imagens do OpenRouter. A qualidade vem de
     imagens.qualidade no perfil (padrão low) e a proporção é a mais larga que o modelo aceita (PROPORCAO_IMAGES_API)."""
     import base64
-    from .openrouter_local import _chave
+    from .openrouter_local import cabecalhos
 
     qualidade = str(img.get("qualidade") or "low").lower()
     corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
@@ -727,7 +727,7 @@ def _imagem_openrouter_images(prompt, img, modelo):
              "background": "opaque"}
     with httpx.Client(timeout=300.0, follow_redirects=True) as cliente:
         r = cliente.post("https://openrouter.ai/api/v1/images", json=corpo,
-                         headers={"Authorization": f"Bearer {_chave()}"})
+                         headers=cabecalhos())
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):
