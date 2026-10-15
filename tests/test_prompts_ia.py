@@ -167,3 +167,22 @@ def test_cena_curta_nao_engole_a_fatia_de_um_item_citado():
     final = cenas_mod._garantir_limites_estritos(cenas, 9.64, log=lambda *a: None)
     assert [c["mostrar"] for c in final] == ["Elefante", "Guepardo", "Mosquito", "Savana"]
     assert final[2]["fim"] - final[2]["ini"] >= 3.0
+
+
+def test_mostrar_que_pede_texto_de_tela_nao_vai_para_a_imagem_de_ia():
+    # Caso real: cena 81 do everything-you-need-to-answer (roteiro em inglês). O agente escreveu no "mostrar" um
+    # texto de tela em português ("'PROCESSO NÃO CONTROLADO'"), e a imagem de IA saiu com esse texto queimado,
+    # em português, num vídeo em inglês. A causa: o regex _PEDE_TEXTO tinha o caractere de controle 0x08 no lugar
+    # de cada \b (vinha do GitHub), então "\btexto" virava "\x08texto" e nunca casava "Texto". A imagem de IA não
+    # tem texto: o "mostrar" que pede texto não vai para o pedido da imagem.
+    assert imagens._PEDE_TEXTO.search("Texto em destaque sobre fundo desfocado: 'PROCESSO NÃO CONTROLADO'.")
+    assert imagens._PEDE_TEXTO.search("Tela com texto exibindo a metodologia do teste.")
+    # não é falso positivo: "contexto" e uma foto sem texto passam
+    assert not imagens._PEDE_TEXTO.search("Contexto da cozinha industrial de um supermercado.")
+    assert not imagens._PEDE_TEXTO.search("A photo of a roast chicken under heat lamps.")
+    cena_81 = {"mostrar": "Texto em destaque sobre fundo desfocado de balcão de frango quente: "
+                          "'PROCESSO NÃO CONTROLADO', conclusão da inconsistência.", "visual": "foto_real"}
+    assert imagens.o_que_mostrar(cena_81) is None
+    # o "mostrar" de uma cena comum (sem pedir texto) continua indo para a imagem
+    cena_foto = {"mostrar": "Frango assado dourado no balcão quente do supermercado.", "visual": "foto_real"}
+    assert imagens.o_que_mostrar(cena_foto) == "Frango assado dourado no balcão quente do supermercado."

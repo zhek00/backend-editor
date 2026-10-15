@@ -346,7 +346,7 @@ def _motion_antes_da_ia(projeto, apenas, pendentes, log):
     return pendentes
 
 
-_PEDE_TEXTO = re.compile(r"texto|escrit|letreiro|legenda|t[ií]tulo|tela com|text|words?|caption",
+_PEDE_TEXTO = re.compile(r"\btexto|\bescrit|\bletreiro|\blegenda|\bt[ií]tulo|tela com|\btext\b|\bwords?\b|\bcaption",
                          re.I)
 
 
