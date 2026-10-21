@@ -108,10 +108,12 @@ openrouter:
     - google/gemma-4-31b-it:free
     - dots-studio/dots-3-note-preview:free
     - nvidia/nemotron-3-super-120b-a12b:free
-    - openrouter/free           # o roteador do OpenRouter escolhe um gratuito que esteja de pé
-    - qwen/qwen3.8-flash        # última reserva, PAGA (US$ 0,15 e 0,47 por milhão de tokens; uns US$ 0,80 por vídeo
-                                # se fizer tudo): só entra quando os gratuitos acabam (o limite de 1.000 chamadas por dia
-                                # vale para a conta inteira) ou saem do ar. É o mais barato que enxerga imagem
+    - google/gemini-2.5-flash-lite  # última reserva, PAGA (US$ 0,10 e 0,40 por milhão de tokens, sem pensar, uns 3 s):
+                                # só entra quando os gratuitos acabam ou saem do ar. Enxerga imagem. Pedido do usuário em
+                                # 2026-10-20: no 10-animais-que-voce-vai-agradecer-por-es os prompts de IA em sequência
+                                # pararam a fábrica 15 min (20:17 a 20:32) em modelos que pensavam até o limite, de 137 a
+                                # 273 s cada: o openrouter/free sorteou MiniMax M3.1, Nemotron 3.5 Lightning e Cohere North
+                                # (saiu da cadeia), e o Qwen 3.8 Flash pago (que estava aqui) pensou 14 mil tokens por chamada
   espera_pelo_gratis: 60         # antes de pagar, espera até isso (s) por um gratuito que está fora só pelo limite do
                                 # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min
   confirmar_pago: false          # false: o pago entra sozinho, mas sempre depois de TODOS os gratuitos da cadeia. Pedido

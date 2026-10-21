@@ -1053,7 +1053,7 @@ Qwen pago e o Dots), descrição para o Jev em 4 s, trilha e buscas em 1 s. **De
 com o guepardo da cena 3. O agente de roteiro não cabe no Groq (cada lote lê uns 6.800 tokens e escreve uns 7.800) e
 ficou com o `nvidia/nemotron-3-ultra-550b-a55b:free` na frente do DeepSeek (`roteirista.modelos`, `roteirista._PelaCadeia`). Comparados com o mesmo pedido em 3 lotes do nunca-deve-ter-dentro-de-casa-parte-2, ele foi igual ou melhor (acertou a Naja kaouthia do caso do DF, pediu a colagem dos 10 animais do vídeo anterior e os frascos de vacina antirrábica onde o DeepSeek repetia o quati na cozinha; uma vez inventou uma raposa-do-deserto que a fala não cita), de 1,5 a 4 min por lote, sem estourar o limite pensando. O DeepSeek custava US$ 0,28 num vídeo de 30 min. Cadeia de principais (`openrouter.principais`), em ordem:
 `groq:qwen/qwen3.8-27b`, `groq:openai/gpt-oss-120b`, os gratuitos do OpenRouter (Gemma 4 31B, Dots 3 Note, Nemotron
-Super, `openrouter/free`) e, por último, o `qwen/qwen3.8-flash`, **pago** (US$ 0,15 e 0,47 por milhão de tokens, uns US$ 0,80 por vídeo se fizer tudo; aprovado pelo usuário em 2026-10-03), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. A cadeia também aceita rota pela
+Super) e, por último, o `google/gemini-2.5-flash-lite`, **pago** (US$ 0,10 e 0,40 por milhão de tokens, sem pensar, uns 3 s), que só entra quando os gratuitos acabam: o limite de 1.000 chamadas por dia vale para a conta inteira, e um vídeo usa de 1.200 a 2.300. **Desde 2026-10-20 (pedido do usuário) a cadeia de principais não tem o `openrouter/free` nem o Qwen 3.8 Flash**: no 10-animais-que-voce-vai-agradecer-por-es os prompts de IA em sequência pararam a fábrica 15 min em chamadas de 137 a 273 s cada, de modelos que pensavam até o limite (o `openrouter/free` sorteou MiniMax M3.1, Nemotron 3.5 Lightning e Cohere North; o Qwen 3.8 Flash pago pensou 14 mil tokens por chamada). Não pôr de volta na cadeia de principais um modelo que pensa sem limite nem um roteador que sorteia o modelo. A cadeia também aceita rota pela
 AIMLAPI (`aimlapi:` na frente do modelo, chave `aimlapi_api` no `.env`), tirada em 2026-10-03 a pedido do usuário. Quando um não atende (sem saldo, limite do dia dos
 gratuitos, retirado do ar, servidor cheio), `openrouter_local.perguntar` passa na hora para o seguinte e deixa o que
 caiu de lado um tempo (`_FORA_DO_AR`): nunca esperar. O Space Bunny (`stealth/space-bunny-alpha`), que abria a cadeia,
@@ -1154,8 +1154,9 @@ junto: dos US$ 19,31 que a conta tinha gastado, só US$ 8,02 estavam nos projeto
 - `uv run fabrica consumo [--importar]` refaz a planilha; `--importar` traz o histórico dos projetos sem repetir.
 - O detalhe por dia e modelo da própria OpenRouter (/api/v1/activity) pede chave de gerenciamento: a fábrica não tem.
 - **Toda chamada leva o nome da fábrica e o projeto** (`openrouter_local.cabecalhos` e `sessao`, 2026-10-15): o
-  cabeçalho `X-Title: Fabrica TipLabs` em texto, visão, Jev e imagens, e o `session_id` com o nome do projeto nas de
-  texto e visão (aba Logs > Sessions do painel: o custo de cada vídeo). Antes tudo aparecia como "App: Unknown", e numa
+  cabeçalho `X-Title: Fabrica TipLabs` em texto, visão, Jev e imagens, e o `session_id` com o nome do projeto em todas
+  elas (aba Logs > Sessions do painel: o custo de cada vídeo; Jev e imagens desde 2026-10-20, por
+  `openrouter_local.postar_com_sessao`, que manda de novo sem o campo se a interface recusar). Antes tudo aparecia como "App: Unknown", e numa
   semana o painel cobrou US$ 15,46 contra US$ 3,14 registrados; conferido hora a hora, a fábrica registra 100% do que
   faz (o Jev é cobrado com alguns minutos de atraso, mas no valor informado). O que aparecer como Unknown não é a
   fábrica: outra coisa está usando a chave.

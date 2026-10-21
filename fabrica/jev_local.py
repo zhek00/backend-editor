@@ -17,7 +17,7 @@ from datetime import datetime
 
 import httpx
 
-from .openrouter_local import _chave, cabecalhos
+from .openrouter_local import _chave, cabecalhos, postar_com_sessao
 from .util import gravar_cache, ler_cache
 
 URL = "https://openrouter.ai/api/alpha/decisions"
@@ -138,7 +138,8 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
     ultimo_erro = ""
     for tentativa in range(cfg.get("tentativas", 2)):
         try:
-            r = httpx.post(URL, json=corpo, headers=cabecalho, timeout=cfg.get("tempo_maximo", 60))
+            r = postar_com_sessao(httpx.post, URL, corpo, projeto, headers=cabecalho,
+                                  timeout=cfg.get("tempo_maximo", 60))
         except httpx.HTTPError as e:
             ultimo_erro = f"o servidor do Jev não respondeu ({str(e)[:80] or type(e).__name__})"
             continue

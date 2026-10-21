@@ -487,7 +487,7 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
             elif prov in ("kie", "kie.ai"):
                 dados, registro = _imagem_kie(prompt, img)
             elif prov == "openrouter":
-                dados, registro = _imagem_openrouter(prompt, img)
+                dados, registro = _imagem_openrouter(prompt, img, projeto)
             else:
                 dados, registro = _imagem_fal(prompt, img, usar)
             temporario = destino.with_name(destino.stem + ".baixando")
@@ -753,22 +753,22 @@ def _referencias(perfil, log):
     return referencias
 
 
-def _imagem_openrouter(prompt, img):
+def _imagem_openrouter(prompt, img, projeto=None):
     """Gera imagem por um modelo de imagem do OpenRouter (padrão: Grok Imagine Image 2.0). A imagem volta na própria
     resposta, em base64 ou como endereço. Usa a chave do OpenRouter que a fábrica já tem no .env."""
     import base64
-    from .openrouter_local import cabecalhos
+    from .openrouter_local import cabecalhos, postar_com_sessao
 
     modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
                                               and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
                                               else MODELO_OPENROUTER)
     if str(modelo).startswith(PREFIXO_IMAGES_API):
-        return _imagem_openrouter_images(prompt, img, modelo)
+        return _imagem_openrouter_images(prompt, img, modelo, projeto)
     corpo = {"model": modelo, "messages": [{"role": "user", "content": prompt}], "modalities": ["image"],
              "image_config": {"aspect_ratio": img.get("proporcao", "16:9")}, "usage": {"include": True}}
     with httpx.Client(timeout=180.0, follow_redirects=True) as cliente:
-        r = cliente.post("https://openrouter.ai/api/v1/chat/completions", json=corpo,
-                         headers=cabecalhos())
+        r = postar_com_sessao(cliente.post, "https://openrouter.ai/api/v1/chat/completions", corpo, projeto,
+                              headers=cabecalhos())
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):
@@ -793,11 +793,11 @@ def _imagem_openrouter(prompt, img):
     return conteudo, {"provedor": "openrouter", "modelo": modelo, "prompt": prompt, "custo_usd": custo}
 
 
-def _imagem_openrouter_images(prompt, img, modelo):
+def _imagem_openrouter_images(prompt, img, modelo, projeto=None):
     """GPT Image (openai/gpt-image-1) e GPT-5.4 Image 2 pela interface de imagens do OpenRouter. A qualidade vem de
     imagens.qualidade no perfil (padrão low) e a proporção é a mais larga que o modelo aceita (PROPORCAO_IMAGES_API)."""
     import base64
-    from .openrouter_local import cabecalhos
+    from .openrouter_local import cabecalhos, postar_com_sessao
 
     qualidade = str(img.get("qualidade") or "low").lower()
     corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
@@ -805,8 +805,8 @@ def _imagem_openrouter_images(prompt, img, modelo):
                  (v for k, v in PROPORCAO_IMAGES_API.items() if str(modelo).startswith(k)), "3:2"),
              "background": "opaque"}
     with httpx.Client(timeout=300.0, follow_redirects=True) as cliente:
-        r = cliente.post("https://openrouter.ai/api/v1/images", json=corpo,
-                         headers=cabecalhos())
+        r = postar_com_sessao(cliente.post, "https://openrouter.ai/api/v1/images", corpo, projeto,
+                              headers=cabecalhos())
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):

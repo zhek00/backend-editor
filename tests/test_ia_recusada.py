@@ -39,7 +39,7 @@ def test_prompt_recusado_e_reescrito_uma_vez(monkeypatch, tmp_path):
     projeto = _projeto(tmp_path, [])
     pedidos = []
 
-    def gerador(prompt, img):
+    def gerador(prompt, img, projeto=None):
         pedidos.append(prompt)
         if "pulled out" in prompt:
             raise RuntimeError(RECUSA)
@@ -60,7 +60,7 @@ def test_prompt_recusado_e_reescrito_uma_vez(monkeypatch, tmp_path):
 def test_recusado_de_novo_desiste_sem_repetir(monkeypatch, tmp_path):
     projeto = _projeto(tmp_path, [])
     pedidos = []
-    monkeypatch.setattr(imagens, "_imagem_openrouter", lambda prompt, img: pedidos.append(prompt) or (_ for _ in ()).throw(RuntimeError(RECUSA)))
+    monkeypatch.setattr(imagens, "_imagem_openrouter", lambda prompt, img, projeto=None: pedidos.append(prompt) or (_ for _ in ()).throw(RuntimeError(RECUSA)))
     monkeypatch.setattr(imagens, "prompt_final", lambda c, p, r: c["prompt"])
     monkeypatch.setattr(imagens, "_prompt_sem_recusa", lambda p, c, prompt: "a calm sugar glider on a branch, soft light")
     cena = {"n": 65, "personagem": False, "texto": "", "prompt": "fur pulled out"}

@@ -98,6 +98,15 @@ def sessao(projeto) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", nome)[:120]
 
 
+def postar_com_sessao(post, url, corpo, projeto, **kw):
+    """POST com o session_id do projeto no corpo (Jev e imagens também aparecem na aba Sessions). Se a interface
+    recusar o campo (400 ou 422 citando session), manda de novo sem ele: a sessão nunca trava a produção."""
+    r = post(url, json={**corpo, "session_id": sessao(projeto)}, **kw)
+    if r.status_code in (400, 422) and "session" in r.text.lower():
+        r = post(url, json=corpo, **kw)
+    return r
+
+
 def _registrar(projeto, etapa, uso, modelo_usado, segundos=None):
     uso = uso or {}
     linha = {"quando": datetime.now().isoformat(timespec="seconds"), "etapa": etapa, "modelo": modelo_usado,
