@@ -1110,8 +1110,12 @@ e no editor o botão Fish Audio usa a mesma grade de vozes da GenAIPro. A Fish d
 palavra vem da transcrição (`fish.palavras_com_tempo`, Whisper turbo, casando as palavras ouvidas com as do roteiro)
 e, sem saldo para ela, de `narracao._palavras_estimadas`, que casa cada ponto e vírgula do roteiro com a pausa real do
 áudio (limite de silêncio ajustado ao volume, `_pausas_da_voz`, porque a Fish tem chiado perto de -35 dB). Medido no
-áudio do Edge, que informa o tempo real: erro médio de 0,08 s por palavra. Projeto antigo com Edge continua
-funcionando; no editor ele aparece como Fish e regerar troca a voz.
+áudio do Edge, que informa o tempo real: erro médio de 0,08 s por palavra. **O Edge saiu da fábrica em 2026-10-26**
+(pedido do usuário: "o edge vai ser descontinuado"; ele já recusava com erro 403 e o teste-animacao-1min travou na
+narração): os perfis `base-documentario` (e quem herda dele) e `teste-roteiro-palhano` usam a Fish com a voz "São
+Cipriano" (`fish.voz_padrao` no config.yaml), e o site, sem provedor escolhido, cria o projeto com a Fish e essa voz
+(antes gravava o Edge `pt-BR-AntonioNeural`). Projeto antigo com Edge continua com a narração guardada; narrar de novo
+com o Edge dá um aviso claro (`narracao`) para trocar para a Fish no editor.
 
 | Etapa | Quem responde |
 |---|---|

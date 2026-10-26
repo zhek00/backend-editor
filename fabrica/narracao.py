@@ -771,6 +771,11 @@ def _edge_tts(texto, voz, wav, falado=None):
         time.sleep(1.0)
 
     if not sucesso:
+        if "403" in str(ultimo_erro):
+            # o Edge vai ser descontinuado e já recusa (2026-10-26): o erro do aiohttp não dizia o que fazer
+            raise RuntimeError("A voz do Edge (Microsoft) recusou a gravação (erro 403): ela vai ser descontinuada. "
+                               "Troque a voz do projeto para a Fish Audio, grátis, no editor (botão Fish Audio), ou "
+                               "use um perfil com voz.provedor: fish.") from ultimo_erro
         raise ultimo_erro
 
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp3), "-ac", "1", "-ar", str(TAXA), "-c:a", "pcm_s16le", str(wav)])

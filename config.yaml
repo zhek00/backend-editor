@@ -32,6 +32,7 @@ assinaturas:
 # precisa de US$ 0,50 de saldo no OpenRouter); sem ela, é estimado pelas pausas do áudio
 fish:
   modelo: fish-audio/s2.1-pro-free:free
+  voz_padrao: 0b12d715e4c741399594fccb12d4bbe2   # "São Cipriano", masculina, grave e séria: a voz quando ninguém escolheu outra
   transcricao: openai/whisper-large-v3-turbo
   blocos_ao_mesmo_tempo: 3
 

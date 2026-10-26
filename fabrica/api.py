@@ -1033,7 +1033,10 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
             "velocidade": payload.voz_velocidade,
         })
     elif payload.voz:
-        p.definir_voz_override({"provedor": "edge-tts", "voz_edge": voz_req})
+        # o padrão antigo do site era a voz do Edge, que vai ser descontinuado e já recusa com erro 403: a voz grátis
+        # agora é a Fish, com a voz padrão do config.yaml
+        p.definir_voz_override({"provedor": "fish",
+                                "voice_id": (p.config.get("fish") or {}).get("voz_padrao") or ""})
     if payload.imagens_provedor in PROVEDORES_IMAGEM:
         p.definir_imagens_override({
             "provedor": payload.imagens_provedor,

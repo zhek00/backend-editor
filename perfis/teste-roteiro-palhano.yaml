@@ -5,10 +5,8 @@
 nome: Perigos do Litoral Brasileiro
 
 voz:
-  provedor: edge-tts                   # voz gratuita da Microsoft, sem custo. Troque pra genaipro se quiser mais realismo
-  voz_edge: pt-BR-AntonioNeural
-  velocidade_edge: "+0%"
-  voice_id: COLE_AQUI_O_VOICE_ID        # só usado se trocar provedor pra genaipro
+  provedor: fish                       # voz grátis da Fish Audio (o Edge da Microsoft vai ser descontinuado)
+  voice_id: 0b12d715e4c741399594fccb12d4bbe2   # Fish: "São Cipriano", masculina, grave e séria
   modelo: eleven_turbo_v2_5
   estabilidade: 0.5
   similaridade: 0.75
