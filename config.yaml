@@ -339,12 +339,18 @@ animation_ai:
                          # noite, editorial, misterio, neon (HUD ciano e magenta), riso (papel e duas tintas),
                          # blueprint (planta azul) ou cinema (filme quente com grão)
   limiar: 70             # nota de utilidade mínima (0 a 100)
-  maximo_do_video: 0.12  # no máximo 12% da duração em cenas animadas (contando os clipes do Motion IA)
-  intervalo_minimo: 20   # segundos entre uma cena animada e outra (ou um clipe de motion)
-  maximo_no_lugar_do_motion: 0.25  # com o Motion IA pausado, as cenas reprovadas viram cena animada no lugar dele, sem o
-                         # intervalo, mas até 25% da duração em cenas animadas, contando as de cima. Sem teto, o
-                         # brasil-selvagem chegou a 31%; o que passa disso segue para a imagem de IA ou volta à foto
-  duracao_maxima: 12     # a frase mais longa que vira uma cena animada
+  maximo_do_video: 0.06  # no máximo 6% da duração em cenas animadas (contando os clipes do Motion IA). Era 12%, e
+                         # com as do lugar do motion o everything-you-need-to-answer chegou a 15% (pedido do usuário
+                         # em 2026-10-25: "muitos motion e muitas cenas longas")
+  intervalo_minimo: 30   # segundos entre uma cena animada e outra (ou um clipe de motion)
+  maximo_no_lugar_do_motion: 0.10  # com o Motion IA pausado, as cenas reprovadas viram cena animada no lugar dele, até
+                         # 10% da duração em cenas animadas, contando as de cima, e com o intervalo de baixo. Eram 25%
+                         # sem intervalo: 24 trechos no everything; o que passa disso segue para a imagem de IA
+  intervalo_no_lugar_do_motion: 20
+  duracao_alvo: 5
+  duracao_maxima: 7      # a frase mais longa que vira uma cena animada (eram 12: trechos de 11,8 s parados no texto)
+  inicio_sem_animacao: 40  # os primeiros 40 s são de vídeo real: nenhuma cena animada nem animação em camada
+  exigir_imagem: true    # cena animada sem nenhuma foto (fundo, item ou lado) não entra: segue para a foto ou a IA
   trechos_por_lote: 6    # frases por pedido ao modelo
   paralelo: 2
   volume_sons_db: -20

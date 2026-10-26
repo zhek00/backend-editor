@@ -183,28 +183,41 @@ CATALOGO = {
 ITENS = {"lista": (2, 6), "checklist": (2, 6), "passos": (2, 5), "barras": (2, 5), "linha_do_tempo": (2, 5),
          "cartoes": (2, 3), "destaques": (2, 4), "ranking": (3, 5), "causa_efeito": (2, 4), "documento": (2, 5),
          "palavra_chave": (2, 4), "grafico_linha": (3, 6), "pilha_cartoes": (3, 5)}
-LIMITES = {"titulo": 64, "texto": 120, "legenda": 90, "sub": 110, "kicker": 32, "nota": 80, "autor": 50,
+LIMITES = {"titulo": 64, "texto": 90, "legenda": 90, "sub": 110, "kicker": 32, "nota": 80, "autor": 50,
            "definicao": 160, "termo": 40, "rotulo": 40, "data": 14, "valor": 24, "veiculo": 30, "fonte": 50,
            "proximo": 70, "carimbo": 18}
-_ITEM_TEXTO = {"lista": 70, "checklist": 70, "passos": 46, "destaques": 70, "ranking": 60, "causa_efeito": 60,
-               "documento": 64, "linha_do_tempo": 60, "cartoes": 110, "palavra_chave": 24, "grafico_linha": 40,
-               "pilha_cartoes": 100}
+# itens curtos: a cena animada é visual, a foto da coisa e o nome dela. Com 70 letras, o everything-you-need-to-answer
+# saiu com listas de frases inteiras ("Not a case against Tesco as a business") sem nenhuma foto (2026-10-25)
+_ITEM_TEXTO = {"lista": 36, "checklist": 36, "passos": 36, "destaques": 36, "ranking": 36, "causa_efeito": 40,
+               "documento": 64, "linha_do_tempo": 44, "cartoes": 60, "palavra_chave": 24, "grafico_linha": 30,
+               "pilha_cartoes": 60}
+PALAVRAS_POR_ITEM = 5  # o texto de cada item; o documento (linhas de um papel citado) e os cartões (título e texto) não
 _PALAVRAS_LIVRES = {"mais", "menos", "como", "para", "pelo", "pela", "pelos", "pelas", "isso", "esse", "essa", "este",
                     "esta", "cada", "muito", "muita", "sobre", "entre", "quando", "onde", "sendo", "hoje", "antes",
                     "depois", "parte", "total", "fonte", "nunca", "sempre", "porque", "também", "tambem"}
 
 
 def config(projeto) -> dict:
-    padrao = {"ativo": True, "tema": "impacto", "duracao_alvo": 8, "duracao_maxima": 12, "duracao_minima": 3,
-              "limiar": 70, "maximo_do_video": 0.12, "intervalo_minimo": 20, "trechos_por_lote": 6,
+    padrao = {"ativo": True, "tema": "impacto", "duracao_alvo": 5, "duracao_maxima": 7, "duracao_minima": 3,
+              "limiar": 70, "maximo_do_video": 0.06, "intervalo_minimo": 30, "trechos_por_lote": 6,
               "tentativas": 2, "paralelo": 2, "fps": 30, "canal": "", "sons": True, "volume_sons_db": -20,
-              "fotos_nos_itens": True, "maximo_no_lugar_do_motion": 0.25}
+              "fotos_nos_itens": True, "maximo_no_lugar_do_motion": 0.10, "intervalo_no_lugar_do_motion": 20,
+              "inicio_sem_animacao": 40, "exigir_imagem": True}
     return {**padrao, **(projeto.config.get("animation_ai") or {}),
             **((getattr(projeto, "perfil", None) or {}).get("animation_ai") or {})}
 
 
 def ligado(projeto) -> bool:
     return bool(config(projeto).get("ativo")) and not projeto.offline
+
+
+def inicio_sem_animacao(projeto) -> float:
+    """Os primeiros segundos do vídeo, que são de vídeo real: nenhuma cena animada nem animação em camada começa
+    neles (pedido do usuário em 2026-10-25: "os primeiros 40s são os mais importantes")."""
+    try:
+        return max(0.0, float(config(projeto).get("inicio_sem_animacao") or 0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def e_animada(cena) -> bool:
@@ -432,6 +445,9 @@ def conferir(tipo, d, fala, extras="", posicao=0, total=1, anteriores=(), simple
                 break
             if len(str(it.get("texto") or "")) > limite:
                 erros.append(f"item comprido demais em {tipo} (até {limite} letras): \"{str(it.get('texto'))[:50]}...\"")
+            elif tipo not in ("documento", "cartoes", "pilha_cartoes") and len(str(it.get("texto") or "").replace("*", "").split()) > PALAVRAS_POR_ITEM:
+                erros.append(f"item de {tipo} com mais de {PALAVRAS_POR_ITEM} palavras (\"{str(it.get('texto'))[:50]}\"): "
+                             "o item é o NOME da coisa, nunca uma frase")
         # cena 47 do brasil-selvagem: "a cada dois ou três anos" em dois itens seguidos, só com outro destaque
         textos_itens = [_chave(str(it.get("texto") or it.get("titulo") or "").replace("*", ""))
                         for it in itens if isinstance(it, dict)]
@@ -958,7 +974,12 @@ def _foto_da_cena(projeto, c):
     antes = _o_que_a_cena_tinha(c)
     m = antes.get("midia") or {}
     if not m.get("arquivo") or m.get("fonte") in (FONTE, "motion_ia"):
-        return None
+        # sem foto de banco, a imagem de IA da cena (já conferida pelo Jev em imagens.gerar) serve de fundo: sem ela, a
+        # cena animada saía só com texto. O crédito vai sem fonte, então não entra no creditos.txt
+        imagem = projeto.imagem(c["n"])
+        if m.get("arquivo") or not imagem.exists() or corrigir.errada(antes.get("conferencia")):
+            return None
+        return imagem, {"fonte": None, "id": f"ia-{c['n']:04d}-{int(imagem.stat().st_mtime)}", "tipo": "foto"}
     captura = antes.get("captura") or {}
     if corrigir.errada(antes.get("conferencia")) or (captura.get("suspeita") and not antes.get("conferencia")):
         return None  # o tapa-buraco e o suspeito sem julgamento ficam de fora: na lista, foto errada salta aos olhos
@@ -1428,10 +1449,25 @@ def _reprovado_por_quadro_morto(mp4, fps=30):
     return ""
 
 
-def gravar(projeto, trecho, plano, log=print):
+def tem_imagem(dados) -> bool:
+    """A cena animada mostra alguma foto: o fundo, a de um item ou a de um lado da comparação."""
+    if dados.get("fundo"):
+        return True
+    for chave in ("itens", "linhas"):
+        if any(isinstance(it, dict) and it.get("foto") for it in dados.get(chave) or []):
+            return True
+    return any(isinstance(dados.get(k), dict) and dados[k].get("foto") for k in ("esq", "dir", "antes", "depois"))
+
+
+class SemImagem(RuntimeError):
+    """A cena animada sairia só com texto: fica com a foto ou segue para a imagem de IA."""
+
+
+def gravar(projeto, trecho, plano, log=print, exigir_imagem=False):
     """Grava o trecho e devolve [(n, mp4, capa, duração, créditos das fotos dos itens) de cada cena]. Levanta
     RuntimeError se falhar. O plano de tipo "dirigida" é uma cena dirigida (direcao.py): câmera, tipografia cinética e
-    formato em pé, gravada a 60 quadros por segundo."""
+    formato em pé, gravada a 60 quadros por segundo. exigir_imagem: sem nenhuma foto, levanta SemImagem antes de
+    gravar (5 dos 25 trechos animados do everything-you-need-to-answer saíram só com texto, sem uma foto)."""
     if plano.get("tipo") == "dirigida":
         from . import direcao
 
@@ -1458,6 +1494,8 @@ def gravar(projeto, trecho, plano, log=print):
         eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
     else:
         creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+    if exigir_imagem and not tem_imagem(resolvidos):
+        raise SemImagem("nenhuma foto para a cena animada: só texto não entra no vídeo")
     variante = trecho[0]["n"]
     marca = assinatura(tipo, resolvidos, dur, cores, canal, variante)
     from .midia import nome_livre
@@ -1622,11 +1660,14 @@ def escolher_desenhos(projeto, pares) -> None:
 def _gravar_grupos(projeto, pares, log=print, frase_de_reserva=True) -> list:
     """Grava cada (cenas, plano) e põe no lugar da mídia. Com frase_de_reserva, o desenho reprovado vai como a frase da
     fala (cenas pedidas pela pessoa); sem ela (complemento), a cena fica com a foto. Devolve as cenas feitas."""
+    # no complemento, a cena animada é visual: sem nenhuma foto ela não entra (as pedidas pela pessoa entram)
+    exigir = not frase_de_reserva and bool(config(projeto).get("exigir_imagem", True))
+
     def um(par):
         g, plano = par
         try:
             try:
-                pedacos = gravar(projeto, g, plano, log)
+                pedacos = gravar(projeto, g, plano, log, exigir_imagem=exigir)
             except RuntimeError as erro:
                 if not frase_de_reserva or plano["tipo"] == "frase":
                     raise
@@ -1761,7 +1802,7 @@ ESQUEMA_UTIL = {
         "required": ["id", "nota", "tipo", "dados"]}}},
     "required": ["trechos"],
 }
-VERSAO_UTIL = 2  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
+VERSAO_UTIL = 3  # suba quando mudar as instruções do complemento: as decisões guardadas são pedidas de novo
 # a recusa da conferência guardada antes desta versão é pedida de novo (as outras decisões seguem valendo): até
 # 2026-10-14 as instruções mandavam escrever em português do Brasil, e no everything-you-need-to-answer (roteiro em
 # inglês) 10 frases de nota 85 a 95 foram recusadas por "palavras que a fala não diz" e nunca mais perguntadas
@@ -1787,6 +1828,9 @@ CATÁLOGO:
 
 REGRAS DA CENA
 - Escolha o tipo pelo que a fala DIZ. Nunca invente gráfico, número, nome ou palavra que a fala não diz.
+- A cena animada é VISUAL: a foto da coisa citada e o nome dela, nunca um slide de frases. Cada item tem de 1 a 4
+  palavras (o nome da coisa: "Tesco", "15% water", "salt"), nunca uma frase. Se a fala não tem coisas para mostrar
+  (é opinião, explicação ou narração), a nota é abaixo de 50.
 - Texto de tela CURTO, com as palavras da própria fala. Números em algarismos ("150 milhões", "1875"). Em
   *asteriscos* a palavra em destaque (uma ou duas).
 - "palavra" é UMA palavra da fala do trecho, escrita como está nela, no momento em que o elemento entra; "palavra#2" é
@@ -1955,6 +1999,8 @@ def nas_uteis(projeto, log=print, numeros=None, como_motion=False) -> list:
             continue  # já animada, falhou ou a pessoa desfez nesta mesma fala
         if numeros is not None and not any(c["n"] in numeros for c in g):
             continue
+        if float(g[0]["ini"]) < inicio_sem_animacao(projeto):
+            continue  # o começo é de vídeo real: a cena segue para a foto, o vídeo ou a imagem de IA
         if como_motion or (float(g[-1]["fim"]) - float(g[0]["ini"]) >= float(cfg["duracao_minima"]) and estrutura(g)):
             grupos.append(g)
     if not grupos:
@@ -1967,12 +2013,14 @@ def nas_uteis(projeto, log=print, numeros=None, como_motion=False) -> list:
                 if (c.get("midia") or {}).get("fonte") in ("motion_ia", FONTE)]
     duracao = float(projeto.ler_json("alinhamento.json").get("duracao") or todas[-1]["fim"])
     if como_motion:
-        # no lugar do motion: sem o intervalo (a cena reprovada precisa de uma saída), mas com teto próprio, contando as
-        # cenas já animadas. Sem teto, o brasil-selvagem ficou com 118 cenas animadas, 31% do vídeo, quase o triplo do
-        # maximo_do_video. As de nota maior entram primeiro; as que passam do teto seguem para a imagem de IA ou voltam
-        # para a foto que tinham (imagens._motion_antes_da_ia)
-        teto = float(cfg.get("maximo_no_lugar_do_motion", 0.25))
-        escolhidos = escolher(itens, decisoes, {**cfg, "maximo_do_video": teto, "intervalo_minimo": 0}, duracao, ocupados)
+        # no lugar do motion: com teto próprio, contando as cenas já animadas, e um intervalo menor que o do
+        # complemento. Sem teto, o brasil-selvagem ficou com 118 cenas animadas, 31% do vídeo; com 25% e sem intervalo,
+        # o everything-you-need-to-answer saiu com 24 trechos, alguns colados. As de nota maior entram primeiro; as que
+        # passam do teto seguem para a imagem de IA ou voltam para a foto que tinham (imagens._motion_antes_da_ia)
+        teto = float(cfg.get("maximo_no_lugar_do_motion", 0.10))
+        escolhidos = escolher(itens, decisoes, {**cfg, "maximo_do_video": teto,
+                                                "intervalo_minimo": cfg.get("intervalo_no_lugar_do_motion", 20)},
+                              duracao, ocupados)
         aprovadas = sum(1 for it in itens if decisoes.get(it["id"], {}).get("tipo")
                         and decisoes[it["id"]].get("nota", 0) >= float(cfg.get("limiar", 70)))
         if aprovadas > len(escolhidos):

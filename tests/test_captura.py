@@ -97,7 +97,9 @@ def test_cena_de_epoca_vai_ao_arquivo_e_nunca_vira_video():
 def test_cinco_primeiros_minutos_70_por_cento_video():
     lista = [{"n": i, "tipo": "foto_real", "ini": i * 4.0, "personagem": False} for i in range(150)]  # 10 min
     cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
-    inicio = [c for c in lista if c["ini"] < 300]
+    gancho = [c for c in lista if c["ini"] < 40]
+    assert all(c["tipo"] == "video_real" for c in gancho)  # os primeiros 40 s são todos vídeo (2026-10-25)
+    inicio = [c for c in lista if 40 <= c["ini"] < 300]
     assert sum(c["tipo"] == "video_real" for c in inicio) == round(len(inicio) * 0.7)
     assert not any(c["tipo"] == "video_real" for c in lista if c["ini"] >= 300)
 

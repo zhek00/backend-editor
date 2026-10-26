@@ -318,6 +318,9 @@ def elegivel(projeto, cena, pedida=False) -> bool:
         return False
     if (cena.get("midia") or {}).get("fonte") in ("motion_ia", "animation_ai"):
         return False  # a cena já é um clipe de motion (motion_ia.py): uma camada por cima embolaria os dois
+    from . import animation_ai
+    if not pedida and float(cena.get("ini") or 0) < animation_ai.inicio_sem_animacao(projeto):
+        return False  # o começo do vídeo é de vídeo real, sem texto por cima
     return cena.get("visual") in tipos(projeto) and bool((cena.get("texto") or "").strip())
 
 

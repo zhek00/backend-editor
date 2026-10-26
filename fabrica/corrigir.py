@@ -1009,6 +1009,10 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
     ia = midia.ia_ativa(projeto) if ia is None else ia
     if ia:
         rodadas = min(rodadas, 2)
+    # o gancho (os primeiros 40 s) ganha uma busca a mais antes da IA: lá a cena tem de ser vídeo real do que a fala diz
+    # (no everything-you-need-to-answer, 6 das 11 cenas do começo foram para a imagem de IA depois de uma busca só)
+    from . import animation_ai
+    gancho = animation_ai.inicio_sem_animacao(projeto)
 
     def devolver_as_melhores():
         """Volta cada cena para a melhor mídia que ela teve. Roda mesmo se o comando for interrompido,
@@ -1028,7 +1032,7 @@ def corrigir(projeto, numeros=None, rodadas=RODADAS, nota_minima=NOTA_MINIMA, no
 
     try:
         resumo["restauradas"] = _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, resumo,
-                                         precisam_ia, melhor, nota_atual, alvo, devolver_as_melhores)
+                                         precisam_ia, melhor, nota_atual, alvo, devolver_as_melhores, gancho=gancho)
     except BaseException:
         devolver_as_melhores()
         _apagar_backups(melhor)  # só depois de devolver: se a devolução falhar, as cópias ficam para salvar à mão
@@ -1354,8 +1358,10 @@ def _tirar_outra_coisa(projeto, nota_minima, log=print) -> list[int]:
 
 
 def _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, resumo, precisam_ia, melhor,
-             nota_atual, alvo, devolver_as_melhores):
-    for rodada in range(1, rodadas + 1):
+             nota_atual, alvo, devolver_as_melhores, gancho=0.0):
+    no_gancho = {c["n"] for c in projeto.ler_json("cenas.json")["cenas"] if float(c.get("ini") or 0) < gancho}
+    total = rodadas + 1 if no_gancho and rodadas > 1 else rodadas
+    for rodada in range(1, total + 1):
         avaliacoes = _avaliar(projeto, alvo, log, nota_minima)
         _guardar(projeto, avaliacoes, rodada)
         # trocar sozinho só o que está claramente errado: sujeito errado, época errada ou nota muito baixa. A faixa do
@@ -1385,7 +1391,6 @@ def _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, r
             if duvidosas:
                 log(f"  {len(duvidosas)} cena(s) ficaram na dúvida (nota de {nota_para_trocar} a {nota_minima - 1}): "
                     "não troco sozinho, ficam na lista para você decidir")
-        ultima = so_avaliar or rodada == rodadas
         if so_avaliar:
             resumo["reprovadas"] = sorted(reprovadas)
             break
@@ -1394,7 +1399,8 @@ def _rodadas(projeto, rodadas, nota_minima, nota_para_trocar, so_avaliar, log, r
         for n, a in avaliacoes.items():
             if n not in reprovadas:
                 precisam_ia.pop(n, None)
-            elif cenas[n]["tipo"] in midia.TIPOS_REAIS and not ultima:
+            elif cenas[n]["tipo"] in midia.TIPOS_REAIS and not (so_avaliar
+                                                                 or rodada >= (total if n in no_gancho else rodadas)):
                 reais.append(n)
             else:
                 precisam_ia[n] = {"cena": n, "prompt": a["prompt_novo"] or cenas[n].get("prompt", ""), "motivo": a["motivo"]}

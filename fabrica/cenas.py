@@ -27,7 +27,9 @@ ESTILO_MAXIMO_SEGUNDOS = 5.0
 ESTILO_PROPORCAO_REAL = 0.9
 ESTILO_MINIMO_FOTOS = 0.70  # do material real, pelo menos isso tem que ser foto
 # nos primeiros minutos, esta fatia do material real é vídeo, para prender a atenção: (até o segundo, fatia)
-ESTILO_VIDEO_NO_INICIO = ((300.0, 0.70),)  # 70% vídeo e 30% foto nos 5 primeiros minutos
+# os primeiros 40 s são o gancho: todo material real é vídeo (pedido do usuário em 2026-10-25: "os primeiros 40s são os
+# mais importantes"); depois, 70% vídeo e 30% foto até os 5 minutos. Época, arquivo e enumeração seguem como foto
+ESTILO_VIDEO_NO_INICIO = ((40.0, 1.0), (300.0, 0.70))
 # Sem teto de IA (desde 2026-10-03, pedido do usuário): cena que não existe em foto ou que veio errada recebe imagem de
 # IA, quantas forem. O teto de 15% transformava em foto de banco as cenas que o agente marcou como IA, e foi assim que
 # o virou-filme-em-1996 saiu com 86 cenas de outra coisa. Com a IA desligada (ia.ativa: false), nenhuma cena é de IA
@@ -343,7 +345,8 @@ def _e_de_epoca(cena) -> bool:
 
 
 def _balancear_foto_e_video(cenas, log=print):
-    """Do material real, pelo menos 70% é foto, mas o começo é de vídeo: 70% vídeo e 30% foto nos 5 primeiros minutos.
+    """Do material real, pelo menos 70% é foto, mas o começo é de vídeo: tudo vídeo nos primeiros 40 s e 70% vídeo e
+    30% foto até os 5 minutos (ESTILO_VIDEO_NO_INICIO).
 
     O começo não entra no teto de 30% de vídeo: o que ele usar é descontado do teto, e o resto do vídeo fica com
     o que sobrar (nada, se o começo já passou). Só troca o tipo (foto_real por video_real e o contrário),
