@@ -22,6 +22,7 @@ from .util import duracao_audio, rodar
 
 RODADAS = 3
 NOTA_MINIMA = 40      # abaixo disso a cena entra no relatório como "não combina"
+CORRECAO_IA = "IMPORTANT: the previous image was wrong"  # marca o pedido corrigido pela fábrica (conferir_ia)
 NOTA_PARA_TROCAR = 20  # só abaixo disso o sistema troca sozinho. Entre os dois, ele só aponta e você decide
 # a imagem mostra OUTRA coisa no lugar do sujeito (pergunta "sujeito" do Jev): a cena está errada, qualquer que seja a
 # nota de combinar. Com o sujeito certo e a nota baixa, a cena é só genérica e fica (três leões sem juba tiravam 4%
@@ -1220,12 +1221,21 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
         por_n = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
         for n, a in refazer.items():
             cena = por_n[n]
-            base = (cena.get("prompt_manual") or cena.get("prompt") or "").strip()
+            # o pedido corrigido daqui ia para o prompt_manual (imagens.refazer), como se fosse da pessoa, e a correção
+            # seguinte não podia trocar o pedido: ele repetia o peixe-leão com dois avisos de erro empilhados
+            da_pessoa = bool(cena.get("prompt_manual")) and CORRECAO_IA not in cena["prompt_manual"]
+            base = ((cena.get("prompt_manual") if da_pessoa else None) or cena.get("prompt") or "").strip()
             # o que mostrar sem pedir texto: o pedido com texto em português saía desenhado na imagem (cena 8 do
             # everything-you-need-to-answer, imagens.o_que_mostrar)
             alvo_da_cena = imagens.o_que_mostrar(cena) or (None if cena.get("visual") == "texto_tela" else
                                                             cena.get("sujeito") or cena.get("busca"))
-            correcao = (f"{base}\nIMPORTANT: the previous image was wrong ({a['legenda'][:200]})."
+            # a imagem saiu como o pedido, e o pedido é que estava errado: o Jev julga pela fala e escreve o pedido
+            # dela (prompt_novo). Na cena 9 do teste-animacao-1min a fala era da água-viva, o pedido herdado era o
+            # do peixe-leão, e a imagem refeita pelo mesmo pedido saiu outro peixe-leão (nota 3)
+            novo = (a.get("prompt_novo") or "").strip()
+            if novo and not da_pessoa:
+                base, alvo_da_cena = novo, None
+            correcao = (f"{base}\n{CORRECAO_IA} ({a['legenda'][:200]})."
                         + (f" The image must clearly show: {alvo_da_cena}." if alvo_da_cena else "")
                         + " No text, letters or words anywhere in the image.")
             # a imagem atual fica guardada: se a nova não sair (provedor fora do ar, sem saldo), ela volta. Sem isso, as
@@ -1237,6 +1247,14 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
                 imagens.refazer(projeto, [n], prompt=correcao, log=log)
             except (Exception, SystemExit) as erro:
                 log(f"  cena {n}: não deu para refazer a imagem de IA ({str(erro)[:120]}); fica a que estava")
+            if not da_pessoa:
+                # o pedido que valeu fica como o pedido da cena, não como escolha da pessoa
+                dados_agora = projeto.ler_json("cenas.json")
+                for c in dados_agora["cenas"]:
+                    if c["n"] == n and c.get("prompt_manual") == correcao:
+                        c["prompt"] = base
+                        c.pop("prompt_manual", None)
+                projeto.salvar_json("cenas.json", dados_agora)
             if not projeto.imagem(n).exists() and guarda.exists():
                 shutil.move(guarda, projeto.imagem(n))
             guarda.unlink(missing_ok=True)

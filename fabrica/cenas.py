@@ -1581,6 +1581,11 @@ def _pre_cortar(unidades, alvo, minimo, maximo):
     grupos, inicio = [], 0
     paralelas = _frases_paralelas(unidades)
     for i, u in enumerate(unidades):
+        if i > inicio and i not in paralelas and _abre_assunto(unidades, inicio, i):
+            # "Em segundo lugar, a água-viva." vai com a frase seguinte, que fala dela, e não com a anterior: junto do
+            # peixe-leão, o agente pedia o peixe-leão para a cena que a anuncia (cena 9 do teste-animacao-1min)
+            grupos.append({"primeira_frase": inicio, "ultima_frase": i - 1})
+            inicio = i
         duracao = u["fim"] - unidades[inicio]["ini"]
         ultima = i == len(unidades) - 1
         estoura = not ultima and unidades[i + 1]["fim"] - unidades[inicio]["ini"] > maximo
@@ -1593,6 +1598,20 @@ def _pre_cortar(unidades, alvo, minimo, maximo):
             grupos.append({"primeira_frase": inicio, "ultima_frase": i})
             inicio = i + 1
     return grupos
+
+
+def _abre_assunto(unidades, inicio, i):
+    """A frase i começa uma frase nova que anuncia o assunto da seguinte e não o do corte que está aberto
+    (inicio a i-1): cita uma palavra de 5 letras ou mais que a frase seguinte repete e que o corte aberto não tem."""
+    if i + 1 >= len(unidades) or not unidades[i - 1]["texto"].rstrip().endswith((".", "?", "!", "…", ":")):
+        return False
+
+    def nomes(texto):
+        return {w for w in (_simplificar(p) for p in re.split(r"[\s,.;:!?…\"“”()]+", texto)) if len(w) >= 5}
+
+    anuncia = nomes(unidades[i]["texto"]) & nomes(unidades[i + 1]["texto"])
+    aberto = set().union(*(nomes(unidades[k]["texto"]) for k in range(inicio, i)))
+    return bool(anuncia) and not (anuncia & aberto)
 
 
 def _frases_paralelas(unidades):
