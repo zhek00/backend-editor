@@ -120,6 +120,13 @@ function DesligarTudo {
     Start-Sleep -Seconds 2
 }
 
+# Mostra as mudancas (commits) do intervalo, uma por linha: data, hora e o resumo de cada uma, da mais nova para a
+# mais velha. Pedido do usuario em 2026-10-26: o LIGAR so dizia "ja esta na ultima versao", sem mostrar o que chegou.
+function MostrarMudancas($intervalo, $maximo, $cor) {
+    $linhas = (RodarGit log --no-decorate --date=format:'%d/%m %H:%M' --format='%cd  %s' -n $maximo $intervalo) -split "`r?`n"
+    foreach ($linha in $linhas) { if ($linha) { Passo "        - $linha" $cor } }
+}
+
 # Baixa a ultima versao do GitHub. Devolve $true se chegou versao nova.
 # Pedido do usuario em 2026-10-10: o PC de um amigo seguia com uma versao antiga (o Haiku julgando as fotos, que a
 # fabrica deixou de fazer em 09/10), porque ninguem dava git pull. Mudanca local em arquivo do Git (o e-mail do
@@ -143,8 +150,11 @@ function Atualizar {
         Passo '  Atualizacao: este ramo nao segue nenhum ramo do GitHub, seguindo com a versao atual' Yellow
         return $false
     }
+    $ramo = RodarGit rev-parse --abbrev-ref HEAD
+    if ($ramo -ne 'main') { Passo "  Atualizacao: esta pasta segue o ramo '$ramo' do GitHub, nao o main" Yellow }
     if ($novos -eq '0') {
-        Passo '  Atualizacao: ja esta na ultima versao' Green
+        Passo '  Atualizacao: ja esta na ultima versao. Ultimas atualizacoes recebidas:' Green
+        MostrarMudancas 'HEAD' 3 DarkGray
         return $false
     }
 
@@ -174,7 +184,9 @@ function Atualizar {
         return $false
     }
 
-    (RodarGit log --oneline --no-decorate "$antes..HEAD" -n 8) -split "`r?`n" | ForEach-Object { Passo "        $_" DarkGray }
+    Passo "        Atualizacoes recebidas agora:" Cyan
+    MostrarMudancas "$antes..HEAD" 10 White
+    if ([int]$novos -gt 10) { Passo "        ... e mais $([int]$novos - 10) mais antiga(s)" DarkGray }
     # dependencia nova (pyproject.toml ou uv.lock): instala antes de subir; o MCP sobe com --no-sync
     if (RodarGit diff --name-only $antes HEAD '--' pyproject.toml uv.lock) {
         Passo '        dependencias mudaram, instalando...' Yellow
