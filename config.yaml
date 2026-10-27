@@ -246,7 +246,9 @@ imagens:
   lote: true                 # manda as imagens em lote ao Google, metade do preço, pronto em minutos ou horas
   minimo_lote: 8             # com menos imagens que isso gera na hora, como no refazer
   espera_lote_horas: 24
-  processos: 6               # imagens de IA geradas ao mesmo tempo, fora do lote
+  processos: 16              # imagens de IA geradas ao mesmo tempo, fora do lote. Eram 6: no everything-you-need-
+                             # to-answer as 214 imagens levaram uns 30 min, cerca de 40 s cada (2026-10-27). O preço
+                             # é o mesmo; só o tempo cai
   tentativas: 3
 
 render:

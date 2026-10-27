@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import anthropic
 import httpx
 
-from . import claude_local
+from . import claude_local, tempos
 from .util import gravar_cache, ler_cache, mmss, rodar
 
 TIPOS_REAIS = ("foto_real", "video_real")
@@ -1472,7 +1472,8 @@ class Buscador:
                 # sem gravar o cache vazio, e a fonte volta a ser usada sozinha quando o limite dela liberar
                 return []
             try:
-                achados = funcoes[fonte](tipo, busca)
+                with tempos.parte(self.projeto, f"banco: {fonte}"):
+                    achados = funcoes[fonte](tipo, busca)
                 break
             except LimiteAtingido as limite:
                 if tentativa == 2:
@@ -1544,7 +1545,8 @@ class Buscador:
         if falta > ESPERA_CURTA_FONTE:
             return False
         if falta > 0:
-            time.sleep(falta)
+            with tempos.parte(self.projeto, f"esperando o limite: {fonte}"):
+                time.sleep(falta)
         return True
 
     def _desligar(self, fonte, motivo):
@@ -2246,6 +2248,34 @@ def _imagem_de_comparar(projeto, midia_info) -> Optional[Path]:
     return None
 
 
+# imagens baixadas nesta execução e ainda não gravadas no cenas.json: (pasta, cena) -> (chave, impressão, quando)
+_RESERVAS = {}
+_TRAVA_RESERVAS = threading.Lock()
+RESERVA_SEGUNDOS = 900
+
+
+def _reservar(projeto, n, caminho, chave) -> None:
+    _RESERVAS[(str(projeto.pasta), n)] = (chave, _impressao(caminho) if caminho else None, time.time())
+
+
+def _reservada_por_outra(projeto, n, caminho, chave) -> Optional[int]:
+    """Outra cena deste projeto baixou a mesma imagem há pouco (ainda pode não estar no cenas.json)."""
+    agora, pasta, minha = time.time(), str(projeto.pasta), None
+    for (dona_pasta, outra), (chave_dela, impressao, quando) in list(_RESERVAS.items()):
+        if agora - quando > RESERVA_SEGUNDOS:
+            _RESERVAS.pop((dona_pasta, outra), None)
+            continue
+        if dona_pasta != pasta or outra == n:
+            continue
+        if chave and chave == chave_dela:
+            return outra
+        if impressao is not None:
+            minha = _impressao(caminho) if minha is None and caminho else minha
+            if minha is not None and _impressoes_iguais(minha, impressao):
+                return outra
+    return None
+
+
 def cena_com_a_mesma_imagem(projeto, n, caminho, chave=None) -> Optional[int]:
     """Número da outra cena do vídeo que já mostra esta mesma imagem (ou uma quase igual), ou None."""
     minha = _impressao(caminho)
@@ -2363,6 +2393,11 @@ def _guardando_o_que_havia(caminhos):
 
 
 def _baixar_midia(projeto, cena, candidato, http):
+    with tempos.parte(projeto, "download"):
+        return _baixar_midia_agora(projeto, cena, candidato, http)
+
+
+def _baixar_midia_agora(projeto, cena, candidato, http):
     """Baixa o candidato para a cena e devolve o registro da mídia.
 
     O nome do arquivo é o da cena (midia/NNNN.jpg), o mesmo da foto que ela tinha antes de uma nova busca. Se a imagem
@@ -2406,7 +2441,15 @@ def _trazer_midia(projeto, cena, candidato, http, base):
     # jamais repetir imagem: a mesma foto pode vir de dois bancos (Wikimedia e Pixabay) com números diferentes,
     # ou em duas versões quase iguais. Olha a imagem em si e recusa a que já está em outra cena do vídeo
     comparar = capa if capa and capa.exists() else (arquivo if candidato["tipo"] != "video" else None)
-    igual = cena_com_a_mesma_imagem(projeto, n, comparar or arquivo, _chave(candidato))
+    with _TRAVA_RESERVAS:
+        # a conferência pelo cenas.json só vê as cenas já gravadas: duas cenas baixando a mesma foto ao mesmo tempo
+        # passavam as duas, e só a varredura do fim (tirar_repetidas) pegava, já com o trabalho feito. A reserva
+        # vale enquanto a cena que baixou ainda não gravou
+        igual = cena_com_a_mesma_imagem(projeto, n, comparar or arquivo, _chave(candidato))
+        if igual is None:
+            igual = _reservada_por_outra(projeto, n, comparar or arquivo, _chave(candidato))
+        if igual is None:
+            _reservar(projeto, n, comparar or arquivo, _chave(candidato))
     if igual is not None:
         for f in {arquivo, capa} - {None}:
             f.unlink(missing_ok=True)

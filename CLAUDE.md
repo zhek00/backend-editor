@@ -790,6 +790,55 @@ exporta ou só mede.
 - **Próximo passo:** baixar de novo as fotos e vídeos de banco pelo número de cada um no banco, em vez de levá-los no
   pacote (o pacote de 30 min cairia para uns 300 MB).
 
+## Tempo de produção
+
+Pedido do usuário em 2026-10-27 ("o sistema está demorando muito para gerar um vídeo"). Medido no
+everything-you-need-to-answer (20 min, 340 cenas): umas 2h20 de fábrica, uns 7 min por minuto de vídeo. Agente de
+roteiro ~22 min, busca e conferência ~27 min, 214 imagens de IA ~30 min, render ~33 min (clipes 10, montagem final 22).
+
+- **Medição em toda criação** (`tempos.py`): o `fabrica tudo` também grava cada etapa em `tempos.json` (antes só o
+  site e o render) e diz no fim "Tempo por etapa". Cada linha leva `partes`: os segundos somados de cada banco
+  (`banco: pexels`), da espera pelo limite de um banco, do download e de cada etapa de modelo (dos `uso_*.json`).
+  Elas somam mais que a etapa quando correm juntas. Serve para achar a espera: na conferência das imagens de IA do
+  everything a janela foi de 38 min com só 4 min de modelo trabalhando.
+- **Montagem final em pedaços, na placa de vídeo** (`render._mixar_em_pedacos`): o vídeo é cortado em quadros
+  inteiros (`pedacos_da_montagem`, a soma dá exatamente o total), cada pedaço ganha a legenda e as animações dele e
+  é codificado ao mesmo tempo que os outros, e no fim os pedaços são emendados sem codificar de novo, com o áudio
+  inteiro numa faixa só. Conferido no teste-animacao-1min: os 891 quadros do segundo pedaço iguais ao original
+  (framemd5) e 1.782 quadros no total, como antes. **Nunca `setpts=PTS-STARTPTS` depois de um `-ss` na entrada**: no
+  FFmpeg 8 os quadros de antes do corte passam pelo filtro, e o pedaço saiu com 357 quadros em vez de 891. **Os
+  pedaços saem em H.264 cru, sem quadros B** (`-f h264 -bf 0`), emendados byte a byte, e os tempos são dados uma vez
+  só (`-framerate`): em MP4 cada pedaço trazia os próprios tempos e o vídeo de 20 min perdeu um quadro na emenda. 3
+  pedaços de cada vez na placa (`render.pedacos_juntos`): com 5 ficou mais lento (6,7 min contra 5). O personagem no
+  canto segue o caminho antigo (um passo só).
+- **Áudio do render** (`render._trilha`): a voz e a música são normalizadas ao mesmo tempo, e cada uma é reaproveitada
+  quando as entradas não mudaram (`voz.wav.assinatura`, `musica.wav.assinatura`): 2,8 min virou 2,2 min na primeira vez
+  e 8 s nas seguintes. Medido no everything (20 min, sem clipe novo): a montagem final caiu de 15,5 min para 5,4,
+  com os 36.187 quadros. Comparado com o `render/video.mp4` (a base) nos segundos 196 a 199, o novo bate (pior quadro
+  0,982, a diferença é a legenda) e o antigo, num passo só, não (22 quadros abaixo de 0,85).
+- **Para comparar vídeos, corte pelo tempo (`-ss`), nunca pelo número do quadro (`trim=start_frame`)**: o
+  `video.mp4` emenda clipes com duas faixas de cor (yuv420p tv bt709 e yuvj420p pc bt470bg), o FFmpeg refaz os filtros
+  a cada troca e a contagem de quadros recomeça. Uniformizar a faixa de cor dos clipes fica para depois.
+- **Codificador** (`render.codec_de_video`, `render.codificador`: `auto` ou `cpu`; `render.cq_placa`, 24): a placa
+  NVIDIA (h264_nvenc) quando existir, testada uma vez por execução; se ela recusar, a CPU. Medido: cq 24 na placa dá a
+  mesma semelhança com o original que crf 18 na CPU (SSIM 0,9607 e 0,9607), em uns 60% do tempo e com o arquivo 1,8
+  vez maior. **Só a montagem final usa a placa**: os clipes seguem na CPU, porque um clipe guardado da CPU emendado
+  sem codificar a um novo da placa estragaria a emenda. Um pedaço que caia para a CPU faz todos irem pela CPU. Não
+  pôr `codificador` nem `cq_placa` na seção `render` do config.yaml sem precisar: os ajustes dela entram no nome de
+  cada clipe, e todo projeto renderizaria de novo.
+- **Clipes adiantados** (`render.adiantar_clipes`): depois da conferência e depois das imagens de IA (site e `tudo`),
+  os clipes das cenas que já têm imagem são montados em segundo plano, com metade dos processos do render, enquanto
+  a criação segue. O nome do clipe diz a imagem, a duração e o movimento: a cena que mudar depois ganha outro nome e
+  o render faz de novo. O render espera os adiantados antes de começar. `_tarefas_da_linha` é a única que dá nome aos
+  clipes (o render e o adiantamento usam a mesma): mudou o nome, todo projeto renderiza de novo.
+- **16 imagens de IA ao mesmo tempo** (`imagens.processos`; eram 6). O preço é o mesmo.
+- **FFmpeg** atualizado em 2026-10-27 para o N-128100 (BtbN, 26/10/2026), em `C:\Users\Admin\.cargo\bin`; o de
+  08/08/2026 ficou em `ffmpeg_backup_20260808` na mesma pasta.
+- **Falta** (proposto ao usuário, com as falhas conhecidas): a esteira por trecho, com cada trecho de ~2 min indo da
+  busca aos clipes sozinho e uma passada geral no fim (teto de IA, foto e vídeo, frequência das animações). Antes dela
+  vêm as travas: cota de IA por trecho, um escritor só do `cenas.json`, trava na lista de imagens usadas e cortes na
+  linha do tempo do vídeo inteiro.
+
 ## Revisão do vídeo pronto
 
 `fabrica/revisao_video.py`, ligada por `revisao_video.ativo`. Depois do render (no `tudo` e no site, em segundo plano),

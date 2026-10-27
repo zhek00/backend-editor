@@ -470,7 +470,9 @@ def _esteira(nome: str, task_id: str) -> None:
             log_w(f"  a conferência das cenas falhou, seguindo sem ela: {erro_conf}")
         marcar("conferir")
 
-    # PASSO 5: Imagens de IA para o que o acervo não resolveu
+    # PASSO 5: Imagens de IA para o que o acervo não resolveu. Os clipes das cenas que já têm a imagem começam a ser
+    # montados em segundo plano enquanto isso (render.adiantar_clipes): o render final só faz os que mudarem
+    render.adiantar_clipes(p, log_w)
     _atualizar(task_id, etapa="imagens", passo_atual=5, progresso_pct=88, mensagem="Gerando imagens de IA...")
     _etapa(task_id, "Imagens de IA", lambda: imagens.gerar(p, log=log_w))
     marcar("imagens")
@@ -513,6 +515,9 @@ def _esteira(nome: str, task_id: str) -> None:
         raise ParadaPrecisaDeVoce(
             f"Os bancos de imagens não têm nenhuma foto destes assuntos: {lista}. Suba uma foto dessas cenas no editor "
             "(ou ligue a IA no config.yaml) e clique em Retomar.")
+
+    # as cenas completadas e as imagens de IA entram nos clipes adiantados, enquanto as animações e a trilha andam
+    render.adiantar_clipes(p, log_w)
 
     # PASSO 6b: onde a fala traz um dado e o Jev diz que o motion ajuda o roteiro, a cena vira clipe de motion mesmo
     # com a foto aprovada (pedido do usuário em 2026-10-07). Gratuito e sem bloquear: falhou, a cena fica com a foto

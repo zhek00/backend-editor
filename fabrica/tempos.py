@@ -38,16 +38,80 @@ def registrar(projeto, etapa, inicio, segundos, ok=True, **extra) -> None:
         pass
 
 
+# segundos somados dentro de uma etapa, por pasta do projeto: busca em cada banco, espera de limite, download. Uma
+# janela de 38 min na conferência do everything-you-need-to-answer teve só 4 min de modelo trabalhando, e sem isto
+# não dava para saber onde foi o resto
+_partes = {}
+
+
+def somar(projeto, nome, segundos) -> None:
+    try:
+        chave = str(_pasta(projeto))
+    except (TypeError, ValueError):  # projeto sem pasta (os testes): medir nunca derruba a produção
+        return
+    with _trava:
+        por_nome = _partes.setdefault(chave, {})
+        s, n = por_nome.get(nome, (0.0, 0))
+        por_nome[nome] = (s + segundos, n + 1)
+
+
+@contextlib.contextmanager
+def parte(projeto, nome):
+    """Soma o tempo do bloco na parte nome da etapa que estiver sendo medida."""
+    inicio = time.time()
+    try:
+        yield
+    finally:
+        somar(projeto, nome, time.time() - inicio)
+
+
+def _foto_das_partes(projeto) -> dict:
+    try:
+        chave = str(_pasta(projeto))
+    except (TypeError, ValueError):
+        return {}
+    with _trava:
+        return dict(_partes.get(chave, {}))
+
+
+def _modelos_desde(projeto, inicio) -> dict:
+    """Segundos de cada chamada de modelo (uso_*.json) que terminou desde inicio, somados pela etapa da chamada."""
+    desde = datetime.fromtimestamp(inicio).isoformat(timespec="seconds")
+    somas = {}
+    for arquivo in _pasta(projeto).glob("uso_*.json"):
+        try:
+            registros = json.loads(arquivo.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for r in registros if isinstance(registros, list) else []:
+            if str(r.get("quando") or "") >= desde and r.get("segundos"):
+                nome = f"modelo: {r.get('etapa') or '?'}"
+                s, n = somas.get(nome, (0.0, 0))
+                somas[nome] = (s + float(r["segundos"]), n + 1)
+    return somas
+
+
 @contextlib.contextmanager
 def medir(projeto, etapa, log=None, **extra):
-    """Mede o bloco e grava em tempos.json, deu certo ou não. Com log, diz quanto levou."""
+    """Mede o bloco e grava em tempos.json, deu certo ou não. Com log, diz quanto levou. Junto vão as partes
+    (segundos somados de cada banco, espera, download e modelo), que somam mais que a etapa quando correm juntas."""
     inicio = time.time()
+    antes = _foto_das_partes(projeto)
     ok = False
     try:
         yield
         ok = True
     finally:
         segundos = time.time() - inicio
+        depois = _foto_das_partes(projeto)
+        partes = {nome: [round(s - antes.get(nome, (0.0, 0))[0], 1), n - antes.get(nome, (0.0, 0))[1]]
+                  for nome, (s, n) in depois.items() if n > antes.get(nome, (0.0, 0))[1]}
+        try:
+            partes.update({nome: [round(s, 1), n] for nome, (s, n) in _modelos_desde(projeto, inicio).items()})
+        except Exception:  # medir nunca derruba a produção
+            pass
+        if partes:
+            extra = {**extra, "partes": dict(sorted(partes.items(), key=lambda x: -x[1][0]))}
         registrar(projeto, etapa, inicio, segundos, ok, **extra)
         if log and segundos >= 1:
             log(f"  [tempo] {etapa}: {duracao(segundos)}{'' if ok else ' (falhou)'}")

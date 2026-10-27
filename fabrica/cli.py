@@ -664,14 +664,27 @@ def cmd_tudo(a):
     # o agente monta o JSON de cenas pelo texto enquanto a narração é gravada: os dois não dependem um do outro
     from concurrent.futures import ThreadPoolExecutor
 
+    from . import tempos
+
+    inicio_tudo = __import__("datetime").datetime.now().isoformat(timespec="seconds")
+
+    def medida(rotulo, etapa, *args, **kw):
+        with tempos.medir(p, rotulo, log=log):
+            return etapa(*args, **kw)
+
     with ThreadPoolExecutor(max_workers=1) as agente:
-        pronto = agente.submit(etapa_mapa, p, a, True)
+        pronto = agente.submit(medida, "Agente de roteiro (mapa e cenas)", etapa_mapa, p, a, True)
         a._dentro_do_tudo = True  # no tudo, as etapas seguintes já completam as cenas
-        etapa_narrar(p, a, aprovado=True)
-        pronto.result()
-    for etapa in (etapa_cenas, etapa_motion_total, etapa_midia, etapa_corrigir, etapa_imagens, etapa_motion, etapa_efeitos,
-                  etapa_animacoes, etapa_trilha):
-        etapa(p, a, aprovado=True)
+        medida("Narração", etapa_narrar, p, a, aprovado=True)
+        medida("Esperando o JSON de cenas", pronto.result)
+    for rotulo, etapa in (("Divisão de cenas", etapa_cenas), ("Motion (vídeo todo)", etapa_motion_total),
+                          ("Busca de acervo", etapa_midia), ("Conferência", etapa_corrigir),
+                          ("Imagens de IA", etapa_imagens), ("Motion e cenas animadas", etapa_motion),
+                          ("Efeitos", etapa_efeitos), ("Animações", etapa_animacoes), ("Trilha", etapa_trilha)):
+        medida(rotulo, etapa, p, a, aprovado=True)
+        if etapa in (etapa_corrigir, etapa_imagens):
+            # os clipes das cenas prontas são montados em segundo plano enquanto as etapas seguintes andam
+            render.adiantar_clipes(p, log)
     if render.com_avatar(p, a.sem_avatar):
         faltando = avatar.faltando(p) if avatar.modo(p.perfil) == "trechos" else avatar.partes_faltando(p)
         if faltando:
@@ -680,8 +693,10 @@ def cmd_tudo(a):
             log(f"Gere no HeyGen com os áudios da pasta avatar e depois rode uv run fabrica render {p.nome}")
             return
     qualidade.registrar(p, "criação", log)
-    etapa_render(p, a, aprovado=True)
-    etapa_revisao_video(p, a)
+    medida("Render, publicação, capas e shorts", etapa_render, p, a, aprovado=True)
+    medida("Revisão do vídeo", etapa_revisao_video, p, a)
+    log("Tempo por etapa: " + ", ".join(f"{e} {tempos.duracao(s)}" for e, s, _ in tempos.resumo(p, desde=inicio_tudo)
+                                         if not e.startswith(("Render:", "Render (", "Render em"))))
     log(f"Revise as cenas com uv run fabrica revisar {p.nome}")
 
 

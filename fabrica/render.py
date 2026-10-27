@@ -12,6 +12,8 @@ import json
 import os
 import random
 import re
+import shutil
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -71,6 +73,7 @@ def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
 
     # o render inteiro e as partes dele vão para o tempos.json (pedido do usuário em 2026-10-13: medir antes de
     # acelerar)
+    esperar_clipes_adiantados(projeto, log)
     with tempos.medir(projeto, "Render em pé (total)" if vertical else "Render (total)", log=log):
         return _renderizar(projeto, log, sem_avatar, vertical)
 
@@ -112,11 +115,10 @@ def _renderizar(projeto, log, sem_avatar, vertical):
     if com_animacoes:
         animacoes.por_em_dia(projeto, log=log)
     motion = animacoes.validas(projeto) if com_animacoes else []
-    sorteio = random.Random(projeto.nome)
     pasta_clipes = projeto.caminho(base, "clipes", "_").parent
     pasta_fotos = projeto.caminho(base, "fotos", "_").parent
     pasta_textos = projeto.caminho(base, "textos", "_").parent
-    tarefas, anterior = [], None
+    tarefas = []
     linha = _linha_do_tempo(projeto, cenas, origens, trechos, duracao)
     faltando = sorted({p["cena"]["n"] for p in linha if p["tipo"] == "cena" and not p["arquivo"].exists()})
     if faltando:
@@ -134,32 +136,7 @@ def _renderizar(projeto, log, sem_avatar, vertical):
     # a revisão do vídeo pronto (revisao_video.py) precisa saber quanto a abertura empurra cada cena no final.mp4
     projeto.salvar_json(f"{base}/linha.json", {"atraso": round(atraso, 3), "fps": fps})
 
-    for pedaco in linha:
-        f_ini, f_fim = round(pedaco["ini"] * fps), round(pedaco["fim"] * fps)
-        frames = max(f_fim - f_ini, 1)
-        arquivo = pedaco["arquivo"]
-        if pedaco["tipo"] == "avatar":
-            origem = [(str(s["arquivo"]), s["arquivo"].stat().st_mtime_ns, round(s["pulo"], 3), round(s["dur"], 3))
-                      for s in pedaco["segmentos"]]
-            assinatura = f"avatar|{origem}|{frames}|{transicao}|{sorted(cfg.items())}"
-            codigo = hashlib.sha1(assinatura.encode()).hexdigest()[:10]
-            tarefas.append({**pedaco, "frames": frames, "transicao": transicao,
-                            "destino": pasta_clipes / f"{pedaco['ordem']:04d}-avatar-{codigo}.mp4"})
-            continue
-        movimento = sorteio.choice([m for m in MOVIMENTOS if m != anterior])
-        anterior = movimento
-        simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
-        # o nome do clipe muda quando a origem, a duração, o movimento, o símbolo ou o título mudam. O "||" é o lugar
-        # do texto na tela, que saiu da fábrica (2026-10-05): fica vazio para os clipes já prontos não mudarem de nome
-        enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
-        assinatura = (
-            f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}{enquadramento}|"
-            f"|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
-            f"{textos.assinatura_titulos(titulos, projeto.perfil)}"
-        )
-        codigo = hashlib.sha1(assinatura.encode()).hexdigest()[:10]
-        tarefas.append({**pedaco, "frames": frames, "movimento": movimento,
-                        "destino": pasta_clipes / f"{pedaco['ordem']:04d}-{codigo}.mp4"})
+    tarefas += _tarefas_da_linha(projeto, linha, cfg, pasta_clipes, transicao)
 
     # o fechamento é o mesmo clipe em todo vídeo do canal e entra depois da última cena
     duracao_total, extras = duracao, [(j["ini"], Path(j["video"])) for j in trechos if j["tipo"] == "inserto"]
@@ -219,6 +196,116 @@ def _renderizar(projeto, log, sem_avatar, vertical):
     with medida:
         return _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
                        musica_abertura, faixa_abertura, legenda, cfg)
+
+
+def _tarefas_da_linha(projeto, linha, cfg, pasta_clipes, transicao, so_prontas=False) -> list:
+    """O clipe de cada pedaço da linha do tempo, com o nome que diz o que ele mostra. so_prontas: só os pedaços cujo
+    arquivo já existe (adiantar_clipes), sem mudar o movimento sorteado dos outros."""
+    fps = cfg.get("fps", 30)
+    sorteio, anterior, tarefas = random.Random(projeto.nome), None, []
+    for pedaco in linha:
+        f_ini, f_fim = round(pedaco["ini"] * fps), round(pedaco["fim"] * fps)
+        frames = max(f_fim - f_ini, 1)
+        arquivo = pedaco["arquivo"]
+        if pedaco["tipo"] == "avatar":
+            if so_prontas:
+                continue
+            origem = [(str(s["arquivo"]), s["arquivo"].stat().st_mtime_ns, round(s["pulo"], 3), round(s["dur"], 3))
+                      for s in pedaco["segmentos"]]
+            assinatura = f"avatar|{origem}|{frames}|{transicao}|{sorted(cfg.items())}"
+            codigo = hashlib.sha1(assinatura.encode()).hexdigest()[:10]
+            tarefas.append({**pedaco, "frames": frames, "transicao": transicao,
+                            "destino": pasta_clipes / f"{pedaco['ordem']:04d}-avatar-{codigo}.mp4"})
+            continue
+        movimento = sorteio.choice([m for m in MOVIMENTOS if m != anterior])
+        anterior = movimento
+        if so_prontas and not arquivo.exists():
+            continue
+        simbolos, titulos = pedaco["simbolos"], pedaco["titulos"]
+        # o nome do clipe muda quando a origem, a duração, o movimento, o símbolo ou o título mudam. O "||" é o lugar
+        # do texto na tela, que saiu da fábrica (2026-10-05): fica vazio para os clipes já prontos não mudarem de nome
+        enquadramento = _enquadramento(arquivo, cfg) if pedaco["origem"] == "foto" else ""
+        assinatura = (
+            f"{pedaco['origem']}|{arquivo}|{arquivo.stat().st_mtime_ns}|{frames}|{movimento}|{sorted(cfg.items())}{enquadramento}|"
+            f"|{textos.assinatura_simbolos(simbolos, projeto.perfil)}|"
+            f"{textos.assinatura_titulos(titulos, projeto.perfil)}"
+        )
+        codigo = hashlib.sha1(assinatura.encode()).hexdigest()[:10]
+        tarefas.append({**pedaco, "frames": frames, "movimento": movimento,
+                        "destino": pasta_clipes / f"{pedaco['ordem']:04d}-{codigo}.mp4"})
+    return tarefas
+
+
+# clipes adiantados em segundo plano, por pasta do projeto: o render espera eles antes de começar
+_adiantando = {}
+_de_novo = set()
+
+
+def adiantar_clipes(projeto, log=print):
+    """Começa, em segundo plano, os clipes das cenas que já têm a imagem, enquanto a criação segue (imagens de IA,
+    animações, trilha). O nome do clipe diz a imagem, a duração e o movimento: a cena que mudar depois ganha outro
+    nome e o render faz de novo; a que não mudar já está pronta. No everything-you-need-to-answer os 340 clipes
+    levaram 10 min depois de toda a criação. Usa metade dos processos do render, para não sufocar o resto, e nunca
+    para a criação."""
+    import threading as _t
+
+    chave = str(projeto.pasta)
+    with _trava_placa:
+        anterior = _adiantando.get(chave)
+        if anterior and anterior.is_alive():
+            # chamado de novo com outras cenas prontas: quando a rodada de agora acabar, faz mais uma
+            _de_novo.add(chave)
+            return anterior
+
+    def trabalho():
+        while True:
+            uma_rodada()
+            with _trava_placa:
+                if chave not in _de_novo:
+                    return
+                _de_novo.discard(chave)
+
+    def uma_rodada():
+        from . import tempos
+
+        try:
+            with tempos.medir(projeto, "Render: clipes adiantados"):
+                cfg = configuracao(projeto, False)
+                duracao = projeto.ler_json("alinhamento.json")["duracao"]
+                cenas = projeto.ler_json("cenas.json")["cenas"]
+                origens = [origem_da_cena(projeto, c, False) for c in cenas]
+                trechos = avatar.janelas(projeto) if (com_avatar(projeto, False)
+                                                     and avatar.modo(projeto.perfil) == "trechos") else []
+                linha = _agrupar_personagem(_linha_do_tempo(projeto, cenas, origens, trechos, duracao))
+                pasta_clipes = projeto.caminho("render", "clipes", "_").parent
+                pasta_fotos = projeto.caminho("render", "fotos", "_").parent
+                pasta_textos = projeto.caminho("render", "textos", "_").parent
+                pendentes = [t for t in _tarefas_da_linha(projeto, linha, cfg, pasta_clipes, 0.35, so_prontas=True)
+                             if not t["destino"].exists()]
+                processos = max(1, (cfg.get("processos") or max(1, (os.cpu_count() or 4) // 2)) // 2)
+                log(f"  adiantando {len(pendentes)} clipes em segundo plano")
+                with ThreadPoolExecutor(processos) as executor:
+                    for futuro in [executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg)
+                                   for t in pendentes]:
+                        try:
+                            futuro.result()
+                        except Exception:  # o render final faz de novo o que falhar aqui
+                            pass
+        except (Exception, SystemExit) as erro:
+            log(f"  clipes adiantados ficaram para o render: {str(erro)[:160]}")
+
+    fio = _t.Thread(target=trabalho, name=f"adiantar-{projeto.nome}", daemon=True)
+    with _trava_placa:
+        _adiantando[chave] = fio
+    fio.start()
+    return fio
+
+
+def esperar_clipes_adiantados(projeto, log=print):
+    fio = _adiantando.get(str(projeto.pasta))
+    if fio and fio.is_alive():
+        log("  esperando os clipes adiantados terminarem")
+        fio.join()
 
 
 def _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
@@ -608,7 +695,10 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
     # voz e música chegam prontas, com o tamanho e o volume certos, e aqui só se somam
     # a trilha completa sai antes, num passo só de áudio, porque o filtro de legenda
     # atrasa os fluxos com adelay quando tudo roda no mesmo grafo
-    audio = _trilha(projeto, duracao, extras, sons, atraso, musica_abertura, faixa_abertura, base)
+    from . import tempos
+
+    with tempos.parte(projeto, "render: áudio (narração, música, efeitos)"):
+        audio = _trilha(projeto, duracao, extras, sons, atraso, musica_abertura, faixa_abertura, base)
     entradas, partes = ["-i", video, "-i", audio], []
 
     atual, reencodar, pip = "0:v", False, None
@@ -654,18 +744,170 @@ def _mixar(projeto, video, duracao, final, log=print, sem_avatar=False, extras=(
         )
         atual, reencodar = "com_legenda", True
 
-    if reencodar:
-        mapa_video = ["-map", f"[{atual}]"]
-        codec_video = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(cfg.get("crf", 18))]
-    else:
-        mapa_video, codec_video = ["-map", "0:v"], ["-c:v", "copy"]
-
+    if reencodar and pip is None and duracao >= 2 * PEDACO_MINIMO:
+        # o vídeo inteiro numa codificação só levava 15 a 22 min num vídeo de 20 min (everything-you-need-to-answer),
+        # até sem nenhum clipe novo. Em pedaços, ao mesmo tempo e na placa de vídeo quando houver, e emendados sem
+        # codificar de novo. O personagem no canto segue o caminho de antes
+        _mixar_em_pedacos(projeto, video, audio, duracao, final, cfg, base, motion, legenda_do_grafo(partes), log)
+        return
+    mapa_video = ["-map", f"[{atual}]"] if reencodar else ["-map", "0:v"]
     filtro = ["-filter_complex", ";".join(partes)] if partes else []
-    rodar([
-        "ffmpeg", "-y", "-loglevel", "error", *entradas, *filtro,
-        *mapa_video, "-map", "1:a", *codec_video, "-c:a", "aac", "-b:a", "192k",
-        "-t", f"{duracao:.3f}", "-movflags", "+faststart", final,
-    ])
+
+    def comando(codec_video):
+        return ["ffmpeg", "-y", "-loglevel", "error", *entradas, *filtro,
+                *mapa_video, "-map", "1:a", *codec_video, "-c:a", "aac", "-b:a", "192k",
+                "-t", f"{duracao:.3f}", "-movflags", "+faststart", final]
+
+    if reencodar:
+        _rodar_codificando(comando, cfg, log)
+    else:
+        rodar(comando(["-c:v", "copy"]))
+
+
+# pedaços da montagem final: cada um com pelo menos isto de segundos
+PEDACO_MINIMO = 20.0
+_placa = {}
+_trava_placa = threading.Lock()
+
+
+def _placa_funciona() -> bool:
+    """A placa de vídeo NVIDIA codifica H.264? Testado uma vez por execução, com um quadro preto."""
+    with _trava_placa:
+        if "ok" not in _placa:
+            try:
+                rodar(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=black:s=256x144:d=0.2",
+                       "-c:v", "h264_nvenc", "-f", "null", "-"])
+                _placa["ok"] = True
+            except (RuntimeError, OSError):
+                _placa["ok"] = False
+        return _placa["ok"]
+
+
+def _quer_placa(cfg) -> bool:
+    return str(cfg.get("codificador", "auto")).lower() != "cpu" and _placa_funciona()
+
+
+def codec_de_video(cfg, placa) -> list:
+    """Argumentos do codificador da montagem final. render.codificador: auto (a placa quando houver) ou cpu.
+
+    Medido em 2026-10-27, 30 s do everything-you-need-to-answer: a placa (RTX 2060) com cq 24 deu a mesma semelhança
+    com o original que a CPU com crf 18 (SSIM 0,9607 e 0,9607), em uns 60% do tempo, com o arquivo 1,8 vez maior.
+    Só a montagem final usa a placa: os clipes seguem na CPU, porque um clipe guardado da CPU emendado sem codificar
+    a um novo da placa estragaria a emenda."""
+    if placa:
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", str(cfg.get("cq_placa", 24)),
+                "-b:v", "0", "-spatial-aq", "1", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(cfg.get("crf", 18)), "-pix_fmt", "yuv420p"]
+
+
+def _rodar_codificando(comando, cfg, log=print, placa=None) -> bool:
+    """Roda comando(codec) na placa; se ela recusar (sessões esgotadas, driver), roda de novo na CPU. Devolve True
+    se ficou na placa."""
+    if _quer_placa(cfg) if placa is None else placa:
+        try:
+            rodar(comando(codec_de_video(cfg, True)))
+            return True
+        except RuntimeError as erro:
+            log(f"  a placa de vídeo recusou a codificação, seguindo pela CPU. {str(erro)[-200:]}")
+    rodar(comando(codec_de_video(cfg, False)))
+    return False
+
+
+def legenda_do_grafo(partes):
+    """O filtro da legenda montado em _mixar (a parte que sai em [com_legenda]), sem as etiquetas."""
+    for p in partes:
+        if p.endswith("[com_legenda]"):
+            return p[p.index("]") + 1:p.rindex("[")]
+    return None
+
+
+def pedacos_da_montagem(duracao, fps, quantos) -> list:
+    """[(primeiro quadro, quadros)] que cobrem o vídeo inteiro em quadros inteiros: a soma dá exatamente o total, e a
+    emenda nunca anda meio quadro (dez emendas arredondando cada uma deixariam a voz atrás da boca no fim)."""
+    total = round(duracao * fps)
+    quantos = max(1, min(int(quantos), int(duracao // PEDACO_MINIMO) or 1))
+    cortes = [round(total * k / quantos) for k in range(quantos + 1)]
+    return [(cortes[k], cortes[k + 1] - cortes[k]) for k in range(quantos) if cortes[k + 1] > cortes[k]]
+
+
+def grafo_do_pedaco(inicio, fim, motion, legenda) -> tuple:
+    """(entradas extras, filtro) do pedaço que vai de inicio a fim do vídeo final. A camada de animação que começou
+    antes do pedaço entra já andada; a legenda vê o tempo do vídeo inteiro.
+
+    Nada de setpts=PTS-STARTPTS depois de um -ss na entrada: no FFmpeg 8 os quadros de antes do corte ainda passam
+    pelo filtro, e o STARTPTS contava a partir deles. O segundo pedaço do teste-animacao-1min saiu com 357 quadros
+    em vez de 891. Depois do -ss o vídeo já começa em 0, e o deslocamento é fixo."""
+    entradas, partes, atual = [], ["[0:v]null[base]"], "base"
+    for k, (ini, fim_m, arquivo) in enumerate(motion):
+        if fim_m <= inicio or ini >= fim:
+            continue
+        local = ini - inicio
+        entradas += (["-ss", f"{-local:.6f}"] if local < 0 else []) + ["-i", str(arquivo)]
+        n = entradas.count("-i")
+        tempo = "setpts=PTS" if local < 0 else f"setpts=PTS-STARTPTS+{local:.6f}/TB"
+        partes.append(f"[{n}:v]{tempo},format=yuva420p[m{k}]")
+        partes.append(f"[{atual}][m{k}]overlay=eof_action=pass:format=auto:"
+                      f"enable='between(t,{max(local, 0):.3f},{fim_m - inicio:.3f})'[cm{k}]")
+        atual = f"cm{k}"
+    if legenda:
+        partes.append(f"[{atual}]setpts=PTS+{inicio:.6f}/TB,{legenda},setpts=PTS-{inicio:.6f}/TB[saida]")
+    else:
+        partes.append(f"[{atual}]null[saida]")
+    return entradas, ";".join(partes)
+
+
+def _mixar_em_pedacos(projeto, video, audio, duracao, final, cfg, base, motion, legenda, log=print):
+    fps = cfg.get("fps", 30)
+    na_placa = _quer_placa(cfg)
+    # a placa aceita poucas codificações ao mesmo tempo; na CPU cada pedaço já usa vários núcleos
+    juntos = int(cfg.get("pedacos_juntos") or (3 if na_placa else max(2, (os.cpu_count() or 4) // 4)))
+    pedacos = pedacos_da_montagem(duracao, fps, cfg.get("pedacos") or juntos * 2)
+    pasta = projeto.caminho(base, "pedacos")
+    pasta.mkdir(parents=True, exist_ok=True)
+    for velho in [*pasta.glob("*.mp4"), *pasta.glob("*.h264")]:
+        velho.unlink()
+    log(f"  montagem final em {len(pedacos)} pedaços, {juntos} de cada vez, "
+        + ("na placa de vídeo" if na_placa else "na CPU"))
+
+    def um(k, primeiro, quadros, placa):
+        inicio, fim = primeiro / fps, (primeiro + quadros) / fps
+        extras, filtro = grafo_do_pedaco(inicio, fim, motion, legenda)
+
+        def comando(codec):
+            # H.264 cru, sem quadros B: os pedaços se emendam byte a byte e os tempos são dados uma vez só no fim.
+            # Em MP4, cada pedaço trazia os próprios tempos, e a emenda do everything-you-need-to-answer perdeu um
+            # quadro (o último caiu em 1206,165 s em vez de 1206,2)
+            return ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{inicio:.6f}", "-i", video, *extras,
+                    "-filter_complex", filtro, "-map", "[saida]", "-frames:v", quadros, "-r", fps, *codec, "-bf", "0",
+                    "-an", "-f", "h264", pasta / f"p{k:03d}.h264"]
+
+        return _rodar_codificando(comando, cfg, log, placa=placa)
+
+    def todos(placa):
+        with ThreadPoolExecutor(juntos) as executor:
+            return [f.result() for f in [executor.submit(um, k, p, q, placa) for k, (p, q) in enumerate(pedacos)]]
+
+    from . import tempos
+
+    with tempos.parte(projeto, "render: pedaços do vídeo"):
+        refazer = na_placa and not all(todos(True))
+    if refazer:
+        # pedaços de codificadores diferentes não se emendam sem codificar de novo: todos vão pela CPU
+        log("  um pedaço não saiu na placa: refazendo todos pela CPU, para a emenda ficar limpa")
+        todos(False)
+    elif not na_placa:
+        todos(False)
+    junto = pasta / "video.h264"
+    with tempos.parte(projeto, "render: emenda e áudio"):
+        with open(junto, "wb") as saida:
+            for k in range(len(pedacos)):
+                with open(pasta / f"p{k:03d}.h264", "rb") as pedaco:
+                    shutil.copyfileobj(pedaco, saida, 1 << 22)
+        rodar(["ffmpeg", "-y", "-loglevel", "error", "-framerate", fps, "-f", "h264", "-i", junto, "-i", audio,
+               "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{duracao:.3f}",
+               "-movflags", "+faststart", final])
+    for velho in pasta.glob("*.h264"):
+        velho.unlink()
 
 
 def _trilha(projeto, duracao, extras=(), sons=(), atraso=0.0, musica_abertura=None, faixa_abertura=None,
@@ -674,8 +916,11 @@ def _trilha(projeto, duracao, extras=(), sons=(), atraso=0.0, musica_abertura=No
 
     Tudo o que pertence ao vídeo principal anda atraso segundos para frente, o tempo da abertura.
     """
-    voz = _preparar_voz(projeto, base)
-    musica = _musica(projeto, duracao - atraso, [faixa_abertura] if faixa_abertura else [], base)
+    # a voz e a música são normalizadas em duas passadas cada (uns 2 min num vídeo de 20 min): ao mesmo tempo
+    with ThreadPoolExecutor(2) as executor:
+        voz_futura = executor.submit(_preparar_voz, projeto, base)
+        musica = _musica(projeto, duracao - atraso, [faixa_abertura] if faixa_abertura else [], base)
+        voz = voz_futura.result()
     entradas, fontes, partes = [], [], []
 
     def entrada(arquivo):
@@ -834,6 +1079,12 @@ def _musica(projeto, duracao, faixas_creditadas=(), base="render"):
             if total >= duracao + 5:
                 break
 
+    destino = projeto.caminho(base, "musica.wav")
+    volume = projeto.perfil.get("volume_musica_db", trilha.config(projeto).get("volume_db", -16) if gerada else -14)
+    assinatura = _assinatura_de("musica1", f"{duracao:.3f}", volume, TRANSICAO_MUSICA, *sequencia)
+    if _ja_feito(destino, assinatura):
+        _creditar_musica(projeto, list(faixas_creditadas) + sequencia)
+        return destino
     emendada = projeto.caminho(base, "musica_emendada.wav")
     entradas = [item for f in sequencia for item in ("-i", f)]
     grafo = [f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo[m{i}]" for i in range(len(sequencia))]
@@ -844,22 +1095,45 @@ def _musica(projeto, duracao, faixas_creditadas=(), base="render"):
     rodar(["ffmpeg", "-y", "-loglevel", "error", *entradas, "-filter_complex", ";".join(grafo),
            "-map", f"[{anterior}]", "-c:a", "pcm_s16le", emendada])
 
-    destino = projeto.caminho(base, "musica.wav")
-    volume = projeto.perfil.get("volume_musica_db", trilha.config(projeto).get("volume_db", -16) if gerada else -14)
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", emendada, "-af",
            f"atrim=0:{duracao:.3f},{_normalizar(emendada)},volume={volume}dB,aresample=48000,"
            f"aformat=channel_layouts=stereo,afade=t=in:d=2,afade=t=out:st={max(duracao - 4, 0):.3f}:d=4",
            "-c:a", "pcm_s16le", destino])
     emendada.unlink(missing_ok=True)
+    _marcar_feito(destino, assinatura)
     _creditar_musica(projeto, list(faixas_creditadas) + sequencia)
     return destino
+
+
+def _ja_feito(destino, assinatura) -> bool:
+    """O áudio em destino foi feito com esta assinatura (as entradas e os ajustes). Renderizar de novo sem mudar a
+    narração nem a música refazia as duas normalizações, uns 2 min num vídeo de 20 min."""
+    marca = destino.with_name(destino.name + ".assinatura")
+    return destino.exists() and marca.exists() and marca.read_text(encoding="utf-8") == assinatura
+
+
+def _marcar_feito(destino, assinatura) -> None:
+    destino.with_name(destino.name + ".assinatura").write_text(assinatura, encoding="utf-8")
+
+
+def _assinatura_de(*partes) -> str:
+    textos = []
+    for p in partes:
+        if isinstance(p, Path):
+            p = f"{p}|{p.stat().st_mtime_ns}|{p.stat().st_size}" if p.exists() else f"{p}|-"
+        textos.append(str(p))
+    return hashlib.sha1("|".join(textos).encode()).hexdigest()
 
 
 def _preparar_voz(projeto, base="render"):
     narracao = projeto.pasta / "narracao.wav"
     destino = projeto.caminho(base, "voz.wav")
+    assinatura = _assinatura_de("voz1", narracao)
+    if _ja_feito(destino, assinatura):
+        return destino
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", narracao, "-af",
            f"{_normalizar(narracao)},aresample=48000,aformat=channel_layouts=stereo", "-c:a", "pcm_s16le", destino])
+    _marcar_feito(destino, assinatura)
     return destino
 
 
