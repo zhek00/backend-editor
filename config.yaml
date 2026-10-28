@@ -35,6 +35,7 @@ voz_local:
   voz: "omnivoice:community_pt_br_lucas"  # a voz quando o perfil não diz voz.voz_local (Lucas, pt-BR, gravada)
   no_lugar_das_pagas: true
   blocos_ao_mesmo_tempo: 1             # a placa de vídeo grava um bloco por vez
+  passos_omnivoice: 16                 # 16 = 20 min de vídeo em uns 4 min; 32 leva o dobro, sem diferença medida
   desligar_depois: true                # o motor sai da placa no fim da narração (o render e as animações usam ela)
 
 # Voz grátis: Fish Audio pelo OpenRouter, no lugar do Edge-TTS (perfil ou editor com voz.provedor: fish e o código

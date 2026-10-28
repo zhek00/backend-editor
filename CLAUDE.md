@@ -1059,7 +1059,11 @@ código dos dois apps foi copiado** (o VoiceStudio é AGPL); só os nomes das vo
   `UV_CACHE_DIR=motores_voz/.cache/uv`). O registro de cada servidor fica em `motores_voz/AMBIENTE.log`.
 - **Velocidade da fala:** o Kokoro fala na velocidade pedida; nos outros, o atempo do FFmpeg ajusta depois (não muda o tom).
 - **Quanto leva** (medido na RTX 2060, 6 GB, 2026-10-28): carregar o motor, 1 a 1,5 min na primeira fala. Depois,
-  OmniVoice uns 3 s para uma frase de 8 s (um vídeo de 20 min narra em uns 8 min) e Kokoro mais rápido ainda. O
+  num trecho de 91 s de fala: OmniVoice com 32 passos 35 s, com **16 passos 19 s** (o padrão,
+  `voz_local.passos_omnivoice`, o mesmo do VoiceStudio; os dois 100% iguais ao roteiro na transcrição), com 8 passos
+  10 s mas só 67% igual; Kokoro 2,6 s para 70 s. Um vídeo de 20 min narra em uns 4 min com o OmniVoice (a GenAIPro
+  levava uns 4 min, 14 blocos em paralelo) e em menos de 1 min com o Kokoro. Os passos entram na assinatura do
+  bloco: mudar `passos_omnivoice` grava de novo. O
   **Qwen é lento nessa placa**: 23 s para uma frase de 5 s, umas 4 vezes o tempo da fala (um vídeo de 20 min levaria
   perto de 1h30). A Turing não faz bfloat16 direto (simulado, eram 32 s), então o servidor usa float16 quando a placa
   não faz bfloat16 (`_tipo_qwen`, `QWEN_TIPO` no ambiente vale por cima). Para produção, prefira OmniVoice e Kokoro.

@@ -304,10 +304,18 @@ def desligar(ambiente=None) -> None:
         arquivo.unlink(missing_ok=True)
 
 
+def passos_omnivoice() -> int:
+    """Passos do OmniVoice: 16, o padrão do próprio VoiceStudio. Medido num trecho de 91 s de fala (RTX 2060): 32
+    passos 35 s, 16 passos 19 s, os dois 100% iguais ao roteiro na transcrição; 8 passos 10 s, mas só 67% igual."""
+    return max(8, min(64, int(config().get("passos_omnivoice") or 16)))
+
+
 def preparar(voz: dict, log=print) -> dict:
     """Resolve a voz do perfil e liga o motor dela. Devolve o que narrar() precisa."""
     codigo = codigo_da_voz(voz)
     motor, dados = resolver(codigo)
+    if motor == "omnivoice":
+        dados = {**dados, "passos": passos_omnivoice()}
     ambiente = MOTOR_NO_AMBIENTE[motor]
     ligar(ambiente, log)
     return {"codigo": codigo, "motor": motor, "voz": dados, "ambiente": ambiente}

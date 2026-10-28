@@ -333,8 +333,12 @@ def assinatura_da_voz(projeto, voz) -> dict:
         return {"provedor": "mac", "voz": voz.get("voz_offline", "Luciana")}
     if voz_local.e_local(voz):
         # o app (VoiceStudio ou voicebox) entra na hora de gravar (narrar), quando se sabe qual está aberto
-        return {"provedor": "local", "voz": voz_local.codigo_da_voz(voz),
-                "velocidade": round(float(voz.get("velocidade") or 1.0), 2), "instrucao": voz.get("instrucao") or ""}
+        codigo = voz_local.codigo_da_voz(voz)
+        assinatura = {"provedor": "local", "voz": codigo, "velocidade": round(float(voz.get("velocidade") or 1.0), 2),
+                      "instrucao": voz.get("instrucao") or ""}
+        if codigo.startswith("omnivoice:"):
+            assinatura["passos"] = voz_local.passos_omnivoice()  # mais passos, outra gravação
+        return assinatura
     if voz.get("provedor") == "fish":
         return {"provedor": "fish", "voz": str(voz.get("voice_id") or "").strip(), "modelo": fish.modelo(voz),
                 "velocidade": round(float(voz.get("velocidade") or 1.0), 2)}
