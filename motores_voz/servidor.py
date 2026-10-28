@@ -54,6 +54,17 @@ def _descarregar():
         pass
 
 
+def _tipo_qwen(dev):
+    """bfloat16 só na placa que faz ele direto. A RTX 2060 (Turing) só simula: uma frase de 5 s levava 32 s."""
+    import torch
+    escolha = os.environ.get("QWEN_TIPO", "")
+    if escolha in ("float16", "bfloat16", "float32"):
+        return getattr(torch, escolha)
+    if dev != "cuda":
+        return torch.float32
+    return torch.bfloat16 if torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16
+
+
 def _modelo(motor):
     """O modelo do motor, carregado uma vez; outro motor carregado antes sai da placa."""
     if _carregado["motor"] == motor:
@@ -72,8 +83,7 @@ def _modelo(motor):
         from qwen_tts import Qwen3TTSModel
         repo = os.environ.get("QWEN_CUSTOM_REPO", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice") if motor == "qwen" \
             else os.environ.get("QWEN_DESIGN_REPO", "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
-        modelo = Qwen3TTSModel.from_pretrained(repo, device_map=dev,
-                                               torch_dtype=torch.bfloat16 if dev == "cuda" else torch.float32)
+        modelo = Qwen3TTSModel.from_pretrained(repo, device_map=dev, torch_dtype=_tipo_qwen(dev))
     else:
         raise ValueError(f"motor desconhecido: {motor}")
     _carregado.update(motor=motor, modelo=modelo, extra={})
@@ -187,6 +197,12 @@ class Pedidos(BaseHTTPRequestHandler):
             self._responder(404, {"erro": "rota desconhecida"})
 
     def do_POST(self):
+        if self.path.startswith("/desligar"):
+            # a fábrica pede para sair: no Windows o python do .venv abre um segundo processo, e matar pelo número
+            # guardado deixava esse segundo vivo, segurando a placa de vídeo
+            self._responder(200, {"ok": True})
+            threading.Timer(0.3, lambda: os._exit(0)).start()
+            return
         if not self.path.startswith("/falar"):
             self._responder(404, {"erro": "rota desconhecida"})
             return

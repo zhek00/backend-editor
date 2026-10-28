@@ -1057,7 +1057,18 @@ código dos dois apps foi copiado** (o VoiceStudio é AGPL); só os nomes das vo
   render e as animações terem a placa. Os modelos ficam em `motores_voz/modelos` (`HF_HOME`), e cache e ambientes em
   `motores_voz/` também: **o C: tem só 9 GB livres, nada disso pode ir para lá** (instale com
   `UV_CACHE_DIR=motores_voz/.cache/uv`). O registro de cada servidor fica em `motores_voz/AMBIENTE.log`.
-- **Velocidade:** o Kokoro fala na velocidade pedida; nos outros, o atempo do FFmpeg ajusta depois (não muda o tom).
+- **Velocidade da fala:** o Kokoro fala na velocidade pedida; nos outros, o atempo do FFmpeg ajusta depois (não muda o tom).
+- **Quanto leva** (medido na RTX 2060, 6 GB, 2026-10-28): carregar o motor, 1 a 1,5 min na primeira fala. Depois,
+  OmniVoice uns 3 s para uma frase de 8 s (um vídeo de 20 min narra em uns 8 min) e Kokoro mais rápido ainda. O
+  **Qwen é lento nessa placa**: 23 s para uma frase de 5 s, umas 4 vezes o tempo da fala (um vídeo de 20 min levaria
+  perto de 1h30). A Turing não faz bfloat16 direto (simulado, eram 32 s), então o servidor usa float16 quando a placa
+  não faz bfloat16 (`_tipo_qwen`, `QWEN_TIPO` no ambiente vale por cima). Para produção, prefira OmniVoice e Kokoro.
+- **Desligar:** o servidor sai sozinho a pedido (`POST /desligar`); matar pelo número guardado em `AMBIENTE.pid`
+  ficou só de reserva, porque no Windows o python do `.venv` abre um segundo processo, e esse ficava vivo segurando
+  1,6 GB de memória e 4 GB da placa de vídeo.
+- **Memória virtual do Windows:** a primeira carga do OmniVoice falhou duas vezes com "The paging file is too small"
+  (`C:\pagefile.sys` num C: com 8 GB livres); a fábrica pede de novo e a segunda carga passa. Para acabar com isso,
+  mover a memória virtual para o E: (configuração do Windows, da pessoa).
 - **Tempo de cada palavra** (`voz_local.palavras_com_tempo`): Whisper do Groq com tempo por palavra (grátis,
   revezando as chaves), senão as pausas do áudio (`narracao._palavras_estimadas`). A conferência da narração vale igual.
 - **As pagas viram local sozinhas** (`Projeto.sem_narracao_paga`, ao abrir o projeto e ao mudar a voz pelo editor;

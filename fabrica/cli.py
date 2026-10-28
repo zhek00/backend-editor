@@ -67,9 +67,10 @@ def etapa_narrar(p, a, aprovado=False):
     if nova_voz:
         shutil.rmtree(p.pasta / "narracao", ignore_errors=True)
     vai_gastar = nova_voz or not (p.pasta / "narracao").exists()
-    if vai_gastar and not (p.offline or aprovado):
-        valor = custos.dinheiro(custos.estimar(p)["voz"])
-        if not confirmar(f"A narração custa cerca de {valor}. Continuar?", a.sim):
+    # a voz open source do computador (voz_local) não custa nada: só pergunta quando há gasto
+    custo_voz = custos.estimar(p)["voz"] if vai_gastar and not (p.offline or aprovado) else 0
+    if custo_voz > 0:
+        if not confirmar(f"A narração custa cerca de {custos.dinheiro(custo_voz)}. Continuar?", a.sim):
             raise SystemExit("Cancelado.")
     antes = corrigir.falas_do_material(p)
     log("Narração")

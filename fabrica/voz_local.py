@@ -132,7 +132,8 @@ def catalogo() -> list:
     for item in _galeria():
         facetas = item.get("facets") or {}
         base = {"motor": "omnivoice", "origem": "VoiceStudio", "nome": item.get("name"),
-                "idioma": LINGUAS.get(item.get("language"), ""), "genero": _genero(facetas.get("gender")),
+                "idioma": LINGUAS.get(item.get("language"), str(item.get("language") or "").lower()),
+                "genero": _genero(facetas.get("gender")),
                 "uso": item.get("use_case") or "", "licenca": item.get("license") or "",
                 "autor": item.get("author") or ""}
         if item.get("type") == "voice" and (item.get("audio") or {}).get("url"):
@@ -279,6 +280,16 @@ def ligar(ambiente, log=print, espera=180) -> None:
 def desligar(ambiente=None) -> None:
     """Desliga o servidor (todos, sem dizer qual), liberando a placa de vídeo."""
     for amb in ([ambiente] if ambiente else list(AMBIENTES)):
+        # o servidor sai sozinho a pedido (no Windows, matar pelo número guardado deixava vivo o segundo processo
+        # que o python do .venv abre, segurando a placa de vídeo); o número guardado fica de reserva
+        try:
+            httpx.post(_url(amb) + "/desligar", timeout=3)
+            for _ in range(20):
+                if not _no_ar(amb):
+                    break
+                time.sleep(0.5)
+        except httpx.HTTPError:
+            pass
         arquivo = PASTA / f"{amb}.pid"
         if not arquivo.exists():
             continue
