@@ -14,10 +14,9 @@
 nome: Documentário (base)
 
 voz:
-  provedor: fish                     # voz grátis da Fish Audio (o Edge da Microsoft vai ser descontinuado e já recusa
-                                     # com erro 403). Troque para genaipro se quiser mais realismo
-  voice_id: 0b12d715e4c741399594fccb12d4bbe2   # Fish: "São Cipriano", masculina, grave e séria. Outras vozes no editor
-                                     # (botão Fish Audio). Com genaipro, ache uma com uv run fabrica vozes TERMO
+  provedor: local                    # vozes open source do VoiceStudio e do voicebox, rodando na fábrica
+  voz_local: ""                      # código da voz (kokoro:pm_alex, qwen:Ryan, omnivoice:...); vazio = config.yaml
+  voice_id: 0b12d715e4c741399594fccb12d4bbe2   # só com provedor: fish ("São Cipriano", a voz grátis de reserva)
   modelo: eleven_turbo_v2_5
   estabilidade: 0.5
   similaridade: 0.75

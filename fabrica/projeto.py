@@ -25,11 +25,23 @@ class Projeto:
             if override:
                 self.perfil[secao] = {**(self.perfil.get(secao) or {}), **override}
         self.config = config_geral()
+        self.sem_narracao_paga()
         # ajustes do config.yaml que valem só neste projeto (o MCP cria projeto sem imagem de IA, por exemplo):
         # cada seção do config_override se mistura por cima da do config.yaml
         for secao, valores in (self.dados.get("config_override") or {}).items():
             atual = self.config.get(secao)
             self.config[secao] = {**atual, **valores} if isinstance(atual, dict) and isinstance(valores, dict) else valores
+
+    def sem_narracao_paga(self) -> None:
+        """Narração paga cancelada (2026-10-28): perfil ou projeto com GenAIPro/ElevenLabs grava na voz open source
+        do computador (voz_local.py). A marca pagas_trocadas faz a narração já paga e gravada continuar valendo."""
+        voz = self.perfil.get("voz") or {}
+        if voz.get("provedor") in ("voicestudio", "voicebox"):  # nomes dos apps: as vozes deles rodam na fábrica
+            self.perfil["voz"] = voz = {**voz, "provedor": "local"}
+        if (self.config.get("voz_local") or {}).get("no_lugar_das_pagas", True) and \
+                (voz.get("provedor") or "genaipro") in ("genaipro", "elevenlabs"):
+            self.perfil["voz"] = {**voz, "provedor": "local", "provedor_pago": voz.get("provedor") or "genaipro",
+                                  "pagas_trocadas": True}
 
     @classmethod
     def criar(cls, nome: str, roteiro: str, perfil: str, offline: bool) -> "Projeto":

@@ -28,3 +28,11 @@ vigia.pid
 
 # consumo no OpenRouter: registro central e a planilha viva (fabrica/consumo.py)
 relatorios/
+
+# motores de voz open source (fabrica/voz_local.py): ambientes, cache e modelos baixados
+motores_voz/*/.venv/
+motores_voz/*.pid
+motores_voz/*.log
+motores_voz/.cache/
+motores_voz/modelos/
+motores_voz/vozes/

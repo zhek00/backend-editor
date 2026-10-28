@@ -9,11 +9,11 @@ Quem chegou aqui provavelmente recebeu esta pasta de um amigo e nunca usou o sis
 Faça um passo de cada vez e confirme antes de seguir.
 
 1. **Instalação.** Confira se `uv` e `ffmpeg` existem com `uv --version` e `ffmpeg -version`. Se faltar, instale com `brew install uv ffmpeg`. Depois rode `uv sync` na pasta do projeto. Para as animações (diagramas, textos na tela, linhas do tempo e mapas), confira também o Node.js 22 ou mais com `node --version` (`brew install node`). Ele é opcional: sem ele essas cenas ficam com foto.
-2. **Chaves.** Confira se existe um `.env`. Se não existir, crie a partir do `.env.exemplo` e peça para a pessoa colar as chaves **no arquivo, nunca no chat**. As obrigatórias são `GENAIPRO_API`, `GEMINI_API_KEY`, `PEXELS_API_KEY` e `PIXABAY_API_KEY`. Teste cada uma com uma chamada barata antes de seguir (a da GenAIPro se testa de graça com `uv run fabrica creditos`). A `ELEVENLABS_API_KEY` é opcional: só serve para efeitos sonoros, música e voz por descrição.
+2. **Chaves.** Confira se existe um `.env`. Se não existir, crie a partir do `.env.exemplo` e peça para a pessoa colar as chaves **no arquivo, nunca no chat**. As obrigatórias são `GEMINI_API_KEY`, `PEXELS_API_KEY` e `PIXABAY_API_KEY`. Teste cada uma com uma chamada barata antes de seguir. A narração não precisa de chave: são as vozes open source que rodam na própria fábrica (passo 6). `GENAIPRO_API` e `ELEVENLABS_API_KEY` não são mais usadas para narrar (assinaturas canceladas em 2026-10-28); a da ElevenLabs só serve para efeitos sonoros, se alguém ainda tiver.
 3. **Contato do Wikimedia.** Troque `SEU_EMAIL_AQUI` no `config.yaml` pelo e-mail da pessoa. Sem isso o Wikimedia recusa as buscas.
 4. **Claude da fábrica.** A divisão em cenas roda pela assinatura do Claude Code, com `claude -p`. Confirme que o terminal está logado. Se não estiver, peça para rodar `claude` e digitar `/login`.
 5. **Teste sem custo.** Rode o exemplo em modo offline, que usa a voz do computador (a do Mac; no Windows, a do sistema ou, sem ela, um tom baixo no lugar da fala) e imagens de teste. Só depois disso fale em gastar dinheiro.
-6. **Voz.** Ajude a escolher uma voz da biblioteca da GenAIPro com `fabrica vozes TERMO --idioma pt` (ou no editor, que toca a prévia). Qualquer voz da lista serve direto: cole o código em `voz.voice_id` no perfil. As vozes padrão da ElevenLabs (George, Rachel...) são recusadas pela GenAIPro.
+6. **Voz.** A narração usa as vozes open source do VoiceStudio e do voicebox, rodando dentro da fábrica (sem instalar os apps). Prepare os motores uma vez com `uv sync --project motores_voz/omnivoice` e `uv sync --project motores_voz/qwen` (uns 9 GB, na mesma pasta do projeto; os modelos baixam na primeira fala). Ajude a escolher a voz pela lista do editor (`GET /api/vozes/local`, com prévia) e ponha o código dela em `voz.voz_local` no perfil (`kokoro:pm_alex`, `qwen:Ryan`, `omnivoice:community_pt_br_lucas`, `omnivoice:female, middle-aged, low pitch`).
 7. **Perfil do canal.** Copie um perfil de `perfis/` com outro nome e ajuste voz, estilo das imagens, proporção de material real e diretrizes. Explique que o perfil é a identidade do canal.
 
 ## Regras que valem sempre
@@ -1027,6 +1027,45 @@ As duas últimas dependem de vídeos gerados no HeyGen, que não vieram no pacot
 | Criação pelo site parada nos 15% ("Esperando o agente terminar o JSON das cenas") | o agente de roteiro ainda decide as cenas, lote a lote (383 cenas no nunca-deve-ter-dentro-de-casa-parte-2 levaram quase uma hora). Desde 2026-10-05 a barra anda de 15% a 35% com os lotes decididos (`roteirista.PROGRESSO`), e o modelo que estoura o limite pensando tenta uma vez só, já no teto (`openrouter.max_tokens_teto`), e passa para o seguinte da cadeia (antes subia em dois degraus, minutos cada). Cada lote guardado é achado pelo trecho do roteiro, sem o resumo das cenas anteriores (`roteirista.arquivo_do_lote`): com o resumo na marca, um reinício refazia e pagava de novo lotes prontos. Para ver se anda: os arquivos novos em `cenas_lotes/` e o fim de `criacao.json` |
 | Render parado na mesma porcentagem, mas o FFmpeg segue montando clipes | um clipe falhou e o executor montava todos os outros calado antes de mostrar o erro. Desde 2026-10-06 o render para na hora e diz a cena (`render.renderizar`). A causa, no nunca-deve-ter-dentro-de-casa-parte-2, foi o Corrigir Mídia rodando junto: a cena 166 virou foto do Pexels e o FFmpeg não achou `imagens/0166.png`. Agora render, Corrigir, Continuar e Limpeza se recusam no mesmo projeto enquanto outro roda (`api._recusar_se_ocupado`) |
 | Completar cenas depois de trocar a narração demora | a escolha das fotos roda `midia.escolhas_ao_mesmo_tempo` lotes de 6 cenas juntos (4; antes 2, uma cena por minuto). O ritmo depende também do limite de buscas do Pixabay e do Unsplash |
+
+## Narração open source dentro da fábrica (sem assinatura paga e sem instalar os apps)
+
+`fabrica/voz_local.py` e `motores_voz/`. Pedidos do usuário em 2026-10-28: "vamos cancelar assinaturas de narração
+pagas e utilizar as opensource" e, depois de recusar instalar os apps, "quero ter todas as vozes dos dois github
+disponíveis na nossa fábrica". Os apps (VoiceStudio, debpalash/VoiceStudio; voicebox, jamiepine/voicebox) são só a
+casca: a fábrica roda os mesmos motores abertos que eles usam, na placa de vídeo, sem chave e sem custo. **Nenhum
+código dos dois apps foi copiado** (o VoiceStudio é AGPL); só os nomes das vozes e o vocabulário dos motores.
+
+- **As vozes** (`voz_local.catalogo`, 588 hoje; `GET /api/vozes/local` com filtros de idioma, gênero, origem, tipo e
+  busca, e `GET /api/vozes/local/previa?voz=CÓDIGO` toca um trecho, gerado uma vez e guardado em
+  `motores_voz/vozes/previas`):
+  - **VoiceStudio, motor OmniVoice** (k2-fsa/OmniVoice, Apache-2.0; fala qualquer língua): as vozes com nome da galeria
+    dele (manifest da omnivoice-gallery, lido do jsDelivr e guardado em `motores_voz/vozes/galeria.json`), as gravadas
+    da comunidade (`omnivoice:community_pt_br_lucas` e `..._thalia`, pt-BR, CC-BY-4.0: clonadas da gravação, baixada
+    uma vez e conferida pelo SHA-256; `voz_local.credito` dá o crédito do autor) e toda combinação de gênero, idade,
+    tom, sotaque e sussurro (`omnivoice:male, middle-aged, low pitch`), sem as implausíveis (criança de tom grave).
+  - **voicebox**: as 54 vozes do Kokoro (`kokoro:pm_alex`, `pm_santa`, `pf_dora` em português; hexgrad/Kokoro-82M), as
+    9 do Qwen3-TTS CustomVoice (`qwen:Ryan`; falam 10 línguas) e a voz por descrição livre do Qwen VoiceDesign
+    (`qwen_design:voz masculina grave e calma`).
+- **Escolha:** `voz.provedor: local` e o código em `voz.voz_local` no perfil (ou `voz_id` ao criar pelo site, com
+  `voz_provedor: local`); sem código, `voz_local.voz` do config.yaml (a do Lucas). A assinatura do bloco é o código
+  da voz, a velocidade e a `instrucao`: trocar de voz grava de novo.
+- **Motores** (`motores_voz/servidor.py`): dois ambientes, porque pedem versões diferentes do transformers:
+  `motores_voz/omnivoice` (OmniVoice + Kokoro, transformers 5, porta 3931) e `motores_voz/qwen` (Qwen3-TTS,
+  transformers 4.57.3, porta 3932), cada um com torch 2.14 cu126. `voz_local.ligar` sobe o servidor do motor da voz
+  na primeira fala (desligando o outro: a placa tem 6 GB), e a narração o desliga no fim (`desligar_depois`), para o
+  render e as animações terem a placa. Os modelos ficam em `motores_voz/modelos` (`HF_HOME`), e cache e ambientes em
+  `motores_voz/` também: **o C: tem só 9 GB livres, nada disso pode ir para lá** (instale com
+  `UV_CACHE_DIR=motores_voz/.cache/uv`). O registro de cada servidor fica em `motores_voz/AMBIENTE.log`.
+- **Velocidade:** o Kokoro fala na velocidade pedida; nos outros, o atempo do FFmpeg ajusta depois (não muda o tom).
+- **Tempo de cada palavra** (`voz_local.palavras_com_tempo`): Whisper do Groq com tempo por palavra (grátis,
+  revezando as chaves), senão as pausas do áudio (`narracao._palavras_estimadas`). A conferência da narração vale igual.
+- **As pagas viram local sozinhas** (`Projeto.sem_narracao_paga`, ao abrir o projeto e ao mudar a voz pelo editor;
+  `voz_local.no_lugar_das_pagas`): `genaipro`, `elevenlabs`, sem provedor (o padrão antigo era a GenAIPro) e os nomes
+  dos apps (`voicestudio`, `voicebox`) gravam na voz local. **O bloco já gravado e pago na GenAIPro continua valendo**
+  (`narracao._mesma_voz`, marca `pagas_trocadas`): só bloco de texto novo é gravado na voz local.
+- A Fish (OpenRouter, grátis) segue valendo para quem escolher `provedor: fish`.
+- Testes em `tests/test_voz_local.py` (catálogo, resolução de cada motor, voz inexistente, troca das pagas).
 
 ## Quem responde cada etapa
 

@@ -19,7 +19,7 @@ import wave
 
 import httpx
 
-from . import conferir_voz, custos_reais, fish, genaipro
+from . import conferir_voz, custos_reais, fish, genaipro, voz_local
 from . import texto as tx
 from .util import duracao_audio, rodar
 
@@ -56,6 +56,7 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
     # voz no editor (Nelton para Leo Antonio, no zz_teste_animacoes) reaproveitava os blocos e o vídeo saía com a
     # voz antiga
     assinatura = assinatura_da_voz(projeto, voz)
+    local = not projeto.offline and voz_local.e_local(voz)
     pendentes, por_voz = [], 0
     for i, bloco in enumerate(blocos):
         bruto, arquivo_alinhamento = arquivos(i)
@@ -70,6 +71,11 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
                          f"mudou desde o pacote). Nada foi gasto.")
     if por_voz:
         log(f"  a voz mudou: {por_voz} bloco(s) com o mesmo texto vão ser gravados de novo com a voz nova")
+    preparada = None
+    if local and pendentes:
+        # o motor de voz da fábrica (motores_voz/servidor.py) é ligado uma vez para o vídeo todo
+        preparada = voz_local.preparar(voz, log)
+        log(f"  voz open source: {preparada['codigo']} ({voz_local.ORIGEM[preparada['motor']]})")
 
     def gravar_uma_vez(i, falado):
         bloco = blocos[i]
@@ -77,6 +83,8 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
         if projeto.offline or voz.get("provedor") == "computador":
             # "computador": a voz do sistema também fora do modo offline (teste do MCP sem gastar)
             return _voz_do_mac(bloco.texto, voz, bruto)
+        if local:
+            return _voz_local(bloco.texto, voz, bruto, preparada, log, falado)
         if voz.get("provedor") == "edge-tts":
             return _edge_tts(bloco.texto, voz, bruto, falado)
         if voz.get("provedor") == "fish":
@@ -95,7 +103,7 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
     conferir = conferir_voz.ativa(projeto)
     ajustes_conferencia = conferir_voz.config(projeto)
     glossario = conferir_voz.glossario(projeto)
-    voz_paga = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish", "computador")
+    voz_paga = not projeto.offline and not local and voz.get("provedor") not in ("edge-tts", "fish", "computador")
     regravar = int(ajustes_conferencia.get("regravar_paga" if voz_paga else "regravar") or 0) if conferir else 0
 
     def gravar(i):
@@ -162,14 +170,18 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
         # O valor sai do saldo da GenAIPro, medido no fim (_registrar_gasto_da_narracao)
         narrados.append(i)
 
-    pago = not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish", "computador")
+    pago = not projeto.offline and not local and voz.get("provedor") not in ("edge-tts", "fish", "computador")
     saldo_antes = _saldo_genaipro() if pago and pendentes else None
     com_fish = not projeto.offline and voz.get("provedor") == "fish"
-    if (pago or com_fish) and len(pendentes) > 1:
-        # a GenAIPro e a Fish trabalham por pedido, então vários blocos são gravados ao mesmo tempo
+    juntos_local = int(voz_local.config().get("blocos_ao_mesmo_tempo", 1)) if local else 1
+    if (pago or com_fish or juntos_local > 1) and len(pendentes) > 1:
+        # a GenAIPro e a Fish trabalham por pedido, então vários blocos são gravados ao mesmo tempo. A voz local
+        # usa a placa de vídeo do computador: um bloco de cada vez, a não ser que o config.yaml peça mais
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        juntos = int(fish.config().get("blocos_ao_mesmo_tempo", 3)) if com_fish else BLOCOS_AO_MESMO_TEMPO
-        log(f"  narrando {len(pendentes)} blocos {'na Fish Audio' if com_fish else 'na GenAIPro'}, {juntos} de cada vez")
+        juntos = juntos_local if local else int(fish.config().get("blocos_ao_mesmo_tempo", 3)) if com_fish \
+            else BLOCOS_AO_MESMO_TEMPO
+        onde = f"na voz {preparada['codigo']}" if local else "na Fish Audio" if com_fish else "na GenAIPro"
+        log(f"  narrando {len(pendentes)} blocos {onde}, {juntos} de cada vez")
         with ThreadPoolExecutor(max_workers=juntos) as grupo:
             tarefas = {grupo.submit(gravar, i): i for i in pendentes}
             prontos, erro = 0, None
@@ -197,6 +209,9 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
         finally:
             if pago:
                 _registrar_gasto_da_narracao(projeto, blocos, narrados, voz, saldo_antes, log)
+
+    if preparada and voz_local.config().get("desligar_depois", True):
+        voz_local.desligar()
 
     for i, bloco in enumerate(blocos):
         bruto, arquivo_alinhamento = arquivos(i)
@@ -316,6 +331,10 @@ def assinatura_da_voz(projeto, voz) -> dict:
     Ritmo e pausa ficam de fora de propósito: são aplicados depois, no áudio guardado, e mudar não custa nada."""
     if projeto.offline or voz.get("provedor") == "computador":
         return {"provedor": "mac", "voz": voz.get("voz_offline", "Luciana")}
+    if voz_local.e_local(voz):
+        # o app (VoiceStudio ou voicebox) entra na hora de gravar (narrar), quando se sabe qual está aberto
+        return {"provedor": "local", "voz": voz_local.codigo_da_voz(voz),
+                "velocidade": round(float(voz.get("velocidade") or 1.0), 2), "instrucao": voz.get("instrucao") or ""}
     if voz.get("provedor") == "fish":
         return {"provedor": "fish", "voz": str(voz.get("voice_id") or "").strip(), "modelo": fish.modelo(voz),
                 "velocidade": round(float(voz.get("velocidade") or 1.0), 2)}
@@ -341,9 +360,17 @@ def _mesma_voz(projeto, arquivo_alinhamento, assinatura, indice, total) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     if guardada is not None:
+        if assinatura.get("provedor") == "local":
+            if guardada.get("provedor") == "local":
+                return guardada == assinatura
+            # bloco já pago na GenAIPro, num projeto que só passou para a voz local porque a paga foi cancelada:
+            # vale o gravado (trocar de voz no meio do vídeo seria pior, e não se paga nada de novo)
+            return bool((projeto.perfil.get("voz") or {}).get("pagas_trocadas")) and guardada.get("provedor") == "genaipro"
         return guardada == assinatura
     voz_antiga = _voz_do_bloco_pelo_custo(projeto, indice, total)
     if voz_antiga is None:
+        return True
+    if assinatura.get("provedor") == "local" and (projeto.perfil.get("voz") or {}).get("pagas_trocadas"):
         return True
     return assinatura.get("provedor") == "genaipro" and voz_antiga == assinatura.get("voice_id")
 
@@ -625,6 +652,33 @@ def _fish(texto, voz, wav, log=print, falado=None):
     alinhamento = _alinhar_pelas_palavras(texto, palavras, duracao)
     alinhamento["tempo_das_palavras"] = como
     alinhamento["_custo_transcricao"] = custo
+    return alinhamento
+
+
+def _voz_local(texto, voz, wav, preparada, log=print, falado=None):
+    """Grava no motor open source da fábrica (as vozes do VoiceStudio e do voicebox, voz_local.py) e mede o tempo de
+    cada palavra pelo Whisper do Groq (grátis); sem ele, pelas pausas do áudio."""
+    gravado = wav.with_name(wav.name.replace("_bruto.wav", "_local.wav")) if wav.name.endswith("_bruto.wav") \
+        else wav.with_suffix(".local.wav")
+    voz_local.narrar(falado or texto, voz, gravado, preparada, log)
+    rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", gravado, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
+    # o mp3 fica ao lado, como nas outras vozes: o pacote do projeto leva o mp3 e refaz o wav
+    mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") \
+        else wav.with_suffix(".mp3")
+    rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", wav, "-b:a", "192k", mp3])
+    gravado.unlink(missing_ok=True)
+    duracao = duracao_audio(wav)
+    silencios = _pausas_da_voz(wav)
+    try:
+        palavras, como = voz_local.palavras_com_tempo(wav, texto, voz.get("idioma") or "pt", log)
+        como = f"medido pela {como}"
+    except Exception as erro:
+        log(f"    tempo das palavras estimado pelas pausas do áudio ({str(erro)[:120]})")
+        palavras, como = _palavras_estimadas(texto, duracao, wav), "estimado pelas pausas"
+    palavras = _encostar_nas_pausas(palavras, silencios)
+    alinhamento = _alinhar_pelas_palavras(texto, palavras, duracao)
+    alinhamento["tempo_das_palavras"] = como
+    alinhamento["motor"] = preparada["motor"]
     return alinhamento
 
 

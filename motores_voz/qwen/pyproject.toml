@@ -1,0 +1,24 @@
+[project]
+name = "motor-voz-qwen"
+version = "0.1.0"
+description = "Vozes Qwen3-TTS do voicebox (CustomVoice e VoiceDesign), rodando na própria fábrica"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.6",
+    "torchaudio>=2.6",
+    "qwen-tts>=0.1.1",
+    "soundfile",
+    "numpy",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

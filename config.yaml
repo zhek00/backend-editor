@@ -27,6 +27,16 @@ assinaturas:
     preco_mensal: 22.00                # US$ pagos pelo pacote
     incluido_no_mes: 1000000           # créditos do pacote (US$ 0,000022 por crédito)
 
+# Vozes open source do VoiceStudio e do voicebox, rodando na própria fábrica (fabrica/voz_local.py e
+# motores_voz/), no lugar das narrações pagas, canceladas em 2026-10-28. Sem instalar os apps: os motores (OmniVoice,
+# Kokoro, Qwen3-TTS) rodam na placa de vídeo. genaipro e elevenlabs também vêm para cá (no_lugar_das_pagas). Lista
+# das vozes: GET /api/vozes/local no editor. O tempo das palavras sai do Whisper do Groq (grátis)
+voz_local:
+  voz: "omnivoice:community_pt_br_lucas"  # a voz quando o perfil não diz voz.voz_local (Lucas, pt-BR, gravada)
+  no_lugar_das_pagas: true
+  blocos_ao_mesmo_tempo: 1             # a placa de vídeo grava um bloco por vez
+  desligar_depois: true                # o motor sai da placa no fim da narração (o render e as animações usam ela)
+
 # Voz grátis: Fish Audio pelo OpenRouter, no lugar do Edge-TTS (perfil ou editor com voz.provedor: fish e o código
 # da voz da biblioteca da Fish em voz.voice_id). O tempo de cada palavra vem da transcrição (uns centavos por vídeo,
 # precisa de US$ 0,50 de saldo no OpenRouter); sem ela, é estimado pelas pausas do áudio

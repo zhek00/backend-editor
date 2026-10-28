@@ -23,10 +23,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import animacoes, aprendizados, cenas, corrigir, diretor, fish, pago, voz_local, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
 from . import tempos
 from . import texto as tx
 from . import youtube_publicar as ytpub
@@ -46,6 +47,8 @@ def _definir_override(self, secao: str, ajustes: dict) -> None:
     arquivo = self.pasta / "projeto.json"
     arquivo.write_text(json.dumps(self.dados, ensure_ascii=False, indent=2), encoding="utf-8")
     self.perfil[secao] = {**(self.perfil.get(secao) or {}), **limpo}
+    if secao == "voz":
+        self.sem_narracao_paga()
 
 def _definir_voz_override(self, ajustes: dict) -> None:
     self.definir_override("voz", ajustes)
@@ -67,6 +70,7 @@ def _projeto_init_overrides(self, nome: str):
         override = self.dados.get(f"{secao}_override")
         if override:
             self.perfil[secao] = {**(self.perfil.get(secao) or {}), **override}
+    self.sem_narracao_paga()
 Projeto.__init__ = _projeto_init_overrides
 
 IDIOMAS_VOZ = getattr(narracao, "IDIOMAS_VOZ", [
@@ -1037,11 +1041,15 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
             "estilo": payload.voz_estilo,
             "velocidade": payload.voz_velocidade,
         })
+    elif payload.voz_provedor in ("local", "voicestudio", "voicebox"):
+        # voz_id é o código do catálogo (voz_local.catalogo: kokoro:pm_alex, qwen:Ryan, omnivoice:...)
+        p.definir_voz_override({"provedor": "local", "voz_local": payload.voz_id or "",
+                                "nome": payload.voz_nome, "idioma": payload.voz_idioma,
+                                "velocidade": payload.voz_velocidade})
     elif payload.voz:
-        # o padrão antigo do site era a voz do Edge, que vai ser descontinuado e já recusa com erro 403: a voz grátis
-        # agora é a Fish, com a voz padrão do config.yaml
-        p.definir_voz_override({"provedor": "fish",
-                                "voice_id": (p.config.get("fish") or {}).get("voz_padrao") or ""})
+        # o padrão do site: a voz open source do computador (VoiceStudio ou voicebox). Antes era a Fish, e antes
+        # dela o Edge, descontinuado
+        p.definir_voz_override({"provedor": "local"})
     if payload.imagens_provedor in PROVEDORES_IMAGEM:
         p.definir_imagens_override({
             "provedor": payload.imagens_provedor,
@@ -1236,6 +1244,41 @@ def listar_vozes_fish(idioma: str = "pt", busca: str = "", genero: str = ""):
         return {**base, "vozes": [], "erro": str(e)}
     _CACHE_VOZES_FISH[chave_cache] = (time.time(), vozes)
     return {**base, "vozes": vozes}
+
+
+@app.get("/api/vozes/local")
+def listar_vozes_locais(idioma: str = "", busca: str = "", genero: str = "", origem: str = "", tipo: str = "",
+                        limite: int = 200):
+    """Todas as vozes open source do VoiceStudio e do voicebox que a fábrica roda (voz_local.catalogo). Grátis.
+
+    idioma filtra as vozes nativas da língua e mantém as que falam qualquer língua (OmniVoice e Qwen)."""
+    vozes = voz_local.catalogo()
+    if idioma:
+        vozes = [v for v in vozes if not v.get("idioma") or v["idioma"] == idioma]
+    if genero in ("masculina", "feminina", "male", "female"):
+        alvo = {"male": "masculina", "female": "feminina"}.get(genero, genero)
+        vozes = [v for v in vozes if v.get("genero") in (alvo, "")]
+    if origem:
+        vozes = [v for v in vozes if v["origem"].lower() == origem.lower()]
+    if tipo:
+        vozes = [v for v in vozes if v.get("tipo") == tipo]
+    if busca.strip():
+        b = busca.strip().lower()
+        vozes = [v for v in vozes if b in f"{v['id']} {v.get('nome')} {v.get('descricao')}".lower()]
+    for v in vozes:
+        v["previa"] = f"/api/vozes/local/previa?voz={quote(v['id'])}&idioma={idioma or 'pt'}"
+    return {"total": len(vozes), "vozes": vozes[:max(1, min(limite, 2000))], "padrao": voz_local.codigo_da_voz({}),
+            "preco_por_mil": 0}
+
+
+@app.get("/api/vozes/local/previa")
+def previa_voz_local(voz: str, idioma: str = "pt"):
+    """Um trecho curto na voz pedida (gerado uma vez e guardado). Grátis, roda na placa de vídeo."""
+    try:
+        arquivo = voz_local.previa(voz, idioma, log=print)
+    except voz_local.ErroVozLocal as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return FileResponse(arquivo, media_type="audio/wav")
 
 
 @app.get("/api/genaipro/creditos")
