@@ -246,7 +246,7 @@ def etapa_imagens(p, a, aprovado=False):
         raise SystemExit(f"Faltam as cenas. Rode uv run fabrica cenas {p.nome}")
     pendentes = imagens.pendentes_ia(p, p.ler_json("cenas.json")["cenas"])
     if pendentes and not (p.offline or aprovado):
-        valor = custos.dinheiro(len(pendentes) * p.config["precos"]["imagem"])
+        valor = custos.dinheiro(len(pendentes) * custos.preco_da_imagem(p))
         if not confirmar(f"Gerar {len(pendentes)} imagens de IA custa cerca de {valor}. Continuar?", a.sim):
             raise SystemExit("Cancelado.")
     log("Imagens de IA")
