@@ -47,6 +47,7 @@ uv run fabrica thumbs NOME        # 3 thumbnails e a prancha do celular (grátis
 uv run fabrica shorts NOME        # até 3 shorts cortados do vídeo pronto, com legenda palavra por palavra (grátis)
 uv run fabrica publicar NOME --simular   # o que subiria para o YouTube; sem --simular, publica (pede confirmação)
 uv run fabrica consumo            # planilha do consumo no OpenRouter (relatorios/), refeita a cada consumo
+uv run fabrica tempos NOME        # onde foi o tempo da produção: etapas, cada IA, esperas e trocas de modelo (grátis)
 uv run fabrica animation-ai NOME  # onde a fala tem lista, datas ou comparação, cena animada no lugar da foto (grátis)
 uv run fabrica revisar NOME       # abre a página com todas as cenas
 uv run fabrica refazer NOME 12 31 # troca o que aparece nessas cenas
@@ -801,6 +802,20 @@ roteiro ~22 min, busca e conferência ~27 min, 214 imagens de IA ~30 min, render
   (`banco: pexels`), da espera pelo limite de um banco, do download e de cada etapa de modelo (dos `uso_*.json`).
   Elas somam mais que a etapa quando correm juntas. Serve para achar a espera: na conferência das imagens de IA do
   everything a janela foi de 38 min com só 4 min de modelo trabalhando.
+- **Cada chamada de IA anotada, e o relatório que acha o gargalo** (`chamadas.jsonl`, `tempos.anotar_chamada`,
+  `fabrica/relatorio_tempo.py`, pedido do usuário em 2026-10-29: um vídeo de 30 min levou 4 h e não dava para dizer
+  qual IA segurava). O `uso_*.json` só guardava a rota que respondeu. Agora `openrouter_local.perguntar` anota, por
+  chamada, cada rota tentada (segundos, "ok", "não atende" ou "falhou", com o motivo), as rotas puladas por estarem
+  fora do ar e a espera parada (pelo gratuito, pela confirmação do pago); `imagens._gerar_uma` anota cada tentativa
+  de imagem de IA; a narração local anota ligar o motor, gravar cada bloco e o tempo das palavras. Uma linha por vez
+  no fim do arquivo (milhares por vídeo; reescrever um JSON inteiro a cada chamada ficaria lento).
+  `fabrica tempos NOME [--desde] [--ate]` junta `tempos.json`, `uso_*.json` e `chamadas.jsonl` em
+  `tempo_relatorio.md`: etapas com a IA que mais ocupou cada uma, **relógio ocupado** de cada IA (a união dos
+  intervalos das chamadas, não a soma: chamadas em paralelo somam mais que o relógio), cada tarefa de IA, esperas e
+  rotas que falharam, as 15 chamadas mais lentas, os trechos de 2 min ou mais sem nenhuma IA (com a etapa aberta, ou
+  "fábrica parada") e o gargalo. Sem `--desde`, a última produção (a sequência sem pausa de 2 h). Sai sozinho no fim
+  do `tudo` e da criação pelo site. No everything-you-need-to-answer (só o fim da produção tinha medição): IA
+  trabalhando em 27% de 2 h; o Gemini 2.5 Flash-Lite pago foi o mais ocupado (escolha e descrição, 714 chamadas).
 - **Montagem final em pedaços, na placa de vídeo** (`render._mixar_em_pedacos`): o vídeo é cortado em quadros
   inteiros (`pedacos_da_montagem`, a soma dá exatamente o total), cada pedaço ganha a legenda e as animações dele e
   é codificado ao mesmo tempo que os outros, e no fim os pedaços são emendados sem codificar de novo, com o áudio

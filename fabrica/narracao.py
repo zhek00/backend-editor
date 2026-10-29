@@ -74,7 +74,10 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
     preparada = None
     if local and pendentes:
         # o motor de voz da fábrica (motores_voz/servidor.py) é ligado uma vez para o vídeo todo
+        from . import tempos
+        comeco = time.time()
         preparada = voz_local.preparar(voz, log)
+        tempos.anotar_chamada(projeto, "voz", "ligar o motor de voz", comeco, modelo=preparada["motor"])
         log(f"  voz open source: {preparada['codigo']} ({voz_local.ORIGEM[preparada['motor']]})")
 
     def gravar_uma_vez(i, falado):
@@ -664,7 +667,17 @@ def _voz_local(texto, voz, wav, preparada, log=print, falado=None):
     cada palavra pelo Whisper do Groq (grátis); sem ele, pelas pausas do áudio."""
     gravado = wav.with_name(wav.name.replace("_bruto.wav", "_local.wav")) if wav.name.endswith("_bruto.wav") \
         else wav.with_suffix(".local.wav")
-    voz_local.narrar(falado or texto, voz, gravado, preparada, log)
+    from . import tempos
+    comeco = time.time()
+    try:
+        voz_local.narrar(falado or texto, voz, gravado, preparada, log)
+    except Exception as e:
+        tempos.anotar_chamada(wav.parent.parent, "voz", "gravar bloco", comeco, False, modelo=preparada.get("motor"),
+                              bloco=wav.stem.split("_bruto")[0], motivo=str(e)[:160])
+        raise
+    tempos.anotar_chamada(wav.parent.parent, "voz", "gravar bloco", comeco, modelo=preparada.get("motor"),
+                          bloco=wav.stem.split("_bruto")[0], caracteres=len(falado or texto))
+    comeco = time.time()
     rodar(["ffmpeg", "-y", "-loglevel", "error", "-i", gravado, "-ac", "1", "-ar", TAXA, "-c:a", "pcm_s16le", wav])
     # o mp3 fica ao lado, como nas outras vozes: o pacote do projeto leva o mp3 e refaz o wav
     mp3 = wav.with_name(wav.name.replace("_bruto.wav", ".mp3")) if wav.name.endswith("_bruto.wav") \
@@ -683,6 +696,8 @@ def _voz_local(texto, voz, wav, preparada, log=print, falado=None):
     alinhamento = _alinhar_pelas_palavras(texto, palavras, duracao)
     alinhamento["tempo_das_palavras"] = como
     alinhamento["motor"] = preparada["motor"]
+    tempos.anotar_chamada(wav.parent.parent, "voz", "tempo das palavras", comeco, modelo=como,
+                          bloco=wav.stem.split("_bruto")[0])
     return alinhamento
 
 

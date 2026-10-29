@@ -117,6 +117,25 @@ def medir(projeto, etapa, log=None, **extra):
             log(f"  [tempo] {etapa}: {duracao(segundos)}{'' if ok else ' (falhou)'}")
 
 
+CHAMADAS = "chamadas.jsonl"
+
+
+def anotar_chamada(projeto, tipo, etapa, inicio, ok=True, **extra) -> None:
+    """Uma linha em chamadas.jsonl por chamada de IA que a fábrica esperou (texto pela cadeia, imagem de IA, voz):
+    quando começou, quanto levou e, na cadeia, cada rota tentada (o que falhou, o que estava fora do ar, a espera
+    pelo gratuito e pela confirmação do pago). Pedido do usuário em 2026-10-29: um vídeo de 30 min levou 4 h e o
+    uso_*.json só guardava a rota que respondeu, sem o tempo perdido nas que falharam nem a espera parada.
+    Uma linha por vez no fim do arquivo (são milhares por vídeo); nunca derruba a produção."""
+    linha = {"inicio": datetime.fromtimestamp(inicio).isoformat(timespec="milliseconds"), "tipo": tipo,
+             "etapa": etapa, "segundos": round(time.time() - inicio, 2), "ok": bool(ok), **extra}
+    try:
+        arquivo = _pasta(projeto) / CHAMADAS
+        with _trava, open(arquivo, "a", encoding="utf-8") as f:
+            f.write(json.dumps(linha, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def duracao(segundos) -> str:
     segundos = int(round(segundos))
     if segundos < 60:

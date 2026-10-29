@@ -251,46 +251,72 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     # do Groq e dos gratuitos do OpenRouter
     gratis = [r for r in rotas if gratuita(r)]
     rotas = gratis + [r for r in rotas if not gratuita(r)]
-    while True:
-        agora = time.time()
-        vivas = [r for r in rotas if _FORA_DO_AR.get(r, 0) <= agora] or rotas[-1:]
-        erro, de_novo = None, False
-        for k, rota in enumerate(vivas):
-            ultima = k == len(vivas) - 1
-            if not gratuita(rota) and gratis:
-                if _esperas < 3:
-                    # antes de pagar: se os gratuitos estão fora só pelo limite do minuto, espera uns segundos por
-                    # eles. No nunca-deve-ter-dentro-de-casa-parte-2 um pico da conferência (Groq e gratuitos do
-                    # OpenRouter no limite do minuto ao mesmo tempo) mandou 27 descrições para o Qwen pago em 1 minuto
-                    segundos = _espera_pelo_gratis(projeto, rotas, espera)
-                    if segundos is not None:
-                        log(f"  os gratuitos estão no limite do minuto: esperando {segundos:.0f} s em vez de pagar o {rota}")
-                        time.sleep(segundos)
-                        _esperas += 1
+    # o que a chamada passou, para tempos.anotar_chamada: cada rota tentada, as puladas por estarem fora do ar e as
+    # esperas paradas (pelo gratuito e pela confirmação do pago)
+    comeco, tentadas, puladas, esperas, ok = time.time(), [], set(), {}, False
+    try:
+        while True:
+            agora = time.time()
+            vivas = [r for r in rotas if _FORA_DO_AR.get(r, 0) <= agora] or rotas[-1:]
+            puladas.update(r for r in rotas if r not in vivas)
+            erro, de_novo = None, False
+            for k, rota in enumerate(vivas):
+                ultima = k == len(vivas) - 1
+                if not gratuita(rota) and gratis:
+                    if _esperas < 3:
+                        # antes de pagar: se os gratuitos estão fora só pelo limite do minuto, espera uns segundos por
+                        # eles. No nunca-deve-ter-dentro-de-casa-parte-2 um pico da conferência (Groq e gratuitos do
+                        # OpenRouter no limite do minuto ao mesmo tempo) mandou 27 descrições para o Qwen pago em 1 minuto
+                        segundos = _espera_pelo_gratis(projeto, rotas, espera)
+                        if segundos is not None:
+                            log(f"  os gratuitos estão no limite do minuto: esperando {segundos:.0f} s em vez de pagar o {rota}")
+                            time.sleep(segundos)
+                            esperas["pelo gratuito"] = round(esperas.get("pelo gratuito", 0) + segundos, 2)
+                            _esperas += 1
+                            de_novo = True
+                            break
+                    # todos os gratuitos esgotaram: o pago só com a confirmação da pessoa (pago.py)
+                    fora = {r: _FORA_DO_AR[r] for r in gratis if _FORA_DO_AR.get(r, 0) > time.time()}
+                    t = time.time()
+                    liberado = pago.autorizar(projeto, rota, etapa, fora, log)
+                    if time.time() - t >= 1:
+                        esperas["pela confirmação do pago"] = round(
+                            esperas.get("pela confirmação do pago", 0) + time.time() - t, 2)
+                    if not liberado:
                         de_novo = True
                         break
-                # todos os gratuitos esgotaram: o pago só com a confirmação da pessoa (pago.py)
-                fora = {r: _FORA_DO_AR[r] for r in gratis if _FORA_DO_AR.get(r, 0) > time.time()}
-                if not pago.autorizar(projeto, rota, etapa, fora, log):
-                    de_novo = True
-                    break
-            try:
-                resposta = uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
-                                    cadeia=not ultima, raciocinio=raciocinio)
-                if gratuita(rota):
-                    pago.gratis_atendeu(projeto)
-                return resposta
-            except RotaIndisponivel as e:
-                erro = e
-                if not ultima:
-                    log(f"  {rota} não atende agora ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
-            except (RuntimeError, SystemExit) as e:
-                erro = e
-                if ultima:
-                    raise
-                log(f"  {rota} falhou ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
-        if not de_novo:
-            raise RuntimeError(f"Nenhum modelo da cadeia atendeu na etapa {etapa}: {erro}")
+                t = time.time()
+                try:
+                    resposta = uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
+                                        cadeia=not ultima, raciocinio=raciocinio)
+                    tentadas.append({"rota": rota, "segundos": round(time.time() - t, 2), "resultado": "ok"})
+                    if gratuita(rota):
+                        pago.gratis_atendeu(projeto)
+                    ok = True
+                    return resposta
+                except RotaIndisponivel as e:
+                    tentadas.append({"rota": rota, "segundos": round(time.time() - t, 2),
+                                     "resultado": "não atende", "motivo": str(e)[:160]})
+                    erro = e
+                    if not ultima:
+                        log(f"  {rota} não atende agora ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
+                except (RuntimeError, SystemExit) as e:
+                    tentadas.append({"rota": rota, "segundos": round(time.time() - t, 2),
+                                     "resultado": "falhou", "motivo": str(e)[:160]})
+                    erro = e
+                    if ultima:
+                        raise
+                    log(f"  {rota} falhou ({str(e)[:100]}): seguindo com {vivas[k + 1]}")
+            if not de_novo:
+                raise RuntimeError(f"Nenhum modelo da cadeia atendeu na etapa {etapa}: {erro}")
+    finally:
+        try:
+            from . import tempos
+            tempos.anotar_chamada(projeto.pasta, "texto" if not imagens else "visão", etapa, comeco, ok,
+                                  modelo=tentadas[-1]["rota"] if ok else None, rotas=tentadas,
+                                  puladas=sorted(puladas), esperas=esperas)
+        except Exception:  # medir nunca derruba a produção
+            pass
 
 
 def ve_imagem(projeto, rota) -> bool:

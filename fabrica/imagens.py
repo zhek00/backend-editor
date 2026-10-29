@@ -478,7 +478,9 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
     usar = referencias if com_referencia else []
 
     erro, suavizado = None, False
+    from . import tempos
     for tentativa in range(tentativas):
+        comeco = time.time()
         try:
             prov = provedor(projeto.perfil)
             if prov == "google":
@@ -501,10 +503,16 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
                 registro["custo_usd"] if isinstance(registro.get("custo_usd"), (int, float)) else custos.preco_da_imagem(projeto),
                 unidades=1, detalhes={"cena": cena["n"], "provedor": registro.get("provedor", prov),
                                       "modelo": registro.get("modelo", "")})
+            tempos.anotar_chamada(projeto, "imagem", "imagem de IA", comeco, modelo=registro.get("modelo", prov),
+                                  cena=cena["n"], tentativa=tentativa + 1)
             return
         except SemImagem as e:
+            tempos.anotar_chamada(projeto, "imagem", "imagem de IA", comeco, False, cena=cena["n"],
+                                  tentativa=tentativa + 1, motivo=str(e)[:160])
             raise e  # repetir o mesmo pedido bloqueado não adianta
         except erros_google.APIError as e:
+            tempos.anotar_chamada(projeto, "imagem", "imagem de IA", comeco, False, cena=cena["n"],
+                                  tentativa=tentativa + 1, motivo=str(e)[:160])
             if _sem_cota(e):
                 raise SemCota(
                     "O Google recusou as imagens por falta de cota. Ative o faturamento do projeto da sua chave "
@@ -513,6 +521,8 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
             erro = e
             time.sleep((20 if e.code == 429 else 4) * (tentativa + 1))
         except Exception as e:
+            tempos.anotar_chamada(projeto, "imagem", "imagem de IA", comeco, False, cena=cena["n"],
+                                  tentativa=tentativa + 1, motivo=str(e)[:160])
             erro = e
             if _recusa_de_seguranca(e):
                 # repetir o mesmo pedido recusado não adianta: ele é reescrito uma vez, sem o detalhe que o filtro barrou

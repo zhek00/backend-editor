@@ -698,6 +698,11 @@ def cmd_tudo(a):
     medida("Revisão do vídeo", etapa_revisao_video, p, a)
     log("Tempo por etapa: " + ", ".join(f"{e} {tempos.duracao(s)}" for e, s, _ in tempos.resumo(p, desde=inicio_tudo)
                                          if not e.startswith(("Render:", "Render (", "Render em"))))
+    try:
+        from . import relatorio_tempo
+        log(f"Onde foi o tempo, por IA: {relatorio_tempo.salvar(p, desde=inicio_tudo)}")
+    except Exception as erro:  # o relatório nunca derruba a produção
+        log(f"  relatório de tempo não saiu ({str(erro)[:120]})")
     log(f"Revise as cenas com uv run fabrica revisar {p.nome}")
 
 
@@ -945,6 +950,15 @@ def cmd_restaurar(a):
     except (FileNotFoundError, FileExistsError) as e:
         raise SystemExit(str(e))
     log(f"Restaurado em {destino}, com tudo o que já foi pago. Ele já aparece no editor.")
+
+
+def cmd_tempos(a):
+    from . import relatorio_tempo
+    p = Projeto(a.nome)
+    texto = relatorio_tempo.montar(p.pasta, a.desde, a.ate)
+    (p.pasta / relatorio_tempo.ARQUIVO).write_text(texto, encoding="utf-8")
+    log(texto)
+    log(f"Salvo em {p.pasta / relatorio_tempo.ARQUIVO}")
 
 
 def cmd_status(a):
@@ -1304,6 +1318,12 @@ def main():
     s.add_argument("--importar", action="store_true", help="traz o histórico dos projetos, sem repetir o que já está")
     s.add_argument("--google", action="store_true", help="gera o modelo que se atualiza sozinho no Google Planilhas")
     s.set_defaults(funcao=cmd_consumo)
+
+    s = sub.add_parser("tempos", help="onde foi o tempo da produção: etapas, IAs, esperas e trocas de modelo (grátis)")
+    s.add_argument("nome")
+    s.add_argument("--desde", help="começo da janela, AAAA-MM-DDTHH:MM (sem ele, a última produção)")
+    s.add_argument("--ate", help="fim da janela, AAAA-MM-DDTHH:MM")
+    s.set_defaults(funcao=cmd_tempos)
 
     s = sub.add_parser("thumbs", help="3 opções de thumbnail e a prancha do celular (grátis)")
     s.add_argument("nome")

@@ -577,6 +577,11 @@ def _esteira(nome: str, task_id: str) -> None:
     resumo_tempos = tempos.texto_do_resumo(p, desde=comeco or None)
     if resumo_tempos:
         log_w(f"  {resumo_tempos}")
+    try:
+        from . import relatorio_tempo
+        log_w(f"  onde foi o tempo, por IA: {relatorio_tempo.salvar(p, desde=comeco or None)}")
+    except Exception as erro_t:  # o relatório nunca derruba a criação
+        log_w(f"  o relatório de tempo não saiu: {erro_t}")
     _atualizar(task_id, status="concluido", etapa="concluido", passo_atual=5, total_passos=5, progresso_pct=100,
                mensagem="Cenas prontas com sucesso! Tudo pronto para renderizar.", pronto_para_edicao=True,
                concluido=True, aguardando_ate=None)
