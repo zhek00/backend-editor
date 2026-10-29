@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -317,7 +318,8 @@ def preparar(voz: dict, log=print) -> dict:
     if motor == "omnivoice":
         dados = {**dados, "passos": passos_omnivoice()}
     ambiente = MOTOR_NO_AMBIENTE[motor]
-    ligar(ambiente, log)
+    with _usando():
+        ligar(ambiente, log)
     return {"codigo": codigo, "motor": motor, "voz": dados, "ambiente": ambiente}
 
 
@@ -331,7 +333,8 @@ def narrar(texto: str, voz: dict, saida: Path, preparada: dict, log=print) -> No
     ultimo = ""
     for tentativa in range(3):
         try:
-            r = httpx.post(_url(preparada["ambiente"]) + "/falar", json=corpo, timeout=3600)
+            with _usando():
+                r = httpx.post(_url(preparada["ambiente"]) + "/falar", json=corpo, timeout=3600)
         except httpx.HTTPError as erro:
             ultimo = str(erro)[:150]
             ligar(preparada["ambiente"], log)  # o servidor pode ter caído: liga de novo
@@ -437,4 +440,47 @@ def previa(codigo: str, idioma="pt", log=print) -> Path:
     destino.parent.mkdir(parents=True, exist_ok=True)
     preparada = preparar({"voz_local": codigo}, log)
     narrar(TEXTOS_PREVIA[idioma], {"idioma": idioma}, destino, preparada, log)
+    _desligar_quando_parado()
     return destino
+
+
+# ── o motor ligado por prévias sai sozinho da placa ───────────────────────────────────────────────────────────────
+# A narração desliga o motor no fim. A prévia (o editor e o Radar ouvindo vozes) não tem "fim": sem isso o motor ficava
+# na placa de vídeo até a próxima narração, e o render e as animações dividiam os 6 GB com ele.
+PARADO_PARA_DESLIGAR = 300  # segundos sem nenhuma fala
+_uso = {"ultimo": 0.0, "em_andamento": 0}
+_trava_uso = threading.Lock()
+_vigia = {"timer": None}
+
+
+class _usando:
+    """Marca o motor como em uso enquanto liga ou grava: o vigia das prévias nunca desliga no meio."""
+
+    def __enter__(self):
+        with _trava_uso:
+            _uso["em_andamento"] += 1
+            _uso["ultimo"] = time.time()
+
+    def __exit__(self, *_):
+        with _trava_uso:
+            _uso["em_andamento"] -= 1
+            _uso["ultimo"] = time.time()
+
+
+def _desligar_quando_parado() -> None:
+    with _trava_uso:
+        if _vigia["timer"]:
+            _vigia["timer"].cancel()
+        _vigia["timer"] = threading.Timer(PARADO_PARA_DESLIGAR, _talvez_desligar)
+        _vigia["timer"].daemon = True
+        _vigia["timer"].start()
+
+
+def _talvez_desligar() -> None:
+    with _trava_uso:
+        _vigia["timer"] = None
+        ocupado = _uso["em_andamento"] > 0 or time.time() - _uso["ultimo"] < PARADO_PARA_DESLIGAR - 1
+    if ocupado:
+        _desligar_quando_parado()  # uma narração começou depois da prévia: ela desliga no fim, ou confere de novo
+    else:
+        desligar()

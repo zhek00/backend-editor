@@ -1067,6 +1067,11 @@ código dos dois apps foi copiado** (o VoiceStudio é AGPL); só os nomes das vo
   **Qwen é lento nessa placa**: 23 s para uma frase de 5 s, umas 4 vezes o tempo da fala (um vídeo de 20 min levaria
   perto de 1h30). A Turing não faz bfloat16 direto (simulado, eram 32 s), então o servidor usa float16 quando a placa
   não faz bfloat16 (`_tipo_qwen`, `QWEN_TIPO` no ambiente vale por cima). Para produção, prefira OmniVoice e Kokoro.
+- **Prévia não prende a placa** (`voz_local._desligar_quando_parado`): a narração desliga o motor no fim, mas a prévia
+  (editor e Radar ouvindo vozes) não tem fim; depois de `PARADO_PARA_DESLIGAR` (5 min) sem nenhuma fala o motor sai.
+  Ligar e gravar marcam o motor em uso (`_usando`), e o vigia nunca desliga no meio de uma narração.
+- **O Radar de Canais** (`E:\Radar-de-Canais-main`, outro produto) mostra estas vozes na configuração do canal
+  (`radar/fabrica_api.vozes` e `previa`) e grava o perfil `canal-NOME.yaml` com `provedor: local`, `voz_local` e `idioma`.
 - **Desligar:** o servidor sai sozinho a pedido (`POST /desligar`); matar pelo número guardado em `AMBIENTE.pid`
   ficou só de reserva, porque no Windows o python do `.venv` abre um segundo processo, e esse ficava vivo segurando
   1,6 GB de memória e 4 GB da placa de vídeo.

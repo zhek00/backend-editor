@@ -108,3 +108,28 @@ def test_voz_inexistente_e_erro_claro(monkeypatch):
     for codigo in ("kokoro:pm_ninguem", "qwen:Fulano", "qwen_design:", "omnivoice:voz linda", "elevenlabs:x"):
         with pytest.raises(voz_local.ErroVozLocal):
             voz_local.resolver(codigo)
+
+
+def test_motor_das_previas_sai_sozinho_quando_parado(monkeypatch):
+    import time
+    desligados = []
+    monkeypatch.setattr(voz_local, "PARADO_PARA_DESLIGAR", 0.3)
+    monkeypatch.setattr(voz_local, "desligar", lambda *a: desligados.append(1))
+    voz_local._uso.update(ultimo=0.0, em_andamento=0)
+    voz_local._desligar_quando_parado()
+    time.sleep(0.6)
+    assert desligados == [1]
+
+
+def test_motor_nao_sai_no_meio_de_uma_narracao(monkeypatch):
+    import time
+    desligados = []
+    monkeypatch.setattr(voz_local, "PARADO_PARA_DESLIGAR", 0.3)
+    monkeypatch.setattr(voz_local, "desligar", lambda *a: desligados.append(1))
+    voz_local._uso.update(ultimo=0.0, em_andamento=0)
+    with voz_local._usando():  # uma narração gravando
+        voz_local._desligar_quando_parado()
+        time.sleep(0.6)
+        assert desligados == []
+    time.sleep(0.8)
+    assert desligados == [1]  # terminou a gravação e ficou parado: aí sai
