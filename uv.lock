@@ -536,6 +536,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "cryptography" },
     { name = "edge-tts" },
     { name = "fal-client" },
     { name = "fastapi" },
@@ -554,6 +555,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=1.5.0" },
+    { name = "cryptography", specifier = ">=43" },
     { name = "edge-tts", specifier = ">=7.2.8" },
     { name = "fal-client", specifier = ">=1.0.1" },
     { name = "fastapi", specifier = ">=0.141.1" },

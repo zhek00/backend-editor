@@ -23,7 +23,7 @@ from google import genai
 from google.genai import errors as erros_google
 from google.genai import types
 
-from . import custos, midia
+from . import chatgpt_assinatura, custos, midia
 from .config import RAIZ, caminho_relativo, chave
 from .util import mmss
 
@@ -67,6 +67,50 @@ def provedor(perfil):
     return ((perfil.get("imagens") or {}).get("provedor") or "google").lower()
 
 
+def provedor_de_api(perfil):
+    """O provedor de chave de API que atende quando o perfil está na assinatura do ChatGPT e ela não dá conta (sem
+    login ou limite da assinatura estourado). Padrão openrouter, que é o que os canais de hoje já usam."""
+    img = perfil.get("imagens") or {}
+    if img.get("reserva_api") is False:
+        return SEM_RESERVA
+    escolhido = (img.get("provedor_reserva") or "openrouter").lower()
+    return "openrouter" if escolhido == "assinatura" else escolhido
+
+
+# imagens.reserva_api: false (ou provedor_reserva: nenhuma) — o canal gera imagem só pela conexão do ChatGPT (pedido do
+# usuário em 2026-11-02: "nem está para fazer imagem pela api"). Sem login, o vídeo para pedindo a reconexão; no
+# limite, espera ele voltar. O provedor_reserva fica guardado só para quando o canal voltar para a chave de API
+SEM_RESERVA = "nenhuma"
+
+
+def _parada_da_assinatura(erro) -> str:
+    """O motivo da parada quando a conexão do ChatGPT não atende e o canal não tem reserva de chave de API."""
+    if isinstance(erro, chatgpt_assinatura.LimiteDaAssinatura):
+        return f"{erro} Este canal não usa chave de API para imagem: o vídeo espera o limite voltar."
+    return ("ChatGPT não está conectado: a OpenAI encerrou o login desta conta. Reconecte em Integrações › Conexões "
+            "da conta. Este canal não usa chave de API para imagem.")
+
+
+def _conferir_chave(prov, obrigatoria=True, log=print):
+    """A chave do provedor de chave de API tem que existir antes de começar. obrigatoria=False é a reserva da
+    assinatura: a falta dela só vira aviso, porque enquanto a assinatura responder ninguém vai precisar dela."""
+    try:
+        if prov == "google":
+            chave("GEMINI_API_KEY")
+        elif prov in ("kie", "kie.ai"):
+            chave("KIE_API_KEY")
+        elif prov == "openrouter":
+            from .openrouter_local import _chave
+            _chave()
+        else:
+            chave("FAL_KEY")
+    except (Exception, SystemExit) as erro:
+        if obrigatoria:
+            raise
+        log(f"  aviso: a reserva ({prov}) está sem chave. Se a assinatura do ChatGPT parar no meio, as imagens que "
+            f"faltarem não saem. {str(erro)[:160]}")
+
+
 def pendentes_ia(projeto, cenas):
     return [c for c in cenas if midia.precisa_ia(c) and not projeto.imagem(c["n"]).exists()]
 
@@ -92,19 +136,23 @@ def _prioridade_da_ia(cena) -> int:
     personagem, que só a IA desenha)."""
     if cena.get("personagem") or cena.get("prompt_manual") or cena.get("imagem_da_pessoa"):
         return 0
-    if cena.get("ia_motivo") or cena.get("ia_reserva"):
-        # o Jev reprovou a foto do banco: a IA completa, mesmo acima do teto (pedido do usuário em 2026-10-15: "o
-        # vídeo jamais deve ter cenas vazias"). Mandar de volta ao banco punha uma foto sem julgamento no lugar
-        return 0
     if cena.get("teto_ia"):
         # já teve a chance no banco pelo teto: se voltou para a IA, a foto do assunto não existia ou foi reprovada
         # pelo Jev (nunca outra coisa no vídeo). Uma vez só, senão a cena ia e voltava entre o banco e a IA
         return 0
     if cena.get("onde_existe") == "nao_existe":
         return 1  # um momento que ninguém fotografou
-    if cena.get("epoca") or cena.get("onde_existe") == "arquivo":
+    if cena.get("ia_motivo") or cena.get("ia_reserva"):
+        # o Jev reprovou a foto do banco. Era 0, "nunca sai da IA" (2026-10-15: "o vídeo jamais deve ter cenas
+        # vazias"), e num vídeo cujo assunto não tem foto real as reprovadas sozinhas furavam o teto: no
+        # 20-gigantes-da-era-do-gelo (2026-11-01) 152 reprovadas levaram o vídeo a 46% de imagem de IA com o teto em
+        # 25%, e as imagens de IA levaram 2 h. Agora ela passa na frente das outras, mas acima do teto volta ao banco
+        # pela foto do assunto do bloco, marcada com teto_ia: se de lá não vier foto nenhuma, volta para cá com
+        # prioridade 0 (sem_midia_real) e nenhuma cena fica vazia
         return 2
-    return 3
+    if cena.get("epoca") or cena.get("onde_existe") == "arquivo":
+        return 3
+    return 4
 
 
 def _teto_da_ia(projeto, pendentes, log):
@@ -194,15 +242,19 @@ def _gerar(projeto, apenas=None, log=print, direto=False):
     referencias = []
     if not projeto.offline:
         prov = provedor(projeto.perfil)
-        if prov == "google":
-            chave("GEMINI_API_KEY")
-        elif prov in ("kie", "kie.ai"):
-            chave("KIE_API_KEY")
-        elif prov == "openrouter":
-            from .openrouter_local import _chave
-            _chave()
-        else:
-            chave("FAL_KEY")
+        if prov == "assinatura":
+            # a assinatura não tem chave; o que precisa existir é o login do ChatGPT. Sem ele o vídeo não para: a
+            # reserva de chave de API entra no lugar, e é a chave dela que tem que estar no .env
+            if not chatgpt_assinatura.disponivel():
+                prov = provedor_de_api(projeto.perfil)
+                if prov == SEM_RESERVA:
+                    raise SystemExit(_parada_da_assinatura(chatgpt_assinatura.SemLogin()))
+                log(f"  sem login do ChatGPT neste computador: as imagens saem pelo {prov} (rode `codex login` para "
+                    "usar a assinatura)")
+            elif provedor_de_api(projeto.perfil) != SEM_RESERVA:
+                _conferir_chave(provedor_de_api(projeto.perfil), obrigatoria=False, log=log)
+        if prov != "assinatura":
+            _conferir_chave(prov)
         if any(c["personagem"] for c in pendentes):
             referencias = _referencias(projeto.perfil, log)
 
@@ -466,6 +518,30 @@ def prompt_final(cena, perfil, com_referencia):
     return "\n".join(partes)
 
 
+_RESERVA_AVISADA = set()
+
+
+def _avisar_reserva(projeto, prov, erro):
+    """O aviso de que o vídeo saiu da assinatura e foi para a chave de API: uma vez por vídeo, não a cada cena."""
+    marca = (getattr(projeto, "nome", str(projeto)), prov)
+    if marca in _RESERVA_AVISADA:
+        return
+    _RESERVA_AVISADA.add(marca)
+    print(f"  a assinatura do ChatGPT não atendeu: as imagens que faltam saem pelo {prov}. {str(erro)[:200]}")
+
+
+def _imagem_por_api(prov, prompt, img, usar, projeto):
+    """A imagem por um provedor de chave de API (o caminho de sempre, que também é a reserva da assinatura)."""
+    if prov == "google":
+        dados = _imagem_google(prompt, img, usar, img.get("proporcao", "16:9"), img.get("resolucao", "1K"))
+        return dados, {"provedor": "google", "modelo": img.get("modelo", MODELO_GOOGLE), "prompt": prompt}
+    if prov in ("kie", "kie.ai"):
+        return _imagem_kie(prompt, img)
+    if prov == "openrouter":
+        return _imagem_openrouter(prompt, img, projeto)
+    return _imagem_fal(prompt, img, usar)
+
+
 def _gerar_uma(projeto, cena, referencias, tentativas):
     destino = projeto.imagem(cena["n"])
     if projeto.offline:
@@ -482,15 +558,24 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
         comeco = time.time()
         try:
             prov = provedor(projeto.perfil)
-            if prov == "google":
-                dados = _imagem_google(prompt, img, usar, img.get("proporcao", "16:9"), img.get("resolucao", "1K"))
-                registro = {"provedor": "google", "modelo": img.get("modelo", MODELO_GOOGLE), "prompt": prompt}
-            elif prov in ("kie", "kie.ai"):
-                dados, registro = _imagem_kie(prompt, img)
-            elif prov == "openrouter":
-                dados, registro = _imagem_openrouter(prompt, img, projeto)
+            if prov == "assinatura":
+                try:
+                    dados, registro = chatgpt_assinatura.gerar(
+                        prompt, img.get("qualidade") or "low", img.get("proporcao", "16:9"), usar)
+                except (chatgpt_assinatura.SemLogin, chatgpt_assinatura.LimiteDaAssinatura) as e:
+                    # a assinatura acabou no meio do vídeo (ou o login caiu): as imagens que faltam saem pela chave
+                    # de API, como no Robô do Dotti. O vídeo nunca para por causa disso
+                    prov = provedor_de_api(projeto.perfil)
+                    if prov == SEM_RESERVA:
+                        raise SemCota(_parada_da_assinatura(e)) from e
+                    _avisar_reserva(projeto, prov, e)
+                    # as referências da assinatura são bytes, que só o Google também entende (a fal.ai quer links)
+                    dados, registro = _imagem_por_api(prov, prompt, img, usar if prov == "google" else [], projeto)
+                    registro["reserva_da_assinatura"] = str(e)[:200]
+                except chatgpt_assinatura.SemImagemNaResposta as e:
+                    raise SemImagem(str(e)) from e
             else:
-                dados, registro = _imagem_fal(prompt, img, usar)
+                dados, registro = _imagem_por_api(prov, prompt, img, usar, projeto)
             temporario = destino.with_name(destino.stem + ".baixando")
             temporario.write_bytes(dados)
             temporario.replace(destino)
@@ -746,14 +831,14 @@ def _imagem_fal(prompt, img, referencias):
 
 
 def _referencias(perfil, log):
-    """Fotos de referência da personagem. O Google recebe os bytes e a fal.ai recebe links."""
+    """Fotos de referência da personagem. O Google e a assinatura do ChatGPT recebem os bytes; a fal.ai, links."""
     caminhos = (perfil.get("personagem") or {}).get("referencias") or []
     referencias = []
     for c in caminhos:
         arquivo = caminho_relativo(c)
         if not arquivo.exists():
             raise SystemExit(f"Imagem de referência não encontrada em {arquivo}")
-        if provedor(perfil) == "google":
+        if provedor(perfil) in ("google", "assinatura"):
             referencias.append((arquivo.read_bytes(), TIPOS_IMAGEM.get(arquivo.suffix.lower(), "image/png")))
         else:
             referencias.append(fal_client.upload_file(arquivo))
@@ -766,7 +851,7 @@ def _imagem_openrouter(prompt, img, projeto=None):
     """Gera imagem por um modelo de imagem do OpenRouter (padrão: Grok Imagine Image 2.0). A imagem volta na própria
     resposta, em base64 ou como endereço. Usa a chave do OpenRouter que a fábrica já tem no .env."""
     import base64
-    from .openrouter_local import cabecalhos, postar_com_sessao
+    from .openrouter_local import cabecalhos, credito_reservado, postar_com_sessao
 
     modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
                                               and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
@@ -778,6 +863,8 @@ def _imagem_openrouter(prompt, img, projeto=None):
     with httpx.Client(timeout=180.0, follow_redirects=True) as cliente:
         r = postar_com_sessao(cliente.post, "https://openrouter.ai/api/v1/chat/completions", corpo, projeto,
                               headers=cabecalhos())
+        if credito_reservado(r):
+            raise RuntimeError("OpenRouter: o saldo seguiu reservado pelos pedidos em andamento por 3 minutos")
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):
@@ -806,7 +893,7 @@ def _imagem_openrouter_images(prompt, img, modelo, projeto=None):
     """GPT Image (openai/gpt-image-1) e GPT-5.4 Image 2 pela interface de imagens do OpenRouter. A qualidade vem de
     imagens.qualidade no perfil (padrão low) e a proporção é a mais larga que o modelo aceita (PROPORCAO_IMAGES_API)."""
     import base64
-    from .openrouter_local import cabecalhos, postar_com_sessao
+    from .openrouter_local import cabecalhos, credito_reservado, postar_com_sessao
 
     qualidade = str(img.get("qualidade") or "low").lower()
     corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
@@ -816,6 +903,8 @@ def _imagem_openrouter_images(prompt, img, modelo, projeto=None):
     with httpx.Client(timeout=300.0, follow_redirects=True) as cliente:
         r = postar_com_sessao(cliente.post, "https://openrouter.ai/api/v1/images", corpo, projeto,
                               headers=cabecalhos())
+        if credito_reservado(r):
+            raise RuntimeError("OpenRouter: o saldo seguiu reservado pelos pedidos em andamento por 3 minutos")
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (401, 403):
@@ -990,6 +1079,9 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
     Com prompt ou forcar_ia, a cena passa a usar imagem de IA.
     Com tipo foto_real ou video_real, a pessoa escolheu material de acervo: a cena só procura em acervo,
     e se não achar nada avisa, sem gerar uma imagem de IA no lugar.
+
+    prompt pode ser um texto (o mesmo para todas) ou {n: texto}, um pedido por cena: assim a conferência das
+    imagens de IA refaz todas de uma vez, em imagens.processos ao mesmo tempo, em vez de uma a uma.
     """
     # termos de busca sem prompt e sem pedido de IA também são escolha de acervo, mesmo sem o tipo informado
     escolheu_real = not forcar_ia and (tipo in midia.TIPOS_REAIS or bool(busca and not prompt and tipo is None))
@@ -1027,8 +1119,9 @@ def refazer(projeto, numeros, prompt=None, busca=None, forcar_ia=False, log=prin
         elif prompt or forcar_ia:
             c["tipo"], c["busca"] = "ia", ""
             c.pop("sem_midia_real", None)
-            if prompt:
-                c["prompt_manual"] = prompt
+            pedido = prompt.get(c["n"]) if isinstance(prompt, dict) else prompt
+            if pedido:
+                c["prompt_manual"] = pedido
         elif busca:
             c["busca"] = busca
             if c.get("tipo") not in midia.TIPOS_REAIS:
@@ -1119,7 +1212,11 @@ def candidatos_personagem(perfil, quantidade, log=print):
     carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
     log(f"  gerando {quantidade} rostos")
 
-    if provedor(perfil) == "google":
+    if provedor(perfil) == "assinatura":
+        with ThreadPoolExecutor(quantidade) as executor:
+            imagens = [d for d, _ in executor.map(
+                lambda _: chatgpt_assinatura.gerar(prompt, img.get("qualidade") or "medium", "1:1"), range(quantidade))]
+    elif provedor(perfil) == "google":
         chave("GEMINI_API_KEY")
         with ThreadPoolExecutor(quantidade) as executor:
             imagens = list(executor.map(lambda _: _imagem_google(prompt, img, [], "1:1", "2K"), range(quantidade)))

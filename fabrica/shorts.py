@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+from . import idioma
 from .util import rodar
 
 LARGURA, ALTURA = 1080, 1920

@@ -19,7 +19,7 @@ ritmo:
 midia_real:
   proporcao: 0.5                       # ignorado: o estilo da fábrica já fixa 90% real / 10% IA em fabrica/cenas.py
   fontes_foto: [wikimedia, pexels, pixabay]
-  fontes_video: [pexels, pixabay]
+  fontes_video: [pexels, pixabay, coverr]
   aceitar_cc_by: true                  # exige crédito ao autor, que vai para creditos.txt
   aceitar_cc_by_sa: false
   orientacao: >-

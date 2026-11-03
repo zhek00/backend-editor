@@ -35,3 +35,7 @@ motores_voz/vozes/
 
 # estudio-real: produto separado (canais com rosto), repositorio a parte
 estudio-real/
+
+# quanto já foi usado das janelas de limite da assinatura do ChatGPT (fabrica/chatgpt_assinatura.py): é deste
+# computador, não do projeto
+chatgpt_limites.json

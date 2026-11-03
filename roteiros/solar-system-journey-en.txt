@@ -1,0 +1,39 @@
+[TITULO] The Sun
+
+At the heart of our solar system burns the Sun, a giant star of glowing gas. Huge solar flares erupt from its surface, larger than entire planets.
+
+[TITULO] Mercury
+
+Mercury is the closest planet to the Sun. Its grey surface is covered in craters, and a year there lasts only eighty-eight days.
+
+[TITULO] Venus
+
+Venus is wrapped in thick yellow clouds. Beneath them, the surface is hot enough to melt lead, and the sky never clears.
+
+[TITULO] Earth
+
+Earth is the blue planet, with oceans, white clouds and green continents. It is the only place we know where life exists.
+
+[TITULO] Mars
+
+Mars is the red planet, covered in dust and deserts. It has the largest volcano in the solar system and deep canyons explored today by rovers.
+
+[TITULO] Jupiter
+
+Jupiter is the largest planet of all. Its colorful bands swirl with storms, and the Great Red Spot is a hurricane bigger than Earth.
+
+[TITULO] Saturn
+
+Saturn is surrounded by enormous rings of ice and rock. Seen up close, it glows golden against the darkness of space.
+
+[TITULO] Uranus
+
+Uranus is a pale blue ice giant. It spins on its side, like a ball rolling around the Sun.
+
+[TITULO] Neptune
+
+Neptune is the most distant planet, a deep blue world. Its winds are the fastest in the solar system, faster than the speed of sound.
+
+[TITULO] Our Place in Space
+
+Beyond Neptune, the solar system drifts on in silence, surrounded by billions of stars in the Milky Way.

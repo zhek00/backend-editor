@@ -50,7 +50,7 @@ def test_a_lixeira_nao_aparece_como_projeto(projetos):
 
 
 def test_limpa_o_que_passou_dos_dias(projetos):
-    velho = projetos / "_lixeira" / f"velho__{(datetime.now() - timedelta(days=8)):%Y%m%d-%H%M%S}"
+    velho = projetos / "_lixeira" / f"velho__{(datetime.now() - timedelta(days=lixeira.DIAS + 1)):%Y%m%d-%H%M%S}"
     velho.mkdir(parents=True)
     _projeto(projetos, "novo")
     lixeira.mandar("novo")

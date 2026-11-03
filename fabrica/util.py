@@ -56,3 +56,44 @@ def confirmar(pergunta: str, sim: bool = False) -> bool:
     if not sys.stdin.isatty():
         raise SystemExit(f"{pergunta}\nSem terminal para responder. Rode de novo com --sim para aprovar o gasto.")
     return input(f"{pergunta} [s/N] ").strip().lower() in ("s", "sim")
+
+
+# ---------------------------------------------------------------- gravação de arquivo à prova de Windows
+
+import threading as _threading
+
+_TRAVAS_DE_ARQUIVO: dict = {}
+_TRAVA_DAS_TRAVAS = _threading.Lock()
+
+
+def _trava_do_arquivo(caminho) -> "_threading.Lock":
+    chave = str(caminho).lower()
+    with _TRAVA_DAS_TRAVAS:
+        return _TRAVAS_DE_ARQUIVO.setdefault(chave, _threading.Lock())
+
+
+def gravar_atomico(destino, texto: str, tentativas: int = 40, espera: float = 0.25) -> None:
+    """Grava o texto num temporário e troca pelo destino, sem deixar arquivo pela metade.
+
+    No Windows a troca falha com "Acesso negado" (WinError 5) se, naquele instante, outra parte estiver lendo o
+    destino (o editor lê o cenas.json e o criacao.json o tempo todo): ela é tentada de novo por até 10 s. Cada gravação
+    tem o próprio temporário (antes era sempre NOME.tmp, e duas gravações ao mesmo tempo se atropelavam) e as gravações
+    do mesmo arquivo neste processo vão uma de cada vez. Caso real: no 12-animais-estranhos (2026-10-12) a cena
+    animada 434 a 436 se perdeu com "Acesso negado: cenas.json.tmp"."""
+    import os
+    import time
+    from pathlib import Path
+
+    destino = Path(destino)
+    with _trava_do_arquivo(destino):
+        temporario = destino.with_name(f"{destino.name}.{os.getpid()}.{_threading.get_ident()}.tmp")
+        temporario.write_text(texto, encoding="utf-8")
+        for tentativa in range(tentativas):
+            try:
+                temporario.replace(destino)
+                return
+            except PermissionError:
+                if tentativa == tentativas - 1:
+                    temporario.unlink(missing_ok=True)
+                    raise
+                time.sleep(espera)

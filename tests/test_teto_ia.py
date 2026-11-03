@@ -106,14 +106,28 @@ def test_sem_teto_ou_offline_nada_muda(tmp_path, monkeypatch):
     assert imagens._teto_da_ia(p, cenas, log=lambda *_: None) == cenas
 
 
-def test_cena_reprovada_pelo_jev_vai_para_a_ia_mesmo_com_o_teto_cheio(tmp_path, monkeypatch):
-    # "o vídeo jamais deve ter cenas vazias": com as vagas acabadas, a foto reprovada pelo Jev vira IA, sem voltar ao
-    # banco (onde entraria uma foto do assunto sem julgamento)
+def test_cena_reprovada_pelo_jev_volta_ao_banco_com_o_teto_cheio(tmp_path, monkeypatch):
+    # com as vagas acabadas a foto reprovada pelo Jev também respeita o teto: ela vai buscar foto do assunto do bloco
+    # no banco. Era a única que furava o teto, e no 20-gigantes-da-era-do-gelo (2026-11-01) 152 reprovadas levaram o
+    # vídeo a 46% de imagem de IA com o teto em 25%
     cenas = [_cena(n) for n in range(1, 11)]
     cenas[4].update(ia_motivo="o Jev deu 10% de chance de combinar com a narração", ia_reserva={"midia": {}})
     p = _projeto(tmp_path, cenas, com_imagem=(1, 2, 3))  # as 3 vagas (35% de 10) já estão ocupadas
     buscar, buscadas = _banco(acha=set(range(1, 11)))
     monkeypatch.setattr(midia, "buscar", buscar)
     seguem = imagens._teto_da_ia(p, cenas[3:], log=lambda *_: None)
+    assert [c["n"] for c in seguem] == []
+    assert buscadas == [4, 5, 6, 7, 8, 9, 10] and cenas[4]["teto_ia"] is True
+
+
+def test_reprovada_sem_foto_no_banco_volta_para_a_ia_acima_do_teto(tmp_path, monkeypatch):
+    # "o vídeo jamais deve ter cenas vazias": se o banco não tem foto do assunto, a reprovada volta para a IA mesmo
+    # acima do teto, marcada com sem_midia_real (e com teto_ia, para não ir e voltar de novo)
+    cenas = [_cena(n) for n in range(1, 11)]
+    cenas[4].update(ia_motivo="o Jev deu 10% de chance de combinar com a narração", ia_reserva={"midia": {}})
+    p = _projeto(tmp_path, cenas, com_imagem=(1, 2, 3))  # as 3 vagas (35% de 10) já estão ocupadas
+    buscar, _ = _banco(acha=set(range(1, 11)) - {5})     # o banco acha de todas, menos da reprovada
+    monkeypatch.setattr(midia, "buscar", buscar)
+    seguem = imagens._teto_da_ia(p, cenas[3:], log=lambda *_: None)
     assert [c["n"] for c in seguem] == [5]
-    assert 5 not in buscadas and buscadas == [4, 6, 7, 8, 9, 10]
+    assert cenas[4]["sem_midia_real"] is True and cenas[4]["teto_ia"] is True

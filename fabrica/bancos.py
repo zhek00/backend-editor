@@ -143,32 +143,43 @@ def _mp4_do_coverr(urls):
     return mp4 if isinstance(mp4, str) else None
 
 
+def _segundos(valor):
+    """A Coverr manda a duração como texto ("12.5"); a fábrica formata como número e caía com
+    "Unknown format code 'f' for object of type 'str'" na escolha do acervo."""
+    try:
+        return float(valor) if valor not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def coverr(b, tipo, busca):
     """Vídeos de banco da Coverr (só vídeo, deitados). Precisa da chave da API, que se pede por e-mail à Coverr
     (team@coverr.co). O endereço de cada vídeo é assinado com a chave. A Coverr exige avisar cada download
     (`avisar_download`)."""
-    from .midia import FonteIndisponivel
+    from .midia import FonteIndisponivel, LimiteAtingido
 
     if tipo != "video":
         return []
-    chave = _chave("COVERR_API_KEY", "COVERR_API")
+    chave = _chave("COVERR_API_KEY", "COVERR_API", "COVERR_KEY")
     if not chave:
         raise FonteIndisponivel("falta COVERR_API_KEY no .env (a chave se pede por e-mail a team@coverr.co)")
     r = b.http.get("https://api.coverr.co/videos", headers={"Authorization": f"Bearer {chave}"},
                    params={"query": busca[:100], "page_size": 30, "urls": "true"})
+    if r.status_code == 429:
+        raise LimiteAtingido("Coverr", 60)
     b._checar(r, "Coverr")
     achados = []
     for v in r.json().get("hits", []):
         arquivo = _mp4_do_coverr(v.get("urls"))
         miniatura = v.get("thumbnail") or v.get("poster")
-        if not arquivo or not miniatura or v.get("is_vertical"):
+        if not arquivo or not miniatura or v.get("is_vertical") or v.get("is_premium") or v.get("is_ai_generated"):
             continue
         if (v.get("max_width") or 1920) < (v.get("max_height") or 0):
             continue
         tags = " ".join(str(t) for t in (v.get("tags") or [])[:10])
         achados.append({
             "fonte": "coverr", "id": str(v["id"]), "tipo": "video", "miniatura": miniatura, "arquivo": arquivo,
-            "duracao": v.get("duration"), "pagina": f"https://coverr.co/videos/{v['id']}",
+            "duracao": _segundos(v.get("duration")), "pagina": f"https://coverr.co/videos/{v['id']}",
             "autor": "Coverr", "licenca": "Licença Coverr",
             "descricao": _limpar(f"{v.get('title') or ''}. {v.get('description') or ''}. {tags}"),
             "avisar_download": f"https://api.coverr.co/videos/{v['id']}/stats/downloads",

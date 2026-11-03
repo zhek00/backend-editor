@@ -18,7 +18,7 @@ ritmo:
 midia_real:
   proporcao: 0.7                     # a aula vive bem com paisagem, natureza e pessoas em silêncio
   fontes_foto: [wikimedia, pexels, pixabay]
-  fontes_video: [pexels, pixabay]
+  fontes_video: [pexels, pixabay, coverr]
   aceitar_cc_by: true
   aceitar_cc_by_sa: false
   orientacao: >-

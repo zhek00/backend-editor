@@ -51,12 +51,38 @@ def com_avatar(projeto, sem_avatar=False) -> bool:
     return bool((projeto.perfil.get("avatar") or {}).get("ativo")) and not sem_avatar
 
 
+# estilo de edição do vídeo (perfil: `visual: cinema`), vindo do motor do Robô PALHANO em 2026-10-12. Vai no fim do
+# filtro de cada cena: cor, granulado, vinheta e, no cinema deitado, as faixas pretas. Sem `visual` no perfil nada
+# muda, e os clipes já prontos não mudam de nome (o campo só entra no cfg quando existe).
+VISUAIS = {
+    "documentario": "eq=contrast=1.03:saturation=1.05",
+    "investigacao": "eq=saturation=0.55:contrast=1.08:brightness=-0.03,noise=alls=8:allf=t,vignette=PI/4",
+    "noticiario": "eq=contrast=1.05",
+    "energia": "eq=saturation=1.3:contrast=1.1",
+    "cinema": "eq=contrast=1.1:saturation=0.9,colorbalance=rs=-0.05:bs=0.07:rh=0.05",
+}
+FAIXAS_DE_CINEMA = "drawbox=x=0:y=0:w=iw:h=ih*0.12:color=black:t=fill,drawbox=x=0:y=ih*0.88:w=iw:h=ih*0.12:color=black:t=fill"
+
+
+def _com_visual(filtro: str, cfg) -> str:
+    visual = cfg.get("visual")
+    if visual not in VISUAIS:
+        return filtro
+    filtro += "," + VISUAIS[visual]
+    if visual == "cinema" and not cfg.get("vertical"):
+        filtro += "," + FAIXAS_DE_CINEMA
+    return filtro
+
+
 def configuracao(projeto, vertical=False):
     """Ajustes do render. Na versão em pé (Reels e Shorts) a tela vira 1080x1920 e vale a seção vertical do config.
 
     A seção vertical fica fora da seção render de propósito: os ajustes do render entram no nome de cada clipe,
     e mexer neles faria a versão deitada de todo projeto renderizar de novo."""
     cfg = dict(projeto.config.get("render") or {})
+    visual = str(projeto.perfil.get("visual") or "").strip().lower()
+    if visual in VISUAIS:
+        cfg["visual"] = visual
     if vertical:
         v = projeto.config.get("vertical") or {}
         cfg.update({"largura": v.get("largura", 1080), "altura": v.get("altura", 1920), "vertical": True,
@@ -478,6 +504,7 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
         entradas, filtro = _entrada_video(arquivo, frames, cfg)
     else:
         entradas, filtro = ["-i", _preparar_foto(arquivo, pasta_fotos, cfg)], _filtro_foto(tarefa["movimento"], frames, cfg)
+    filtro = _com_visual(filtro, cfg)
 
     duracao = frames / fps
     simbolos, titulos = tarefa["simbolos"], tarefa["titulos"]

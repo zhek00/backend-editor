@@ -103,6 +103,8 @@ def preco_da_imagem(projeto) -> float:
     if em_lote_no_google(projeto):
         return precos.get("imagem_lote", 0.034)
     provedor = ((projeto.perfil.get("imagens") or {}).get("provedor") or "google").lower()
+    if provedor == "assinatura":
+        return 0.0            # a assinatura do ChatGPT já está paga: a imagem gasta limite, não dinheiro
     if provedor in ("kie", "kie.ai"):
         return precos.get("imagem_kie", 0.02)
     if provedor == "openrouter":

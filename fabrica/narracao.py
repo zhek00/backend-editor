@@ -79,6 +79,10 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
         preparada = voz_local.preparar(voz, log)
         tempos.anotar_chamada(projeto, "voz", "ligar o motor de voz", comeco, modelo=preparada["motor"])
         log(f"  voz open source: {preparada['codigo']} ({voz_local.ORIGEM[preparada['motor']]})")
+    if pendentes and not local and not projeto.offline and voz.get("provedor") not in ("edge-tts", "fish", "computador"):
+        lenta = genaipro.lentidao(str(voz.get("voice_id") or "").strip())
+        if lenta:
+            log(f"  ⚠ AVISO: {lenta['aviso']} Troque a voz no perfil se precisar do vídeo hoje.")
 
     def gravar_uma_vez(i, falado):
         bloco = blocos[i]

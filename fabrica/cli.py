@@ -608,6 +608,7 @@ def etapa_render(p, a, aprovado=False):
         log("  versão em pé (9:16), para Reels e Shorts")
         final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False), vertical=True)
         log(f"  vídeo em pé pronto em {final} ({mmss(time.time() - inicio)} de render)")
+        etapa_entrega_pc(p)
         return
     final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False))
     log(f"  vídeo pronto em {final} ({mmss(time.time() - inicio)} de render)")
@@ -618,6 +619,16 @@ def etapa_render(p, a, aprovado=False):
         log("Render da versão em pé (9:16), para Reels e Shorts")
         final = render.renderizar(p, log, sem_avatar=getattr(a, "sem_avatar", False), vertical=True)
         log(f"  vídeo em pé pronto em {final} ({mmss(time.time() - inicio)} de render)")
+    etapa_entrega_pc(p)
+
+
+def etapa_entrega_pc(p):
+    """A pasta do vídeo pronto no computador (Downloads), com a descrição e o resto do kit. Nunca derruba o render."""
+    from . import entrega_pc
+    try:
+        entrega_pc.entregar(p, log=log)
+    except (Exception, SystemExit) as erro:
+        log(f"  a entrega no computador não saiu ({str(erro)[:160]})")
 
 
 def etapa_corrigir(p, a, aprovado=False):
@@ -659,6 +670,13 @@ def _aviso_ia(p) -> str:
 
 
 def cmd_tudo(a):
+    from . import acordado
+
+    with acordado.segurar():  # o computador não dorme no meio do vídeo (fabrica/acordado.py)
+        _tudo(a)
+
+
+def _tudo(a):
     p = Projeto(a.nome)
     if not p.offline:
         log(custos.formatar(custos.estimar(p)))
@@ -683,11 +701,16 @@ def cmd_tudo(a):
     for rotulo, etapa in (("Divisão de cenas", etapa_cenas), ("Motion (vídeo todo)", etapa_motion_total),
                           ("Busca de acervo", etapa_midia), ("Conferência", etapa_corrigir),
                           ("Imagens de IA", etapa_imagens), ("Motion e cenas animadas", etapa_motion),
-                          ("Efeitos", etapa_efeitos), ("Animações", etapa_animacoes), ("Trilha", etapa_trilha)):
+                          ("Efeitos", etapa_efeitos)):
         medida(rotulo, etapa, p, a, aprovado=True)
         if etapa in (etapa_corrigir, etapa_imagens):
             # os clipes das cenas prontas são montados em segundo plano enquanto as etapas seguintes andam
             render.adiantar_clipes(p, log)
+    # a imagem de cada cena está decidida: as animações por cima e a trilha não dependem uma da outra
+    with ThreadPoolExecutor(max_workers=2) as juntos:
+        for futuro in [juntos.submit(medida, rotulo, etapa, p, a, aprovado=True)
+                       for rotulo, etapa in (("Animações", etapa_animacoes), ("Trilha", etapa_trilha))]:
+            futuro.result()
     if render.com_avatar(p, a.sem_avatar):
         faltando = avatar.faltando(p) if avatar.modo(p.perfil) == "trechos" else avatar.partes_faltando(p)
         if faltando:
@@ -1188,13 +1211,34 @@ def cmd_pago(a):
     log(f"Modelo pago liberado em {a.nome} até o fim do dia. Ele só entra quando os gratuitos esgotam.")
 
 
+# Quem pode dizer o endereço de quem pede (X-Forwarded-For): só o túnel da Cloudflare rodando neste computador. Com
+# "*" o uvicorn usava o PRIMEIRO endereço do cabeçalho, que quem pede escreve: "X-Forwarded-For: 127.0.0.1" fazia um
+# pedido da internet passar por pedido do próprio computador (2026-10-20).
+PROXIES_CONFIAVEIS = "127.0.0.1,::1"
+
+
 def cmd_servidor(a):
     import uvicorn
     from .api import criar_app
     pago.responde_o_editor = True  # o modelo pago espera a confirmação no editor, em vez de perguntar no terminal
     app = criar_app(frontend_dir=getattr(a, "frontend", None))
     log(f"Iniciando API HTTP da Fábrica de Vídeos em http://{a.host}:{a.porta}")
-    uvicorn.run(app, host=a.host, port=a.porta, proxy_headers=True, forwarded_allow_ips="*")
+    uvicorn.run(app, host=a.host, port=a.porta, proxy_headers=True, forwarded_allow_ips=PROXIES_CONFIAVEIS)
+
+
+def cmd_painel(a):
+    """Painel do Robô PALHANO: conta, planos, canais, chaves, fila e custos (palhano/painel)."""
+    import uvicorn
+    log(f"Painel do Robô PALHANO em http://{a.host}:{a.porta}")
+    uvicorn.run("palhano.painel.servidor:app", host=a.host, port=a.porta, proxy_headers=True,
+                forwarded_allow_ips=PROXIES_CONFIAVEIS)
+
+
+def cmd_robo(a):
+    """Robô PALHANO: liga este computador ao painel e produz os vídeos da fila (palhano/robo)."""
+    from palhano.robo import robo
+    robo.main(["--painel", a.painel] + (["--codigo", a.codigo] if a.codigo else []) + (["--uma-vez"] if a.uma_vez else [])
+              + ["--simultaneos", str(a.simultaneos)])
 
 
 def main():
@@ -1475,6 +1519,18 @@ def main():
     s.add_argument("--host", default="0.0.0.0", help="host do servidor (padrão: 0.0.0.0)")
     s.add_argument("--frontend", default=None, help="pasta do frontend para servir junto")
     s.set_defaults(funcao=cmd_servidor)
+
+    s = sub.add_parser("painel", help="Robô PALHANO: sobe o painel (conta, planos, canais, chaves, fila e custos)")
+    s.add_argument("--porta", type=int, default=8300)
+    s.add_argument("--host", default="127.0.0.1")
+    s.set_defaults(funcao=cmd_painel)
+
+    s = sub.add_parser("robo", help="Robô PALHANO: liga este computador ao painel e produz os vídeos da fila")
+    s.add_argument("--painel", default=os.environ.get("PALHANO_PAINEL", "http://127.0.0.1:8300"))
+    s.add_argument("--codigo", help="código de conexão (painel > Máquinas > Conectar máquina)")
+    s.add_argument("--uma-vez", action="store_true", help="produz no máximo um vídeo e sai (teste)")
+    s.add_argument("--simultaneos", type=int, default=3, help="vídeos produzidos ao mesmo tempo (padrão: 3)")
+    s.set_defaults(funcao=cmd_robo)
 
     argumentos = parser.parse_args()
     try:

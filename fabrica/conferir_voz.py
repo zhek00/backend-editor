@@ -109,7 +109,9 @@ def transcrever(audio: Path, idioma="pt", modelo=MODELO, log=print):
                 with open(leve, "rb") as f:
                     r = httpx.post(URL, headers={"Authorization": f"Bearer {chave}"},
                                    files={"file": (leve.name, f, "audio/mpeg")},
-                                   data={"model": modelo, "language": idioma or "pt", "response_format": "json",
+                                   # o Whisper chama o filipino de "tl" (tagalo); a GenAIPro, de "fil"
+                                   data={"model": modelo, "language": {"fil": "tl"}.get(idioma, idioma or "pt"),
+                                         "response_format": "json",
                                          "temperature": "0"}, timeout=180)
             except httpx.HTTPError as erro:
                 ultimo = str(erro)[:120]

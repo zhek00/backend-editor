@@ -14,10 +14,22 @@ from datetime import datetime
 MODELO_PADRAO = "gemini-3.8-flash"
 _trava = threading.Lock()
 _esgotados = {}  # modelo -> até quando a cota dele está esgotada (time.time())
+_de_lado = {}  # modelo -> até quando ele fica de lado por estar lento ou sobrecarregado (só com limite)
+DE_LADO = 180  # segundos
 
 
 def _esgotado(modelo) -> bool:
     return _esgotados.get(modelo, 0) > time.time()
+
+
+def _por_de_lado(modelo, log, motivo):
+    """O Gemini lento ou sobrecarregado fica de lado uns minutos: as chamadas seguintes vão direto para a cadeia de
+    visão, em vez de cada uma esperar o limite ou bater no mesmo 503."""
+    with _trava:
+        novo = _de_lado.get(modelo, 0) <= time.time()
+        _de_lado[modelo] = time.time() + DE_LADO
+    if novo:
+        log(f"  o {modelo} está {motivo}: fica de lado {DE_LADO // 60} min, a cadeia de visão segue no lugar dele")
 
 
 def _volta_em(texto) -> float:
@@ -107,16 +119,22 @@ RESOLUCOES = {"baixa": "MEDIA_RESOLUTION_LOW", "media": "MEDIA_RESOLUTION_MEDIUM
 
 
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
-              na_cadeia=False, raciocinio=None, resolucao=None, max_tokens=None):
+              na_cadeia=False, raciocinio=None, resolucao=None, max_tokens=None, limite=None):
     """imagens é uma lista de caminhos de imagem enviados junto do pedido.
 
     na_cadeia=True: é uma rota da cadeia de visão ("gemini:MODELO", openrouter_local.uma_rota). Quem não responde
     levanta RotaIndisponivel e a cadeia passa para o seguinte, em vez de cair no MiMo, que saiu da fábrica.
     resolucao (baixa, media, alta): quantos tokens cada imagem gasta; na baixa, uma miniatura de 640x360 leu 856
-    tokens contra 1.692. max_tokens: o teto da resposta no lugar de gemini.max_tokens."""
+    tokens contra 1.692. max_tokens: o teto da resposta no lugar de gemini.max_tokens.
+    limite: segundos que a chamada pode levar. Passou disso, ou o Google disse que está sobrecarregado (429 do
+    minuto, 5xx), o modelo fica de lado DE_LADO segundos e quem chamou segue pela cadeia. Pedido do usuário em
+    2026-10-27: no tescos-60-billion a descrição, que leva uns 2 s, levou de 20 a 80 s (36 min somados), com o Google
+    sobrecarregado."""
     from google.genai import errors, types
 
     relogio = time.monotonic()
+    if limite:
+        limite = max(float(limite), 10.0)  # o Google recusa (400) prazo abaixo de 10 s
     cfg = projeto.config.get("gemini") or {}
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     partes = _partes(types, pedido, imagens)
@@ -134,6 +152,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             max_output_tokens=max_tokens or cfg.get("max_tokens", 16000),
             thinking_config=pensamento,
             **extras,
+            **({"http_options": types.HttpOptions(timeout=int(limite * 1000))} if limite else {}),
         )
     def mimo(motivo):
         # nunca esperar cota: o Gemini que não responde agora passa a vez para o MiMo na hora
@@ -152,6 +171,10 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     modelos = [m for m in [modelo] + list(cfg.get("modelos_reserva", ["gemini-3.1-flash-lite"])) if not _esgotado(m)]
     if not modelos:
         return mimo("a cota diária dos modelos Gemini acabou")
+    if limite:
+        modelos = [m for m in modelos if _de_lado.get(m, 0) <= time.time()]
+        if not modelos:
+            return mimo("o Gemini está de lado por estar lento ou sobrecarregado")
     ultimo_erro = ""
     tentativa = 0
     while tentativa < cfg.get("tentativas", 6):
@@ -177,9 +200,14 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
                 log(f"  usando o {modelos[0]}")
                 continue
             if codigo in (429, 500, 502, 503, 504):
+                if limite:
+                    _por_de_lado(modelo, log, f"sobrecarregado (erro {codigo})")
                 return mimo(f"o Gemini pediu para esperar (erro {codigo})")
             raise RuntimeError(f"O Gemini recusou o pedido na etapa {etapa}. {str(e)[:400]}")
         except Exception as e:  # queda de rede e afins
+            if limite and "timeout" in type(e).__name__.lower():
+                _por_de_lado(modelo, log, f"lento (passou de {limite:g} s)")
+                return mimo(f"o Gemini passou de {limite:g} s")
             tentativa += 1
             ultimo_erro = f"{type(e).__name__}: {str(e)[:200]}"
             if tentativa >= 2:

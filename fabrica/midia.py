@@ -134,10 +134,11 @@ Em vejo, devolva um item para CADA número que você colocou em escolhas, com in
 INSTRUCOES_ESCOLHA = """Você escolhe fotos e vídeos reais para as cenas de um vídeo do canal {canal}.
 Cada cena traz a narração, o que ela deveria mostrar e uma imagem com os candidatos numerados no canto.
 Olhe a imagem de cada cena e liste em escolhas os números que remetem ao que a narração fala, do melhor para o pior.
-O SUJEITO É OBRIGATÓRIO: animal, lugar, pessoa ou objeto citado pelo nome tem que ser aquele (outra espécie de cobra não serve para a naja). Só o que existe apenas como tipo genérico (o gráfico de um estudo, um documento, uma pessoa anônima) aceita uma imagem direta do mesmo tipo.
+O SUJEITO É OBRIGATÓRIO: animal, lugar, pessoa ou objeto citado pelo nome tem que ser aquele (outra espécie de cobra não serve para a naja). Só o que existe apenas como tipo genérico (um documento, uma pessoa anônima) aceita uma imagem direta do mesmo tipo.
 A AÇÃO E O CENÁRIO SÓ ORDENAM: ponha primeiro o candidato que mostra o sujeito fazendo o que a cena pede, mas um candidato com o sujeito certo em outra pose ou outro lugar (o crocodilo-do-nilo na margem, quando a cena pede ele na água) ENTRA NA LISTA, depois dos melhores. Uma foto boa do sujeito certo é sempre melhor do que nenhuma.
 Deixe a lista vazia SÓ quando nenhum candidato mostra o sujeito: a fábrica busca de novo em vez de usar outra coisa.
 Descarte candidatos com marca d'água, logotipos em destaque ou imagens que contradizem a narração.
+Descarte também: gráfico, tabela, infográfico ou calendário com números ou datas (mostram dados de outro lugar ou outro ano); texto visível em outro idioma que não o do vídeo; um ano diferente do que a fala diz; e, quando o vídeo fala de um país, sinais de outro país (preço em outra moeda como ₹, € ou ¥, placa ou embalagem em outro alfabeto, loja ou bandeira de outro país).
 Entre os que servem, dê preferência a imagens com impacto, luz forte e boa composição.
 Um vídeo mais curto que a cena ainda serve, porque ele é desacelerado.
 Responda todas as cenas recebidas, usando o número de cada cena."""
@@ -1452,7 +1453,11 @@ class Buscador:
         cache = self.projeto.caminho("midia", "buscas", f"{codigo}.json")
         if cache.exists():
             try:
-                return json.loads(cache.read_text(encoding="utf-8"))
+                guardados = json.loads(cache.read_text(encoding="utf-8"))
+                for c in guardados:  # busca da Coverr guardada antes da correção: duração em texto
+                    if isinstance(c, dict) and isinstance(c.get("duracao"), str):
+                        c["duracao"] = bancos._segundos(c["duracao"])
+                return guardados
             except (OSError, ValueError):
                 pass  # gravação pela metade de outra busca igual: busca de novo, sem derrubar a produção
         for tentativa in range(3):
@@ -1756,7 +1761,7 @@ def _folha_de_contato(projeto, cena, candidatos, http, sufixo=""):
 
 
 # suba quando mudar a regra da escolha (INSTRUCOES_ESCOLHA): as escolhas guardadas com a regra antiga são refeitas
-VERSAO_ESCOLHA = 2
+VERSAO_ESCOLHA = 3
 
 
 def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""):
@@ -1936,9 +1941,14 @@ def _miniatura(http, url):
     from PIL import Image
 
     try:
-        r = http.get(url)
-        r.raise_for_status()
-        return Image.open(io.BytesIO(r.content)).convert("RGB")
+        limite, conteudo = time.monotonic() + PRAZO_MINIATURA, bytearray()
+        with http.stream("GET", url) as r:
+            r.raise_for_status()
+            for parte in r.iter_bytes():
+                conteudo += parte
+                if time.monotonic() > limite:  # miniatura chegando aos pouquinhos: fica fora da folha
+                    return None
+        return Image.open(io.BytesIO(bytes(conteudo))).convert("RGB")
     except (httpx.HTTPError, OSError):
         return None
 
@@ -2322,14 +2332,35 @@ def _trazer_midia(projeto, cena, candidato, http, base):
     return registro
 
 
-def _baixar(http, url, destino):
+# prazo TOTAL de cada download, em segundos. O timeout do httpx (60 s) só vale para o servidor calado: um banco que
+# manda o arquivo aos pouquinhos, sem nunca passar 60 s sem mandar nada, segurava a fila inteira (2026-10-12: 17 min
+# parada entre as cenas 334 e 336, sem nenhuma chamada a modelo). Passou do prazo, o candidato cai como um banco fora
+# do ar (httpx.HTTPError) e quem chamou testa o próximo.
+PRAZO_FOTO = 60  # fotos baixadas: mediana 0,3 MB, maior 10 MB (8 s a 10 Mbps)
+PRAZO_VIDEO = 120  # vídeos baixados: mediana 14 MB, maior 77 MB (1 min a 10 Mbps)
+PRAZO_MINIATURA = 30
+
+
+class DownloadLento(httpx.TimeoutException):
+    """O download passou do prazo total: o banco está mandando o arquivo devagar demais."""
+
+
+def _baixar(http, url, destino, prazo=None):
+    prazo = prazo or (PRAZO_VIDEO if Path(destino).suffix.lower() == ".mp4" else PRAZO_FOTO)
+    limite = time.monotonic() + prazo
     temporario = destino.with_name(destino.name + ".baixando")
-    with http.stream("GET", url) as r:
-        r.raise_for_status()
-        with open(temporario, "wb") as f:
-            for parte in r.iter_bytes():
-                f.write(parte)
-    temporario.replace(destino)
+    try:
+        with http.stream("GET", url) as r:
+            r.raise_for_status()
+            with open(temporario, "wb") as f:
+                for parte in r.iter_bytes():
+                    f.write(parte)
+                    if time.monotonic() > limite:
+                        raise DownloadLento(f"o download passou de {prazo} s (o banco manda aos pouquinhos); "
+                                            "fica o próximo candidato")
+        temporario.replace(destino)
+    finally:
+        temporario.unlink(missing_ok=True)
 
 
 def _garantir_jpeg(arquivo):

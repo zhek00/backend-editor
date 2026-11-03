@@ -19,7 +19,7 @@ ritmo:
 
 midia_real:
   fontes_foto: [pixabay, pexels, wikimedia]
-  fontes_video: [pixabay, pexels]
+  fontes_video: [pixabay, pexels, coverr]
   aceitar_cc_by: true
   aceitar_cc_by_sa: false
   orientacao: >-

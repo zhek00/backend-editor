@@ -180,10 +180,8 @@ def ler(projeto) -> list:
 def _salvar(projeto, itens) -> None:
     arquivo = projeto.pasta / ARQUIVO
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    temporario = arquivo.with_suffix(".tmp")
-    temporario.write_text(json.dumps({"itens": sorted(itens, key=lambda i: i["c_ini"])}, ensure_ascii=False, indent=1),
-                          encoding="utf-8")
-    temporario.replace(arquivo)
+    from .util import gravar_atomico
+    gravar_atomico(arquivo, json.dumps({"itens": sorted(itens, key=lambda i: i["c_ini"])}, ensure_ascii=False, indent=1))
 
 
 def _atualizar_item(projeto, novo, trava=None) -> None:
