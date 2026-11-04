@@ -187,14 +187,17 @@ def _limpar(dados, caps, titulo_reserva):
 
 
 def descricao(textos, caps, creditos, aviso_voz=True) -> str:
+    from . import idioma
+
     partes = [textos.get("resumo") or ""]
+    lingua = idioma.lingua_do_texto(textos.get("resumo") or "")
     if caps:
-        partes.append("Capítulos\n" + "\n".join(f"{mmss(c['inicio'])} {n}"
+        partes.append(idioma.frase("capitulos", lingua) + "\n" + "\n".join(f"{mmss(c['inicio'])} {n}"
                                                 for c, n in zip(caps, textos["nomes_capitulos"])))
     if creditos:
         partes.append(creditos)
     if aviso_voz:
-        partes.append("A narração deste vídeo é feita com voz sintética.")
+        partes.append(idioma.frase("voz", lingua))
     if textos.get("hashtags"):
         partes.append(" ".join(textos["hashtags"]))
     texto = "\n\n".join(p.strip() for p in partes if p and p.strip())

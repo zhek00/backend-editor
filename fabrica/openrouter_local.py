@@ -355,7 +355,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
         faltam = [k for k in (esquema or {}).get("required", []) if not isinstance(resposta, dict) or k not in resposta]
         if faltam:
             raise RotaIndisponivel(f"o Gemini não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")
-        return _sem_outro_alfabeto(resposta)
+        return _sem_outro_alfabeto(resposta, projeto)
     if not rota.startswith("groq:"):
         return _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura,
                                cadeia=cadeia, raciocinio=raciocinio)
@@ -368,7 +368,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
         resposta = groq_local.perguntar(projeto, etapa, sistema, pedido, esquema, log=log, modelo=rota[5:],
                                         imagens=imagens, temperatura=temperatura, na_cadeia=True, raciocinio=tabela)
         faltam = [k for k in obrigatorias if not isinstance(resposta, dict) or k not in resposta]
-        quebrados = [] if faltam else _trechos_de_outro_alfabeto(resposta)
+        quebrados = [] if faltam else _trechos_de_outro_alfabeto(resposta, projeto)
         if not faltam and not quebrados:
             return resposta
         # as mesmas conferências da rota do OpenRouter: chaves que faltaram e pedaços de outro alfabeto
@@ -380,7 +380,7 @@ def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, te
     faltam = [k for k in obrigatorias if not isinstance(resposta, dict) or k not in resposta]
     if faltam:
         raise RuntimeError(f"o Groq ({rota[5:]}) não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")
-    return _sem_outro_alfabeto(resposta)
+    return _sem_outro_alfabeto(resposta, projeto)
 
 
 def _fora_do_ar(rota, minutos, motivo):
@@ -521,7 +521,7 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
                 f"\n\nATENÇÃO: a resposta anterior não trouxe as chaves {', '.join(faltam)}. Use exatamente os nomes "
                 "de chave do esquema.")
             continue
-        quebrados = _trechos_de_outro_alfabeto(resposta)
+        quebrados = _trechos_de_outro_alfabeto(resposta, projeto)
         if not traduzir:
             return resposta  # a tradução: o que vier de outro alfabeto é descartado em _traduzir_trechos
         if quebrados and not pediu_sem_quebra:
@@ -537,7 +537,7 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
             # sobrou outro alfabeto depois de pedir de novo: traduz os trechos em vez de só apagar, senão some a
             # informação ("分布于岩石和灌木之间" é "entre rochas e arbustos", e o Jev só lê o texto)
             resposta = _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota)
-        return _sem_outro_alfabeto(resposta)
+        return _sem_outro_alfabeto(resposta, projeto)
     raise RuntimeError(f"O OpenRouter não respondeu direito na etapa {etapa} ({ultimo_erro}).")
 
 
@@ -560,6 +560,12 @@ def regra_do_idioma(projeto) -> str:
         codigo = "pt"
     if codigo == "pt":
         return REGRA_DO_ALFABETO
+    if codigo in _ALFABETO_DA_LINGUA:
+        return (f"\n\nIDIOMA: este vídeo é em {idioma.nome(codigo)}. Todo texto que vai aparecer na tela ou para o "
+                f"público (overlay, texto na tela, títulos, rótulos, legendas, título e descrição do YouTube, tags, "
+                f"comentário fixado, shorts, thumbnail) vai em {idioma.nome(codigo)}, no alfabeto dessa língua, nunca em "
+                "português nem transliterado. O texto interno da fábrica (descrições, motivos, notas) segue em "
+                "português, e os termos de busca e os prompts de imagem em inglês. Não comente o seu raciocínio.")
     return (REGRA_DO_ALFABETO + f"\nEXCEÇÃO OBRIGATÓRIA: este vídeo é em {idioma.nome(codigo)}. Todo texto que vai "
             f"aparecer na tela ou para o público (overlay, texto na tela, títulos, rótulos, legendas, título e descrição "
             f"do YouTube, shorts, thumbnail) vai em {idioma.nome(codigo)}, nunca em português.")
@@ -570,8 +576,9 @@ def _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota):
     Comentário do modelo sobre ele mesmo ("não posso mostrar meu raciocínio") volta vazio. Se falhar, segue
     sem traduzir (o que sobrar é apagado depois)."""
     trechos, vistos = [], set()
+    proibido = _alfabeto_proibido(projeto)
     for texto in _textos(resposta):
-        for m in _OUTRO_ALFABETO.finditer(texto):
+        for m in proibido.finditer(texto):
             if m.group() not in vistos and len(trechos) < 40:
                 vistos.add(m.group())
                 trechos.append({"trecho": m.group(), "texto_em_volta": texto[max(0, m.start() - 80):m.end() + 80]})
@@ -622,6 +629,22 @@ def _traduzir_trechos(projeto, etapa, resposta, quebrados, log, rota):
 # português, e quando aparece é ruído do modelo no meio de uma palavra
 _OUTRO_ALFABETO = re.compile(r"[Ѐ-ӿ֐-׿؀-ۿऀ-ॿ฀-๿ᄀ-ᇿ"
                              r"぀-ヿ㐀-䶿一-鿿가-힯＀-￯]+")
+# ... a não ser no vídeo daquela língua: para o Japão, este filtro apagava ou traduzia para o português todo texto de
+# tela, descrição e título (roteiro-2, 2026-11-04: "Avaliação Elenco Pessoal Opinião" na tela e a descrição só com 、)
+_ALFABETO_DA_LINGUA = {
+    "ja": re.compile(r"[Ѐ-ӿ֐-׿؀-ۿऀ-ॿ฀-๿ᄀ-ᇿ가-힯]+"),
+    "ko": re.compile(r"[Ѐ-ӿ֐-׿؀-ۿऀ-ॿ฀-๿぀-ヿ＀-￯]+"),
+}
+
+
+def _alfabeto_proibido(projeto=None):
+    if projeto is None:
+        return _OUTRO_ALFABETO
+    from . import idioma
+    try:
+        return _ALFABETO_DA_LINGUA.get(idioma.lingua(projeto), _OUTRO_ALFABETO)
+    except Exception:  # noqa: BLE001
+        return _OUTRO_ALFABETO
 
 
 def _textos(valor):
@@ -635,16 +658,18 @@ def _textos(valor):
             yield from _textos(v)
 
 
-def _trechos_de_outro_alfabeto(resposta) -> list:
-    return [m.group() for texto in _textos(resposta) for m in _OUTRO_ALFABETO.finditer(texto)]
+def _trechos_de_outro_alfabeto(resposta, projeto=None) -> list:
+    proibido = _alfabeto_proibido(projeto)
+    return [m.group() for texto in _textos(resposta) for m in proibido.finditer(texto)]
 
 
-def _sem_outro_alfabeto(valor):
+def _sem_outro_alfabeto(valor, projeto=None):
     """Tira os pedaços de outro alfabeto que sobraram, sem mexer no resto da resposta."""
+    proibido = _alfabeto_proibido(projeto)
     if isinstance(valor, str):
-        return re.sub(r"[ \t]{2,}", " ", _OUTRO_ALFABETO.sub(" ", valor)).strip() if _OUTRO_ALFABETO.search(valor) else valor
+        return re.sub(r"[ \t]{2,}", " ", proibido.sub(" ", valor)).strip() if proibido.search(valor) else valor
     if isinstance(valor, dict):
-        return {k: _sem_outro_alfabeto(v) for k, v in valor.items()}
+        return {k: _sem_outro_alfabeto(v, projeto) for k, v in valor.items()}
     if isinstance(valor, list):
-        return [_sem_outro_alfabeto(v) for v in valor]
+        return [_sem_outro_alfabeto(v, projeto) for v in valor]
     return valor

@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+from . import idioma
 from . import texto as tx
 from .util import rodar
 
@@ -183,8 +184,14 @@ def escolher(projeto, log=print, forcar=False) -> list:
 
 # ------------------------------------------------------------------------------------------------ imagem
 
-def _fonte(px, peso=900):
+def _fonte(px, peso=900, texto=""):
     from PIL import ImageFont
+    especial = idioma.fonte_do_texto(texto)
+    if especial:
+        try:
+            return ImageFont.truetype(especial, px)
+        except OSError:
+            pass
     f = ImageFont.truetype(str(FONTES / "Inter.ttf"), px)
     try:
         f.set_variation_by_axes([32, peso])
@@ -197,14 +204,16 @@ def _titulo_png(titulo, destino) -> Path:
     """O título-gancho centrado, até 3 linhas, com o *destaque* em amarelo."""
     from PIL import Image, ImageDraw, ImageFilter
 
-    palavras = [(p.strip("*"), p.startswith("*") or p.endswith("*")) for p in re.findall(r"\*[^*]+\*|\S+", titulo)]
+    palavras = [(p.strip("*"), p.startswith("*") or p.endswith("*")) for p in re.findall(r"\*[^*]+\*|[^\s*]+", titulo)]
     # *duas palavras* viram duas palavras em destaque
     soltas = []
     for texto, forte in palavras:
-        soltas += [(w, forte) for w in texto.split()]
+        for w in texto.split():
+            # japonês não tem espaço para quebrar a linha: o pedaço de 9 letras cabe nos 960 px
+            soltas += [(w[i:i + 9], forte) for i in range(0, len(w), 9)] if idioma.fonte_do_texto(w) else [(w, forte)]
     px = 96
     while px > 54:
-        fonte = _fonte(px)
+        fonte = _fonte(px, texto=titulo)
         linhas, atual = [], []
         for w in soltas:
             teste = atual + [w]
@@ -338,7 +347,7 @@ def gravar(projeto, trecho, numero, log=print) -> dict:
     return {"id": nome, "arquivo": f"shorts/{nome}.mp4", "de": trecho["de"], "ate": trecho["ate"],
             "inicio": round(t0, 2), "duracao": round(dur, 2), "titulo": trecho["titulo"],
             "titulo_post": titulo_post if "#shorts" in titulo_post.lower() else f"{titulo_post} #shorts"[:100],
-            "descricao": f"Vídeo completo no canal: {kit.get('titulo') or projeto.nome}\n\n{hashtags}",
+            "descricao": f"{idioma.frase('completo', idioma.lingua(projeto))}{kit.get('titulo') or projeto.nome}\n\n{hashtags}",
             "fala": " ".join(todas[k]["texto"] for k in range(trecho["de"], trecho["ate"] + 1))}
 
 

@@ -21,6 +21,8 @@ import re
 import shutil
 from pathlib import Path
 
+from . import idioma
+
 LARGURA, ALTURA = 1280, 720
 FONTES = Path(__file__).parent / "recursos" / "fontes"
 AMARELO, BRANCO, PRETO = (255, 212, 0), (255, 255, 255), (12, 12, 14)
@@ -28,8 +30,14 @@ LAYOUTS = ("foto_texto", "painel", "impacto")
 _IMAGENS = (".jpg", ".jpeg", ".png", ".webp")
 
 
-def _fonte(px, peso=900):
+def _fonte(px, peso=900, texto=""):
     from PIL import ImageFont
+    especial = idioma.fonte_do_texto(texto)
+    if especial:
+        try:
+            return ImageFont.truetype(especial, px)
+        except OSError:
+            pass
     f = ImageFont.truetype(str(FONTES / "Inter.ttf"), px)
     try:
         f.set_variation_by_axes([32, peso])
@@ -177,7 +185,7 @@ def _medir(linha, fonte):
 
 def _tamanho(linha, largura, maximo, minimo=44):
     px = maximo
-    while px > minimo and _medir(linha, _fonte(px))[0] > largura:
+    while px > minimo and _medir(linha, _fonte(px, texto=linha))[0] > largura:
         px -= 4
     return px
 
@@ -187,7 +195,7 @@ def _escrever(img, linha, x, y, px, centro=False, tarja=False, cor=BRANCO):
     Duas passadas: a sombra desfocada embaixo de tudo, depois as letras."""
     from PIL import Image, ImageDraw, ImageFilter
 
-    fonte = _fonte(px)
+    fonte = _fonte(px, texto=linha)
     largura, _ = _medir(linha, fonte)
     if centro:
         x = (LARGURA - largura) // 2

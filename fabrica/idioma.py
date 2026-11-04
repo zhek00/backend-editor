@@ -14,8 +14,11 @@ animações, o motion, o kit de publicação, os shorts) não diziam a língua. 
 import re
 import unicodedata
 
-NOMES = {"pt": "português do Brasil", "en": "inglês (English)", "es": "espanhol (español)"}
-LOCALES = {"pt": "pt-BR", "en": "en-US", "es": "es-ES"}
+NOMES = {"pt": "português do Brasil", "en": "inglês (English)", "es": "espanhol (español)",
+         "ja": "japonês (日本語)", "ko": "coreano (한국어)"}
+LOCALES = {"pt": "pt-BR", "en": "en-US", "es": "es-ES", "ja": "ja-JP", "ko": "ko-KR"}
+KANA = re.compile("[぀-ヿ]")
+HANGUL = re.compile("[ᄀ-ᇿ㄰-㆏가-힯]")
 
 # palavras curtas e comuns que só uma das línguas tem (sem acento, depois de normalizar)
 SO_DE = {
@@ -36,13 +39,41 @@ JEITO_DE = {
 }
 
 
+# os textos fixos que vão para o público, nas línguas que não leem português nem de longe
+FRASES = {
+    "pt": {"capitulos": "Capítulos", "voz": "A narração deste vídeo é feita com voz sintética.",
+           "completo": "Vídeo completo no canal: "},
+    "ja": {"capitulos": "チャプター", "voz": "この動画のナレーションは合成音声です。", "completo": "本編はチャンネルで公開中："},
+    "ko": {"capitulos": "챕터", "voz": "이 영상의 내레이션은 합성 음성입니다.", "completo": "전체 영상은 채널에서: "},
+}
+
+
+def frase(chave, codigo) -> str:
+    return FRASES.get(codigo, FRASES["pt"])[chave]
+
+
+def fonte_do_texto(texto) -> str:
+    """A fonte do Windows para texto que a Inter não tem (kana, kanji, hangul): sem ela saem quadrados. "" = a de sempre."""
+    if re.search("[\u3040-\u30ff\u3400-\u9fff]", str(texto or "")):
+        return "C:/Windows/Fonts/YuGothB.ttc"
+    if HANGUL.search(str(texto or "")):
+        return "C:/Windows/Fonts/malgunbd.ttf"
+    return ""
+
+
 def normal(texto) -> str:
     texto = unicodedata.normalize("NFD", str(texto or "").lower())
     return "".join(ch for ch in texto if unicodedata.category(ch) != "Mn")
 
 
 def lingua_do_texto(texto):
-    """"pt", "en", "es" ou None, pelas palavras que só cada uma tem (precisa de pelo menos duas)."""
+    """"pt", "en", "es", "ja", "ko" ou None. Japonês e coreano pelo alfabeto: sem isso o roteiro deles caía no padrão
+    (português), e a regra da tela mandava escrever em português num vídeo para o Japão (2026-11-04). As outras pelas
+    palavras que só cada uma tem (precisa de pelo menos duas)."""
+    letras = sum(1 for c in str(texto or "") if c.isalpha())
+    for codigo, alfabeto in (("ja", KANA), ("ko", HANGUL)):
+        if letras and len(alfabeto.findall(str(texto))) >= letras * 0.3:
+            return codigo
     palavras = re.findall(r"[a-z]+", normal(texto))
     contagem = {l: sum(p in s for p in palavras) for l, s in SO_DE.items()}
     melhor = max(contagem, key=contagem.get)
