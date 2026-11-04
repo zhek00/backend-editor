@@ -11,9 +11,29 @@ class Trecho:
     texto: str
 
 
-FRASE = re.compile(r"\S.*?(?:[.!?…]+[\"')\]”»’]*(?=\s|$)|$)")
+# japonês não separa frases nem palavras com espaço: 。！？ fecham a frase mesmo com texto colado, menos na citação que
+# segue com と ou って ("「すごい！」と彼は言った。" é uma frase só)
+_FIM_CJK = "。！？｡"
+_FECHA_CJK = "」』）】〉》〕”’\"'"
+FRASE = re.compile(
+    r"\S.*?(?:[.!?…]+[\"')\]”»’]*(?=\s|$)"
+    rf"|[{_FIM_CJK}]+[{_FECHA_CJK}]*(?![{_FIM_CJK}{_FECHA_CJK}]|と|って)"
+    r"|$)"
+)
 PALAVRA = re.compile(r"\S+")
-PAUSA = re.compile(r"[,;:—–]$")
+PAUSA = re.compile(r"[,;:—–、，；：]$")
+_HIRAGANA = r"\u3041-\u309f"
+_LETRA_CJK = r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f"  # kana e kanji
+CJK = re.compile(f"[{_LETRA_CJK}]")
+_DEPOIS_CJK = f"{_FIM_CJK}{_FECHA_CJK}、，；：…‥"
+# sem espaço, a palavra japonesa vira kanji/katakana mais o hiragana que vem colado: 東京の / 企業は、 / 新しい
+_PALAVRA_CJK = re.compile(
+    rf"(?:[^\s{_HIRAGANA}{_DEPOIS_CJK}]{{1,12}}[{_HIRAGANA}]{{0,12}}|[{_HIRAGANA}]{{1,12}})[{_DEPOIS_CJK}]*"
+    rf"|[{_DEPOIS_CJK}]+"
+)
+_ESPACO_ENTRE_CJK = re.compile(rf"(?<=[{_LETRA_CJK}{_DEPOIS_CJK}]) (?=[{_LETRA_CJK}])")
+# 14 palavras japonesas dariam ~65 letras, trecho longo demais na fala; 10 delas dão ~45 (estimativa, sem medir a voz)
+_LIMITE_CJK = 10 / 14
 MARCADOR = re.compile(r"\[(SIMBOLO|TITULO|AVATAR|/AVATAR|INSERTO[ \t]+[A-Za-z0-9_-]+)\]", re.IGNORECASE)
 
 
@@ -74,9 +94,24 @@ def frases(texto: str) -> list[Trecho]:
     return trechos
 
 
+def achar_palavras(texto: str) -> list[re.Match]:
+    """As palavras do texto: o que está entre espaços e, no meio de japonês, os pedaços de _PALAVRA_CJK."""
+    achadas = []
+    for m in PALAVRA.finditer(texto):
+        achadas += _PALAVRA_CJK.finditer(texto, m.start(), m.end()) if CJK.search(m.group()) else [m]
+    return achadas
+
+
+def juntar_palavras(palavras: list[str]) -> str:
+    """Junta palavras com espaço, menos entre as japonesas."""
+    return _ESPACO_ENTRE_CJK.sub("", " ".join(palavras))
+
+
 def _dividir_longa(frase: Trecho, max_palavras: int) -> list[Trecho]:
-    palavras = list(PALAVRA.finditer(frase.texto))
+    palavras = achar_palavras(frase.texto)
     total = len(palavras)
+    if len(CJK.findall(frase.texto)) * 2 > len(frase.texto):
+        max_palavras = max(1, round(max_palavras * _LIMITE_CJK))
     if total <= max_palavras:
         return [frase]
     # partes de tamanho parecido, cortando na vírgula ou pausa mais próxima do ponto ideal

@@ -238,7 +238,7 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
     unidades = _tempos_das_frases(roteiro, tempos_ini, tempos_fim, total)
     # o momento de cada palavra permite fazer textos e itens de lista surgirem quando são falados
     palavras = []
-    for m in re.finditer(r"\S+", roteiro):
+    for m in tx.achar_palavras(roteiro):
         ini = next((t for t in tempos_ini[m.start():m.end()] if t is not None), None)
         palavras.append({"c": m.start(), "texto": m.group(), "ini": round(ini, 3) if ini is not None else None})
     # título e entrada do avatar começam junto com a fala seguinte, o resto fecha com a fala anterior
@@ -726,12 +726,12 @@ def _palavras_estimadas(texto, duracao, wav):
     fim_fala = next((a for a, b in pausas if b >= duracao - 0.02 and a > inicio_fala), duracao)
     internas = [(a, b) for a, b in pausas if inicio_fala + 0.1 < a and b < fim_fala - 0.1]
 
-    tokens = [m.group() for m in re.finditer(r"\S+", texto)]
+    tokens = [m.group() for m in tx.achar_palavras(texto)]
     pesos = [len(re.sub(r"[^\w]", "", t)) + 1 for t in tokens]
     acumulado = [0]
     for peso in pesos:
         acumulado.append(acumulado[-1] + peso)
-    forca = [2 if re.search(r"[.!?…]$", t) else 1 if re.search(r"[,;:—–-]$", t) else 0 for t in tokens]
+    forca = [2 if re.search(r"[.!?…。！？][」』）]*$", t) else 1 if re.search(r"[,;:—–\-、，；：]$", t) else 0 for t in tokens]
 
     # âncoras: (índice do token depois do qual o trecho fecha, fim da fala do trecho, começo do trecho seguinte)
     ancoras, t_cur, k_cur, usadas = [], inicio_fala, 0, set()

@@ -431,7 +431,7 @@ def _extrair_texto_palavras(palavras, t_ini, t_fim, fallback=""):
     if not palavras:
         return fallback
     pts = [p['texto'] for p in palavras if p.get('ini') is not None and (t_ini - 0.15) <= p['ini'] < (t_fim - 0.05)]
-    res = ' '.join(pts).strip()
+    res = tx.juntar_palavras(pts).strip()
     return res if len(res) > 3 else fallback
 
 
@@ -1019,6 +1019,8 @@ def _palavras_da_cena(alinhamento, frases):
 
 def _simplificar(palavra):
     sem_pontuacao = re.sub(r"[^\w]", "", palavra)
+    if tx.CJK.search(sem_pontuacao):
+        return sem_pontuacao.casefold()  # japonês viraria nada no ascii
     return unicodedata.normalize("NFKD", sem_pontuacao).encode("ascii", "ignore").decode().casefold()
 
 
@@ -1029,7 +1031,7 @@ def _momento_falado(texto, palavras_cena, ini_cena, reserva):
     ponto do texto e fica com o que é falado mais cedo. Antes só procurava o começo do texto: "A RIQUEZA EM SÉCULOS DE
     TRADIÇÃO" não achava "a riqueza" na fala e entrava no começo da cena, embora "séculos de tradição" fosse dito no
     fim dela (9 de 23 textos do ouro-da-serra-gaucha entravam assim)."""
-    alvo = [_simplificar(p) for p in texto.split() if _simplificar(p)][:8]
+    alvo = [_simplificar(m.group()) for m in tx.achar_palavras(texto) if _simplificar(m.group())][:8]
     faladas = [_simplificar(p["texto"]) for p in palavras_cena]
     achados = []
     for tamanho in range(min(3, len(alvo)), 0, -1):
@@ -1316,7 +1318,7 @@ def _inicios_pela_fala(cenas, palavras) -> dict:
     sequencia = [normal(p.get("texto", "")) for p in palavras]
     inicios, cursor = {}, 0
     for c in cenas:
-        alvo = [w for w in (normal(x) for x in (c.get("texto") or "").split()) if w][:3]
+        alvo = [w for w in (normal(m.group()) for m in tx.achar_palavras(c.get("texto") or "")) if w][:3]
         if not alvo:
             continue
         for j in range(cursor, min(len(sequencia) - len(alvo) + 1, cursor + 400)):
