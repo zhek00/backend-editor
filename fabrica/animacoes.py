@@ -31,6 +31,7 @@ import threading
 import unicodedata
 
 from . import idioma
+from . import texto as tx
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -537,7 +538,7 @@ def duracao_do_conteudo(projeto, dados, limite=None) -> float:
     maxima = float(cfg.get("duracao_maxima", DURACAO_MAXIMA))
     elementos = _textos_na_tela(dados)
     if elementos:
-        palavras = sum(len(texto.split()) or 1 for texto, _ in elementos)
+        palavras = sum(len(tx.achar_palavras(texto)) or 1 for texto, _ in elementos)
         primeiro = min(t for _, t in elementos)
         ultimo = max(t for _, t in elementos)
         precisa = max(ultimo + 1.5, primeiro + 1.2 + SEGUNDOS_POR_PALAVRA * palavras) + 0.35  # 0,35 s da saída

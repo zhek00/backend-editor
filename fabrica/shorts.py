@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+from . import texto as tx
 from .util import rodar
 
 LARGURA, ALTURA = 1080, 1920
@@ -49,8 +50,8 @@ def frases(projeto) -> list:
         if atual is None:
             atual = {"ini": float(u["ini"]), "fim": float(u["fim"]), "texto": u["texto"].strip(), "c": u["c_ini"]}
         else:
-            atual["fim"], atual["texto"] = float(u["fim"]), f"{atual['texto']} {u['texto'].strip()}"
-        if re.search(r"[.!?…]['\"”)]*$", u["texto"].strip()):
+            atual["fim"], atual["texto"] = float(u["fim"]), tx.juntar_palavras([atual["texto"], u["texto"].strip()])
+        if tx.fecha_frase(u["texto"]):
             saida.append(atual)
             atual = None
     if atual:

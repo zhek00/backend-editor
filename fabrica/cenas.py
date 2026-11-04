@@ -782,7 +782,7 @@ def planejar(projeto, log=print) -> list[dict]:
             "_ini_calculo": ini,
             "fim": None,
             "frases": [g["primeira_frase"], g["ultima_frase"]],
-            "texto": " ".join(f["texto"] for f in frases),
+            "texto": tx.juntar_palavras([f["texto"] for f in frases]),
             "tipo": tipo,
             "busca": busca,
             "personagem": personagem,
@@ -1031,6 +1031,8 @@ def _momento_falado(texto, palavras_cena, ini_cena, reserva):
     ponto do texto e fica com o que é falado mais cedo. Antes só procurava o começo do texto: "A RIQUEZA EM SÉCULOS DE
     TRADIÇÃO" não achava "a riqueza" na fala e entrava no começo da cena, embora "séculos de tradição" fosse dito no
     fim dela (9 de 23 textos do ouro-da-serra-gaucha entravam assim)."""
+    if tx.predomina_cjk(texto):
+        return _momento_falado_cjk(texto, palavras_cena, ini_cena, reserva)
     alvo = [_simplificar(m.group()) for m in tx.achar_palavras(texto) if _simplificar(m.group())][:8]
     faladas = [_simplificar(p["texto"]) for p in palavras_cena]
     achados = []
@@ -1045,6 +1047,22 @@ def _momento_falado(texto, palavras_cena, ini_cena, reserva):
                     break
     if achados:
         return round(max(0.0, min(achados) - ini_cena), 2)
+    return reserva
+
+
+def _momento_falado_cjk(texto, palavras_cena, ini_cena, reserva):
+    """O mesmo em japonês, por letras: 技術 na tela está dentro de 技術を na fala, e a palavra inteira não bateria."""
+    alvo = _simplificar(texto)
+    falado, donos = "", []
+    for p in palavras_cena:
+        pedaco = _simplificar(p["texto"])
+        falado += pedaco
+        donos += [p] * len(pedaco)
+    for tamanho in sorted({t for t in (len(alvo), 8, 6, 4, 3) if 2 <= t <= len(alvo)}, reverse=True):
+        lugares = [falado.find(alvo[i:i + tamanho]) for i in range(len(alvo) - tamanho + 1)]
+        achados = [donos[q]["ini"] for q in lugares if q >= 0 and donos[q]["ini"] is not None]
+        if achados:
+            return round(max(0.0, min(achados) - ini_cena), 2)
     return reserva
 
 
@@ -1591,7 +1609,7 @@ def _pre_cortar(unidades, alvo, minimo, maximo):
         duracao = u["fim"] - unidades[inicio]["ini"]
         ultima = i == len(unidades) - 1
         estoura = not ultima and unidades[i + 1]["fim"] - unidades[inicio]["ini"] > maximo
-        fim_de_frase = u["texto"].rstrip().endswith((".", "?", "!", "…"))
+        fim_de_frase = u["texto"].rstrip().endswith(tx.FINAIS)
         if i in paralelas:
             # "Cobras estão nessa lista. Aranhas estão nessa lista.": cada frase paralela é uma cena, com a imagem do que ela cita
             grupos.append({"primeira_frase": inicio, "ultima_frase": i, "paralela": True})
@@ -1605,7 +1623,7 @@ def _pre_cortar(unidades, alvo, minimo, maximo):
 def _abre_assunto(unidades, inicio, i):
     """A frase i começa uma frase nova que anuncia o assunto da seguinte e não o do corte que está aberto
     (inicio a i-1): cita uma palavra de 5 letras ou mais que a frase seguinte repete e que o corte aberto não tem."""
-    if i + 1 >= len(unidades) or not unidades[i - 1]["texto"].rstrip().endswith((".", "?", "!", "…", ":")):
+    if i + 1 >= len(unidades) or not unidades[i - 1]["texto"].rstrip().endswith(tx.FINAIS + (":",)):
         return False
 
     def nomes(texto):
@@ -2017,7 +2035,7 @@ def _agrupar_por_tempo(unidades, alvo, perfil):
                 "prompt": " ".join(x["texto"] for x in frases),
                 "texto_tela": None,
                 "efeito": ({"descricao": sons[(len(grupos) // 3) % len(sons)], "duracao": 3,
-                            "palavra": frases[0]["texto"].split()[0]} if len(grupos) % 3 == 2 else None),
+                            "palavra": tx.achar_palavras(frases[0]["texto"])[0].group()} if len(grupos) % 3 == 2 else None),
             })
             inicio = i + 1
     return grupos

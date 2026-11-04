@@ -327,7 +327,7 @@ def narrar(texto: str, voz: dict, saida: Path, preparada: dict, log=print) -> No
     """Grava o texto em `saida` (wav) no motor local. Velocidade diferente de 1 que o motor não aplica vai pelo
     atempo do FFmpeg, que não muda o tom."""
     velocidade = round(min(max(float(voz.get("velocidade") or 1.0), 0.7), 1.3), 2)
-    corpo = {"motor": preparada["motor"], "texto": texto, "idioma": (voz.get("idioma") or "pt")[:2],
+    corpo = {"motor": preparada["motor"], "texto": texto, "idioma": (voz.get("idioma") or voz.get("idioma_da_voz") or "pt")[:2],
              "voz": {**preparada["voz"], **({"instrucao": voz["instrucao"]} if voz.get("instrucao") else {})},
              "velocidade": velocidade, "saida": str(saida)}
     ultimo = ""

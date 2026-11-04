@@ -42,6 +42,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import animacoes
+from . import texto as tx
 from .util import rodar
 
 FONTE = "animation_ai"
@@ -227,7 +228,7 @@ def e_animada(cena) -> bool:
 # ------------------------------------------------------------------------------------------------ trechos
 
 def _fecha_frase(texto) -> bool:
-    return bool(re.search(r"[.!?…]['\"”)]*\s*$", (texto or "").strip()))
+    return tx.fecha_frase(texto)
 
 
 def _elegivel(c) -> bool:

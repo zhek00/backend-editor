@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import animacoes, motion_estilo, motion_modelos, movimento
+from . import texto as tx
 from .util import rodar
 
 FONTE = "motion_ia"
@@ -1936,7 +1937,7 @@ def frase_da_cena(projeto, cena, todas) -> list:
     cauda ficava de fora do clipe. Cena com personagem, imagem ou prompt da pessoa encerra o trecho."""
     maximo = float(config(projeto).get("duracao_maxima", 8))
     trecho = [cena]
-    while not re.search(r"[.!?…]['\"”)]*\s*$", (trecho[-1].get("texto") or "").strip()):
+    while not tx.fecha_frase(trecho[-1].get("texto")):
         seguinte = todas.get(trecho[-1]["n"] + 1)
         if (not seguinte or seguinte.get("personagem") or seguinte.get("imagem_da_pessoa") or seguinte.get("prompt_manual")
                 or seguinte.get("bloco") != cena.get("bloco") or float(seguinte["fim"]) - float(cena["ini"]) > maximo):

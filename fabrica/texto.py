@@ -1,6 +1,7 @@
 """Divisão do roteiro em frases curtas (tempo das cenas) e em blocos (narração)."""
 import math
 import re
+import textwrap
 from dataclasses import dataclass
 
 
@@ -34,6 +35,9 @@ _PALAVRA_CJK = re.compile(
 _ESPACO_ENTRE_CJK = re.compile(rf"(?<=[{_LETRA_CJK}{_DEPOIS_CJK}]) (?=[{_LETRA_CJK}])")
 # 14 palavras japonesas dariam ~65 letras, trecho longo demais na fala; 10 delas dão ~45 (estimativa, sem medir a voz)
 _LIMITE_CJK = 10 / 14
+# como uma frase pode terminar; 」 e 』 fecham a citação que fechou a frase
+FINAIS = (".", "?", "!", "…", "。", "！", "？", "｡", "」", "』")
+_FECHA_FRASE = re.compile(rf"[.!?…{_FIM_CJK}]['\"”)」』）】〉》]*\s*$")
 MARCADOR = re.compile(r"\[(SIMBOLO|TITULO|AVATAR|/AVATAR|INSERTO[ \t]+[A-Za-z0-9_-]+)\]", re.IGNORECASE)
 
 
@@ -107,10 +111,35 @@ def juntar_palavras(palavras: list[str]) -> str:
     return _ESPACO_ENTRE_CJK.sub("", " ".join(palavras))
 
 
+def predomina_cjk(texto: str) -> bool:
+    return len(CJK.findall(texto)) * 2 > len(texto)
+
+
+def fecha_frase(texto: str) -> bool:
+    return bool(_FECHA_FRASE.search((texto or "").strip()))
+
+
+def quebrar_linhas(texto: str, largura: int) -> list[str]:
+    """Linhas de legenda de até `largura` letras. A letra japonesa ocupa o lugar de duas, e a linha corta entre palavras."""
+    if not predomina_cjk(texto):
+        return textwrap.wrap(texto, largura)
+    limite = max(1, largura // 2)
+    linhas, ini, fim = [], None, None
+    for m in achar_palavras(texto):
+        if ini is not None and m.end() - ini > limite:
+            linhas.append(texto[ini:fim])
+            ini = None
+        ini = m.start() if ini is None else ini
+        fim = m.end()
+    if ini is not None:
+        linhas.append(texto[ini:fim])
+    return [linha[i:i + limite] for linha in linhas for i in range(0, len(linha), limite)]
+
+
 def _dividir_longa(frase: Trecho, max_palavras: int) -> list[Trecho]:
     palavras = achar_palavras(frase.texto)
     total = len(palavras)
-    if len(CJK.findall(frase.texto)) * 2 > len(frase.texto):
+    if predomina_cjk(frase.texto):
         max_palavras = max(1, round(max_palavras * _LIMITE_CJK))
     if total <= max_palavras:
         return [frase]

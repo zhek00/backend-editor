@@ -48,8 +48,6 @@ def legendas_fixo(perfil, nome, largura=38, linhas=1):
     O texto vem do .txt salvo ao lado do clipe. Como não existe o tempo de cada letra,
     o texto é espalhado pelos trechos em que há fala, na proporção do tamanho de cada pedaço.
     """
-    import textwrap
-
     from . import texto as tx
 
     video, arquivo_texto = caminho_fixo(perfil, nome), caminho_fixo(perfil, nome, ".txt")
@@ -57,7 +55,7 @@ def legendas_fixo(perfil, nome, largura=38, linhas=1):
         return []
     pedacos = []
     for unidade in tx.unidades(tx.normalizar(arquivo_texto.read_text(encoding="utf-8"))):
-        quebradas = textwrap.wrap(unidade.texto, largura) or [unidade.texto]
+        quebradas = tx.quebrar_linhas(unidade.texto, largura) or [unidade.texto]
         pedacos += ["\n".join(quebradas[k:k + linhas]) for k in range(0, len(quebradas), linhas)]
     falas = _trechos_de_fala(video)
     total = sum(b - a for a, b in falas)

@@ -349,7 +349,7 @@ def _comparavel(texto):
     """Texto sem acento, minúsculo e só com letras e números, com a posição de cada letra no original."""
     letras, posicoes, espaco = [], [], True
     for i, ch in enumerate(texto):
-        base = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode().lower()
+        base = ch if tx.CJK.match(ch) else unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode().lower()
         if base and base.isalnum():
             letras.append(base[0])
             posicoes.append(i)

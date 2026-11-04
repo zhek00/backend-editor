@@ -30,6 +30,7 @@ from pathlib import Path
 
 import httpx
 
+from . import texto as tx
 from .config import RAIZ
 from .util import rodar
 
@@ -39,6 +40,12 @@ GLOSSARIO = RAIZ / "pronuncia.json"
 SEMELHANCA_MINIMA = 0.6
 COMEU_MINIMO = 3
 REPETIU_MINIMO = 4
+LETRAS_POR_PALAVRA_CJK = 4  # japonês se compara letra a letra: 3 palavras comidas são umas 12 letras
+
+
+def idioma_da_voz(voz) -> str:
+    """Os perfis guardam a língua em idioma_da_voz. Antes só se lia "idioma", e todo canal era ouvido como português."""
+    return voz.get("idioma") or voz.get("idioma_da_voz") or "pt"
 
 
 def config(projeto) -> dict:
@@ -137,7 +144,7 @@ def transcrever(audio: Path, idioma="pt", modelo=MODELO, log=print):
 def _normal(texto: str) -> str:
     texto = unicodedata.normalize("NFD", texto.lower())
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
-    return " ".join(re.findall(r"[a-z0-9]+", texto))
+    return " ".join(re.findall(r"[a-z0-9]+|" + tx.CJK.pattern, texto))
 
 
 def _palavras(texto):
@@ -153,6 +160,7 @@ def problemas(texto: str, ouvido: str, termos_texto=(), termos=None) -> dict:
     alvo, escuta = _palavras(texto), _palavras(ouvido)
     casador = difflib.SequenceMatcher(None, alvo, escuta, autojunk=False)
     semelhanca = casador.ratio() if alvo else 1.0
+    escala = LETRAS_POR_PALAVRA_CJK if tx.predomina_cjk(texto) else 1
     achados = []
     for op, i1, i2, j1, j2 in casador.get_opcodes():
         if op == "equal":
@@ -161,15 +169,15 @@ def problemas(texto: str, ouvido: str, termos_texto=(), termos=None) -> dict:
         if _tem_numero(roteiro) or _tem_numero(ouvidas):
             continue  # "1875" escrito e "mil oitocentos e setenta e cinco" falado
         faltaram = len(roteiro) - len(ouvidas)
-        if faltaram >= COMEU_MINIMO and len(ouvidas) <= len(roteiro) / 2:
-            achados.append({"tipo": "comeu", "trecho": " ".join(roteiro[:14]),
+        if faltaram >= COMEU_MINIMO * escala and len(ouvidas) <= len(roteiro) / 2:
+            achados.append({"tipo": "comeu", "trecho": tx.juntar_palavras(roteiro[:14]),
                             "onde": "no fim" if i2 >= len(alvo) else "no meio", "palavras": faltaram})
         sobraram = len(ouvidas) - len(roteiro)
-        if sobraram >= REPETIU_MINIMO:
+        if sobraram >= REPETIU_MINIMO * escala:
             perto = set(alvo[max(0, i1 - 40):i2 + 40])
             do_roteiro = [p for p in ouvidas if p in perto]
             if len(do_roteiro) >= 0.75 * len(ouvidas):
-                achados.append({"tipo": "repetiu", "trecho": " ".join(ouvidas[:14]), "palavras": sobraram})
+                achados.append({"tipo": "repetiu", "trecho": tx.juntar_palavras(ouvidas[:14]), "palavras": sobraram})
     ouvido_normal = _normal(ouvido)
     for termo in termos_texto:
         if not termos or termo not in termos:

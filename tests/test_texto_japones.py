@@ -1,7 +1,10 @@
 """Roteiro em japonês: sem espaços entre as palavras e com 。！？ no lugar de ponto seguido de espaço."""
+import textwrap
+from types import SimpleNamespace
+
 import pytest
 
-from fabrica import cenas, narracao
+from fabrica import cenas, conferir_voz, genaipro, motion_ia, narracao, roteirista
 from fabrica import texto as tx
 
 ROTEIRO = (
@@ -156,3 +159,100 @@ def test_texto_da_fatia_junta_o_japones_sem_espaco():
     assert cenas._extrair_texto_palavras(palavras, 0.0, 5.0) == "新しい技術を"
     palavras = [{"texto": "nova", "ini": 0.0}, {"texto": "técnica", "ini": 1.0}]
     assert cenas._extrair_texto_palavras(palavras, 0.0, 5.0) == "nova técnica"
+
+
+# ---------------------------------------------------------------- o resto do caminho do vídeo
+
+def test_linha_de_legenda_japonesa_conta_letra_larga():
+    linhas = tx.quebrar_linhas(LONGA, 42)
+    assert len(linhas) >= 2
+    assert all(len(linha) <= 21 for linha in linhas)
+    assert "".join(linhas) == LONGA
+
+
+def test_linha_de_legenda_em_portugues_nao_muda():
+    frase = "Uma frase bem comprida que passa do limite da linha de legenda e continua até o fim dela."
+    assert tx.quebrar_linhas(frase, 42) == textwrap.wrap(frase, 42)
+
+
+def test_arquivo_de_legendas_em_japones(tmp_path):
+    unidades = narracao._tempos_das_frases(LONGA, [float(i) for i in range(len(LONGA))],
+                                           [float(i + 1) for i in range(len(LONGA))], float(len(LONGA)))
+    destino = tmp_path / "legendas.srt"
+    narracao._legendas(unidades, destino, [float(i) for i in range(len(LONGA))],
+                       [float(i + 1) for i in range(len(LONGA))], largura=38, linhas=1)
+    falas = [b.split("\n")[2] for b in destino.read_text(encoding="utf-8").strip().split("\n\n")]
+    assert all(len(f) <= 19 for f in falas)
+    assert "".join(falas) == LONGA
+
+
+def test_conferencia_entende_japones():
+    bloco = ROTEIRO.replace("\n\n", "")
+    assert conferir_voz.problemas(bloco, bloco) == {"semelhanca": 1.0, "problemas": []}
+
+
+def test_conferencia_acha_trecho_comido_em_japones():
+    bloco = "".join(f"これは{n}番目の話です。" for n in "一二三四五六七八")
+    ouvido = bloco[:30] + bloco[-10:]
+    assert any(p["tipo"] == "comeu" for p in conferir_voz.problemas(bloco, ouvido)["problemas"])
+
+
+def test_conferencia_tolera_poucas_letras_diferentes_em_japones():
+    bloco = "日本の製造業は大きな転換点を迎えています。トヨタは新しい電池の開発に成功しました。"
+    ouvido = bloco.replace("転換点", "てんかんてん")
+    assert conferir_voz.problemas(bloco, ouvido)["problemas"] == []
+
+
+def test_conferencia_acusa_fala_em_outra_lingua():
+    relatorio = conferir_voz.problemas(ROTEIRO, "isso aqui saiu em outra língua completamente diferente")
+    assert [p["tipo"] for p in relatorio["problemas"]] == ["diferente"]
+
+
+@pytest.mark.parametrize("voz, esperado", [({"idioma_da_voz": "ja"}, "ja"), ({"idioma": "es"}, "es"), ({}, "pt")])
+def test_idioma_da_voz_vem_do_perfil(voz, esperado):
+    assert conferir_voz.idioma_da_voz(voz) == esperado
+
+
+@pytest.mark.parametrize("texto, fecha", [("終わりです。", True), ("本当ですか？", True), ("「終わりです。」", True),
+                                          ("続きますが、", False), ("Acabou.", True), ('Ele disse "acabou."', True),
+                                          ("Dr. Silva e", False)])
+def test_fecha_frase(texto, fecha):
+    assert tx.fecha_frase(texto) is fecha
+
+
+def test_clipe_para_no_fim_da_frase_japonesa():
+    cena = {"n": 1, "texto": "新しい技術です。", "bloco": 1, "ini": 0.0, "fim": 2.0}
+    seguinte = {"n": 2, "texto": "次の話です。", "bloco": 1, "ini": 2.0, "fim": 4.0}
+    assert motion_ia.frase_da_cena(SimpleNamespace(config={}, perfil={}), cena, {1: cena, 2: seguinte}) == [cena]
+
+
+def test_cena_fecha_no_fim_da_frase_japonesa():
+    assert "終わりです。".endswith(tx.FINAIS) and "「終わり」".endswith(tx.FINAIS)
+    assert not "続きますが、".endswith(tx.FINAIS)
+
+
+def test_mapa_do_roteiro_acha_a_frase_japonesa():
+    comparavel, posicoes = roteirista._comparavel(ROTEIRO)
+    frase = "トヨタは新しい電池の開発に成功しました！"
+    assert roteirista._localizar(comparavel, posicoes, frase, 0)[1] == ROTEIRO.index("トヨタ")
+
+
+def test_comparavel_em_portugues_nao_muda():
+    assert roteirista._comparavel("Coração, de ouro!")[0] == "coracao de ouro "
+
+
+def test_texto_na_tela_acha_a_fala_mesmo_sem_a_particula():
+    palavras = [{"texto": m.group(), "ini": float(i)}
+                for i, m in enumerate(tx.achar_palavras("東京の企業は新しい技術を開発した。"))]
+    assert cenas._momento_falado("新しい技術", palavras, 0.0, 99.0) == 2.0
+    assert cenas._momento_falado("電気自動車", palavras, 0.0, 99.0) == 99.0
+
+
+def test_legenda_da_voz_em_frases_inteiras_alinha_o_japones():
+    srt = ("1\n00:00:00,000 --> 00:00:03,000\n" "日本の製造業は、いま大きな転換点を迎えています。\n\n"
+           "2\n00:00:03,000 --> 00:00:05,000\n" "トヨタは新しい電池の開発に成功しました！\n")
+    fala = "日本の製造業は、いま大きな転換点を迎えています。トヨタは新しい電池の開発に成功しました！"
+    alinhado = narracao._alinhar_pelas_palavras(fala, genaipro.ler_srt(srt), 5.0)
+    segunda = fala.index("トヨタ")
+    assert alinhado["inicio"][segunda] == pytest.approx(3.0)
+    assert alinhado["fim"][-1] == pytest.approx(5.0)

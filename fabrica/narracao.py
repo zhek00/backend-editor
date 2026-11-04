@@ -13,7 +13,6 @@ import os
 import re
 import shutil
 import sys
-import textwrap
 import time
 import wave
 
@@ -123,7 +122,7 @@ def narrar(projeto, log=print, sem_gastar=False) -> float:
             relatorio = None
             if not conferir:
                 break
-            ouvido = conferir_voz.transcrever(bruto, voz.get("idioma") or "pt",
+            ouvido = conferir_voz.transcrever(bruto, conferir_voz.idioma_da_voz(voz),
                                               ajustes_conferencia.get("modelo", conferir_voz.MODELO), log)
             if ouvido is None:
                 break
@@ -650,7 +649,7 @@ def _fish(texto, voz, wav, log=print, falado=None):
     silencios = _pausas_da_voz(wav)
     custo = 0.0
     try:
-        palavras, custo = fish.palavras_com_tempo(mp3, texto, voz.get("idioma") or "pt")
+        palavras, custo = fish.palavras_com_tempo(mp3, texto, conferir_voz.idioma_da_voz(voz))
         como = "medido pela transcrição"
     except Exception as erro:
         log(f"    tempo das palavras estimado pelas pausas do áudio ({str(erro)[:120]})")
@@ -687,7 +686,7 @@ def _voz_local(texto, voz, wav, preparada, log=print, falado=None):
     duracao = duracao_audio(wav)
     silencios = _pausas_da_voz(wav)
     try:
-        palavras, como = voz_local.palavras_com_tempo(wav, texto, voz.get("idioma") or "pt", log)
+        palavras, como = voz_local.palavras_com_tempo(wav, texto, conferir_voz.idioma_da_voz(voz), log)
         como = f"medido pela {como}"
     except Exception as erro:
         log(f"    tempo das palavras estimado pelas pausas do áudio ({str(erro)[:120]})")
@@ -1025,7 +1024,7 @@ def _legendas(unidades, destino, tempos_ini, tempos_fim, largura=42, linhas=2):
 
     pedacos = []
     for u in unidades:
-        quebradas = textwrap.wrap(u["texto"], largura) or [u["texto"]]
+        quebradas = tx.quebrar_linhas(u["texto"], largura) or [u["texto"]]
         cursor = 0
         for k in range(0, len(quebradas), linhas):
             grupo = quebradas[k:k + linhas]
