@@ -86,3 +86,17 @@ def test_modelo_do_google_puxa_o_registro(pasta, monkeypatch):
     assert wb["Custo diário"]["A4"].value.startswith("=QUERY(Chamadas!A:K")
     assert set(wb.sheetnames) >= {"Resumo", "Chamadas", "Custo diário", "Custo por API", "Diário por API",
                                   "Por etapa", "Por projeto"}
+
+
+def test_planilha_trancada_nao_derruba_a_thread(pasta, monkeypatch):
+    """O Windows tranca o arquivo temporário e o os.replace e o unlink dão PermissionError: a planilha fica para
+    depois, sem exceção nenhuma subindo (antes a thread do relógio morria e a planilha parava pelo resto do vídeo)."""
+    consumo.registrar(_P(), "texto", "julgar mídia", "dots-studio/dots-3-note-preview:free", 900, 50, 0)
+
+    def trancado(*_a, **_k):
+        raise PermissionError("[WinError 32] o arquivo já está sendo usado por outro processo")
+
+    monkeypatch.setattr(consumo.os, "replace", trancado)
+    monkeypatch.setattr(consumo.Path, "unlink", trancado)
+    assert consumo.gerar_planilha(log=lambda *_: None) is False
+    assert consumo._pendente is True

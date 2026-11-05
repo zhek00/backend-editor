@@ -134,6 +134,11 @@ openrouter:
                                 # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min. Era 60:
                                 # pedido do usuário em 2026-10-29, com o Groq voltando aos poucos cada chamada esperava
                                 # 1 min e não saiu nenhuma imagem de IA em 10 min
+  espera_pela_rapida: 8          # 8 s desde 2026-11-05 (pedido do usuário: acelerar a entrega). Era 30 (o padrão do
+                                # código): no asdas-80-billion-empire-is-collapsing-an a cadeia dormiu 48min24 somados em
+                                # 132 chamadas esperando o Gemini 2.5 Flash-Lite voltar do limite do minuto, uns 22 s por
+                                # chamada. Com 8 s a chamada desiste mais cedo e cai no gemini:gemini-3.1-flash-lite, que
+                                # tem cota própria e é igualmente rápido. Maior = menos gasto e mais espera parada
   confirmar_pago: false          # false: o pago entra sozinho, mas sempre depois de TODOS os gratuitos da cadeia. Pedido
                                 # do usuário em 2026-10-10 ("deve ser aprovado o consumo automaticamente"): com a cota
                                 # do Groq cheia, o brasil-selvagem (20 min) ficou quase 2 h na escolha esperando o
@@ -196,7 +201,11 @@ roteirista:
   # sairia por uns US$ 0,34 a 0,85 por vídeo de 30 min (US$ 0,012 o lote), e o usuário preferiu não pagar isso. A ordem
   # desta lista não decide quem atende: todo gratuito vem antes de qualquer pago (openrouter_local.perguntar)
   modelos:
-    - nvidia/nemotron-3-ultra-550b-a55b:free
+    # O Nemotron Ultra gratuito saiu em 2026-11-05 (pedido do usuário: acelerar a entrega). Medido no
+    # asdas-80-billion-empire-is-collapsing-an: 30 chamadas, 174 s de média e 261 s a maior, as 15 chamadas mais
+    # lentas da produção inteira. Ele segurava o começo em série (Mapa do roteiro 2 min com 100% de IA, JSON de
+    # cenas 6min38 com 99%). O DeepSeek pago faz o mesmo lote em 132 s por uns US$ 0,012, de US$ 0,22 a 0,85 por
+    # vídeo. Para voltar ao gratuito, ponha "- nvidia/nemotron-3-ultra-550b-a55b:free" de volta nesta lista.
     - deepseek/deepseek-v4-flash
   modelo: deepseek/deepseek-v4-flash  # (antigo, vale sem a lista acima) Medido no roteiro de
                              # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas

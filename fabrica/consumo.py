@@ -154,8 +154,12 @@ def agendar() -> None:
 def _no_relogio():
     global _relogio
     _relogio = None
-    if not gerar_planilha(log=lambda *_: None):
-        agendar()  # o arquivo estava aberto no Excel: tenta de novo depois
+    try:
+        if not gerar_planilha(log=lambda *_: None):
+            agendar()  # o arquivo estava aberto no Excel: tenta de novo depois
+    except Exception:
+        # a planilha é só o relatório: nenhum erro dela pode derrubar esta thread nem aparecer no log da fábrica
+        agendar()
 
 
 @atexit.register
@@ -293,7 +297,13 @@ def gerar_planilha(log=print) -> bool:
     try:
         os.replace(temporario, PLANILHA)
     except PermissionError:
-        temporario.unlink(missing_ok=True)
+        try:
+            temporario.unlink(missing_ok=True)
+        except OSError:
+            # o Windows também tranca o temporário (indexador, antivírus, o Excel abrindo o arquivo): apagar não deu,
+            # e isso derrubava a thread do relógio com PermissionError, deixando a planilha sem atualizar pelo resto
+            # da produção (2026-11-05). O temporário fica para a próxima rodada apagar; ele leva o PID no nome
+            pass
         _pendente = True
         log(f"  a planilha está aberta em outro programa: ela se atualiza quando for fechada ({PLANILHA})")
         return False
