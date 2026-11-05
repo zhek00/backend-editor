@@ -2564,13 +2564,32 @@ def _baixar(http, url, destino, prazo=None):
         temporario.unlink(missing_ok=True)
 
 
+# lado maior que uma foto de banco precisa ter: o render entrega 1920x1080 e a superamostragem usa no máximo 3x
+# disso. Acima daqui a foto é reduzida logo depois do download (2026-11-05, pedido do usuário: acelerar a entrega).
+# No asdas-80-billion-empire-is-collapsing-an o Wikimedia mandou JPEGs de 130 milhões de pixels (o PIL avisava
+# DecompressionBombWarning): cada abertura dela no render, no recorte, na miniatura e na descrição relia o arquivo
+# inteiro. Reduzir uma vez, no começo, não muda nada na tela e tira esse peso de todas as etapas seguintes.
+LADO_MAXIMO_DA_FOTO = 7680
+# teto de pixels só para o PIL abrir o arquivo sem reclamar antes de a gente reduzir. Acima do dobro deste valor o
+# PIL levanta DecompressionBombError, e a foto cai como um candidato que não deu certo (quem chamou testa o próximo)
+PIXELS_MAXIMOS_DA_FOTO = 400_000_000
+
+
 def _garantir_jpeg(arquivo):
     from PIL import Image
 
+    if Image.MAX_IMAGE_PIXELS is not None and Image.MAX_IMAGE_PIXELS < PIXELS_MAXIMOS_DA_FOTO:
+        Image.MAX_IMAGE_PIXELS = PIXELS_MAXIMOS_DA_FOTO
     with Image.open(arquivo) as imagem:
-        if imagem.format == "JPEG":
+        grande = max(imagem.size) > LADO_MAXIMO_DA_FOTO
+        if imagem.format == "JPEG" and not grande:
             return
         convertida = imagem.convert("RGB")
+        if grande:
+            escala = LADO_MAXIMO_DA_FOTO / max(imagem.size)
+            largura = max(1, round(imagem.width * escala))
+            altura = max(1, round(imagem.height * escala))
+            convertida = convertida.resize((largura, altura), Image.LANCZOS)
     convertida.save(arquivo, "JPEG", quality=92)
 
 
