@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: Mercado Alerta COLOMBIA
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: hyKxCTlAqtnW188CgltM
   nome_da_voz: Salva - The Spanish Narrator
   idioma_da_voz: es

@@ -192,10 +192,6 @@ def _normal(texto) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", texto))
 
 
-def _palavras_entre(projeto, ini, fim) -> list:
-    return [p for p in _palavras_do_projeto(projeto) if ini - 0.05 <= p["ini"] < fim]
-
-
 def _ancorar(projeto, item, pela_fala=False) -> dict | None:
     """Onde a animação está AGORA na fala: {ini, fim, palavras}. None se a fala dela não existe mais.
 

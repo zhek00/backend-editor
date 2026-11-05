@@ -47,7 +47,6 @@ def preco_images_api(modelo, qualidade) -> float:
 # padrão desde 2026-10-04 (pedido do usuário): GPT-5.4 Image 2 em qualidade baixa, 16:9, uns US$ 0,005 por imagem medidos,
 # pela chave do OpenRouter que a fábrica já usa. O Grok Imagine 2 continua valendo para quem o tem no perfil ou no projeto
 MODELO_OPENROUTER = "openai/gpt-5.4-image-2"
-MODELO_GROK_OPENROUTER = "x-ai/grok-imagine-image-2.0"
 TIPOS_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 ESTADOS_FINAIS_LOTE = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
 LIMITE_LOTE_BYTES = 18 * 1024 * 1024  # o Google aceita até 20 MB de pedidos em linha por lote

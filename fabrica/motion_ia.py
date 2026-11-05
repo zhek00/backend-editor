@@ -41,7 +41,6 @@ from . import texto as tx
 from .util import rodar
 
 FONTE = "motion_ia"
-TIPOS_SEM_MOTION = ("personagem",)
 _TRAVA_PEDIDOS = threading.Lock()
 _PEDIDOS = deque()  # horários dos últimos pedidos aos modelos, para o limite por minuto
 _TRAVA_CENAS = threading.Lock()

@@ -8,7 +8,6 @@
 #   2. mata processo velho travado na porta, se houver
 #   3. sobe a fabrica sem janela visivel, com a saida gravada num arquivo de log
 #   4. espera ela responder de verdade e abre o painel no navegador
-#   5. sobe o MCP (https://mcp.bbnews.cc), que o Claude Code dos clientes usa
 #
 # A fabrica roda escondida de proposito: uma janela de console do Windows trava
 # o programa inteiro se alguem clicar dentro dela sem querer (entra em "modo de
@@ -45,9 +44,6 @@ if ($FRONT) {
     $PAINEL = "http://localhost:$PORTA"
 }
 $ARGS_FRONT = if ($FRONT) { @('--frontend', $FRONT) } else { @() }
-$PORTA_MCP = 8092
-$URL_MCP   = 'https://mcp.bbnews.cc'
-$LOG_MCP   = Join-Path $PASTA 'mcp.log'
 
 function Passo($texto, $cor = 'Gray') { Write-Host $texto -ForegroundColor $cor }
 
@@ -73,39 +69,13 @@ function FabricaResponde {
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
 if (-not $uv) { $uv = "$env:USERPROFILE\.local\bin\uv.exe" }
 
-# Sobe o MCP escondido, se ele nao estiver de pe. Ele usa a mesma pasta da
-# fabrica, entao os dois estao sempre na mesma versao.
-function LigarMcp {
-    # o MCP so sobe em quem vende (tem os tokens dos clientes); na fabrica de um amigo ele fica desligado
-    if (-not (Test-Path (Join-Path $PASTA 'clientes_mcp.json'))) { return }
-    if (Get-NetTCPConnection -LocalPort $PORTA_MCP -State Listen -ErrorAction SilentlyContinue) {
-        Passo "  MCP: ja estava rodando ($URL_MCP)" Green
-        return
-    }
-    if (Test-Path $LOG_MCP) { Remove-Item $LOG_MCP -Force -ErrorAction SilentlyContinue }
-    Start-Process -FilePath $uv `
-        -ArgumentList @('run', '--no-sync', 'fabrica', 'mcp', '--porta', "$PORTA_MCP", '--url-publica', $URL_MCP) `
-        -WorkingDirectory $PASTA `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $LOG_MCP `
-        -RedirectStandardError "$LOG_MCP.erros"
-    foreach ($i in 1..20) {
-        Start-Sleep -Seconds 1
-        if (Get-NetTCPConnection -LocalPort $PORTA_MCP -State Listen -ErrorAction SilentlyContinue) {
-            Passo "  MCP no ar: $URL_MCP" Green
-            return
-        }
-    }
-    Passo "  O MCP nao subiu. Veja $LOG_MCP.erros" Red
-}
-
-# Sobe o vigia escondido (VIGIA-TIPLABS.ps1): a cada minuto ele confere a fabrica e o MCP e religa o que cair ou
+# Sobe o vigia escondido (VIGIA-TIPLABS.ps1): a cada minuto ele confere a fabrica e a religa se ela cair ou
 # travar. Se ja houver um vigia, o novo sai sozinho.
 function LigarVigia {
     Start-Process -FilePath 'powershell.exe' `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', (Join-Path $PASTA 'VIGIA-TIPLABS.ps1')) `
         -WindowStyle Hidden
-    Passo '  Vigia ligado: religa a fabrica e o MCP se cairem.' Green
+    Passo '  Vigia ligado: religa a fabrica se ela cair.' Green
 }
 
 # Roda o git nesta pasta e devolve o que ele escreveu (saida e erro juntos, em texto).
@@ -129,7 +99,7 @@ function PararPorta($porta) {
     }
 }
 
-# Desliga vigia, MCP e fabrica, como o DESLIGAR-TIPLABS, para subirem de novo ja na versao nova.
+# Desliga vigia e fabrica, como o DESLIGAR-TIPLABS, para subirem de novo ja na versao nova.
 function DesligarTudo {
     $pidVigia = Join-Path $PASTA 'vigia.pid'
     if (Test-Path $pidVigia) {
@@ -137,7 +107,6 @@ function DesligarTudo {
         if ($idVigia) { Stop-Process -Id ([int]$idVigia) -Force -ErrorAction SilentlyContinue }
         Remove-Item $pidVigia -Force -ErrorAction SilentlyContinue
     }
-    PararPorta $PORTA_MCP
     PararPorta $PORTA
     Start-Sleep -Seconds 2
 }
@@ -209,7 +178,7 @@ function Atualizar {
     Passo "        Atualizacoes recebidas agora:" Cyan
     MostrarMudancas "$antes..HEAD" 10 White
     if ([int]$novos -gt 10) { Passo "        ... e mais $([int]$novos - 10) mais antiga(s)" DarkGray }
-    # dependencia nova (pyproject.toml ou uv.lock): instala antes de subir; o MCP sobe com --no-sync
+    # dependencia nova (pyproject.toml ou uv.lock): instala antes de subir
     if (RodarGit diff --name-only $antes HEAD '--' pyproject.toml uv.lock) {
         Passo '        dependencias mudaram, instalando...' Yellow
         & $uv sync --directory $PASTA 2>&1 | Out-Null
@@ -223,12 +192,11 @@ function Atualizar {
 # 0. Atualizacao
 # ---------------------------------------------------------------
 if (Atualizar) {
-    $ligada = (Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue) -or
-              (Get-NetTCPConnection -LocalPort $PORTA_MCP -State Listen -ErrorAction SilentlyContinue)
+    $ligada = (Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue)
     if ($ligada) {
         Write-Host ''
         Passo '  A fabrica ja estava ligada, com a versao antiga. Ela so usa a nova depois de reiniciar.' Yellow
-        Passo '  Um video sendo criado pelo site para (retome pelo editor); os do MCP voltam sozinhos.' DarkGray
+        Passo '  Um video sendo criado pelo site para (retome pelo editor).' DarkGray
         $resposta = Read-Host '  Reiniciar agora? (S/n)'
         if ($resposta -notmatch '^\s*n') {
             DesligarTudo
@@ -277,7 +245,6 @@ if ($emUso -and $FRONT -and (FabricaResponde) -and -not (ServeEditor)) {
 if ($emUso -and (FabricaResponde)) {
     Passo '  [2/3] Fabrica: ja estava rodando' Green
     Passo '  [3/3] Nada a fazer' Green
-    LigarMcp
     LigarVigia
     Write-Host ''
     Passo "  Abrindo $PAINEL" Cyan
@@ -326,7 +293,6 @@ foreach ($i in 1..40) {
 Write-Host ''
 if ($pronta) {
     Passo '  Fabrica no ar (rodando escondida, sem janela).' Green
-    LigarMcp
     LigarVigia
     Write-Host ''
     Passo "  Abrindo $PAINEL" Cyan

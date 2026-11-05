@@ -208,7 +208,6 @@ def para_vertical(camadas_horizontais, largura, altura, pasta, prefixo="v"):
 
 # Fontes do Windows usadas quando a fonte do Mac não existe. A fonte padrão do Pillow não tem
 # acentos como Ã e Á, que saem como quadrados.
-VERSAO_FONTES = 2  # sobe quando a escolha de fontes muda, para o render refazer os textos já prontos
 PASTA_WINDOWS = "C:/Windows/Fonts/"
 FONTES_WINDOWS = {
     "documentario": {

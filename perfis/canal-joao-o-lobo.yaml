@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: João o Lobo
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: 2CECaLAGTS5NRGxgbcxr
   nome_da_voz: Davi Andrei
   idioma_da_voz: pt

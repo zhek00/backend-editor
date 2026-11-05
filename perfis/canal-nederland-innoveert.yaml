@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: Nederland Innoveert
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: rN2gFSK0c2RP1mgdpt69
   nome_da_voz: Tom - Warm Natural Dutch
   idioma_da_voz: nl

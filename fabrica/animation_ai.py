@@ -54,8 +54,8 @@ _TRAVA_CENAS = threading.Lock()
 TEMAS = {
     # o padrão desde 2026-10-13 (pedido do usuário: "transforme essas receitas em modelos que a fábrica monta sozinha e
     # fixo na fábrica"): motor próprio (motor_impacto.js), com a foto da cena atrás, letra gigante, uma cor de destaque
-    # (amarelo; vermelho no outro lado da comparação), brilho, grão e a cena se montando peça por peça. Saiu do protótipo
-    # em teste-estilos/prototipo. Os tipos sem receita própria não são oferecidos (TIPOS_IMPACTO)
+    # (amarelo; vermelho no outro lado da comparação), brilho, grão e a cena se montando peça por peça. Saiu de um protótipo
+    # aprovado pelo usuário. Os tipos sem receita própria não são oferecidos (TIPOS_IMPACTO)
     "impacto": {"fundo": "#07080A", "txt": "#F5F3EE", "txt2": "#D9D4CA", "acc": "#FFD23F", "acc2": "#FF4D3D",
                 "brilho-a": "rgba(77,163,255,.20)", "brilho-b": "rgba(255,210,63,.14)", "_motor": "impacto"},
     # o visual do Motion IA, de produto da Apple (pedido do usuário em 2026-10-10: "o mesmo estilo visual de cores estilo
@@ -647,19 +647,63 @@ def planejar(projeto, itens, log=print, forcar=False) -> dict:
 
 # ------------------------------------------------------------------------------------------------ tempos e sons
 
+_MESES = ("janeiro", "fevereiro", "março", "marco", "abril", "maio", "junho", "julho", "agosto",
+          "setembro", "outubro", "novembro", "dezembro", "january", "february", "march", "april",
+          "may", "june", "july", "august", "september", "october", "november", "december")
+# dia do mês não é quantidade: "14 de abril" contando subindo mostrou "4 de abril" e "6 de abril" na tela
+# (cena 4 do davy, 2026-10-31), três datas erradas antes de parar na certa
+_DATA = re.compile(r"^\s*(?:(?:de\s+|/|-|\.)?\s*(?:%s)\b|[/-]\s*\d{1,2}(?:[/-]\d{2,4})?\s*$)"
+                   % "|".join(_MESES), re.IGNORECASE)
+
+
+def _e_data(numero, casas, sufixo):
+    """'14 de abril', '19 de abril de 2011' e '14/04': dia do mês, que não conta subindo."""
+    return casas == 0 and 1 <= numero <= 31 and bool(_DATA.match(sufixo))
+
+
+# a unidade no singular, para o número que conta subindo não mostrar "1 anos" no caminho até "2 anos" (cena 85 do
+# animacoes-serra-5min). Só as irregulares precisam de tabela; o resto é tirar o "s" do fim
+_SINGULAR = {"meses": "mês", "milhões": "milhão", "bilhões": "bilhão", "milhares": "mil", "reais": "real",
+             "países": "país", "mulheres": "mulher", "homens": "homem", "pessoas": "pessoa", "vezes": "vez"}
+
+
+def _singular(sufixo) -> str:
+    """' anos' -> ' ano'. Devolve o sufixo como está quando não é plural de palavra (' %', ' km/h')."""
+    texto = str(sufixo or "")
+    m = re.match(r"^(\W*)([^\W\d_]+)(.*)$", texto, re.UNICODE)
+    if not m:
+        return texto
+    antes, palavra, depois = m.groups()
+    baixa = palavra.lower()
+    if baixa in _SINGULAR:
+        uma = _SINGULAR[baixa]
+    elif len(baixa) > 3 and baixa.endswith("s") and not baixa.endswith("ss"):
+        uma = palavra[:-1]
+    else:
+        return texto
+    if palavra.isupper():
+        uma = uma.upper()
+    elif palavra[:1].isupper():
+        uma = uma.capitalize()
+    return f"{antes}{uma}{depois}"
+
+
 def _partes_do_numero(valor):
-    """'R$ 2,5 bilhões' -> ('R$ ', 2.5, 1, ' bilhões', True). Ano sozinho não conta subindo."""
+    """'R$ 2,5 bilhões' -> ('R$ ', 2.5, 1, ' bilhões', True). Ano e data não contam subindo."""
     m = re.match(r"^(\D*?)(\d[\d.]*(?:,\d+)?)(.*)$", str(valor or "").strip())
     if not m:
-        return "", None, 0, str(valor or ""), False
+        # sem número nenhum o texto inteiro fica no valor, NUNCA no sufixo: o motor desenha prefixo+valor+sufixo, e
+        # com o texto nos dois saía "centavoscentavos" e "uma fortunauma fortuna" (cenas 31 e 32 do
+        # animacoes-serra-5min, 2026-11-02)
+        return "", None, 0, "", False
     prefixo, numero, sufixo = m.groups()
     casas = len(numero.split(",")[1]) if "," in numero else 0
     try:
         n = float(numero.replace(".", "").replace(",", "."))
     except ValueError:
-        return "", None, 0, str(valor), False
+        return "", None, 0, "", False
     ano = casas == 0 and 1000 <= n <= 2100 and not sufixo.strip() and "." not in numero
-    return prefixo, n, casas, sufixo, not ano
+    return prefixo, n, casas, sufixo, not (ano or _e_data(n, casas, sufixo))
 
 
 # a tela nunca fica só com o fundo esperando a palavra: no leite, o fato e o causa_efeito esperavam até 2,5 s e o
@@ -731,6 +775,7 @@ def resolver_tempos(tipo, dados, palavras, dur):
         d["t_legenda"] = round(min(d["t"] + 0.9, fim), 3)
     if tipo == "numero":
         d["prefixo"], d["numero"], d["casas"], d["sufixo"], d["contar"] = _partes_do_numero(d.get("valor"))
+        d["sufixo_um"] = _singular(d["sufixo"])
         if d["numero"] is not None:
             d["valor"] = "0" if d["contar"] else re.sub(r"^\D*?(\d[\d.]*(?:,\d+)?).*$", r"\1", str(dados.get("valor")))
         d["t_legenda"] = round(min(d["t"] + 0.5, fim), 3)
@@ -1145,7 +1190,7 @@ def _combina(item, mostra) -> int:
     return sum(1 for r in radicais if r in mostra)
 
 def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_foto=COM_FOTO,
-                    minimo=MINIMO_DE_FOTOS, exigir_combina=False) -> dict:
+                    minimo=MINIMO_DE_FOTOS, exigir_combina=False, buscar_todos=False) -> dict:
     """Põe em cada item (dados["itens"]) a foto da coisa que ele cita: a da cena em que a palavra do item é falada,
     ou uma dos bancos. Cada cena empresta a foto a um item só. Devolve {número da cena: [créditos]} das fotos que
     entram na tela durante cada cena."""
@@ -1190,6 +1235,20 @@ def fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log=print, com_fot
                 continue
         usadas.add(f"{foto[1].get('fonte')}:{foto[1].get('id')}")
         achadas.append((it, arquivo, foto[1], cena["n"]))
+    # cada cena empresta a foto a um item só, então o item que perdeu a vez ficava num cartão de texto, sem nada do
+    # assunto na tela (pedido do usuário em 2026-11-01: "mesmo sendo texto, deve ter alguma imagem para apresentar o
+    # assunto"). Ele busca a própria foto nos bancos, com os mesmos filtros
+    if buscar_todos:
+        com_foto_ja = {id(it) for it, *_ in achadas}
+        for it in itens:
+            if id(it) in com_foto_ja:
+                continue
+            cena = cena_do(it)
+            foto = _foto_do_banco(projeto, pasta, cena, it, usadas, log)
+            if foto is None:
+                continue
+            usadas.add(f"{foto[1].get('fonte')}:{foto[1].get('id')}")
+            achadas.append((it, foto[0], foto[1], cena["n"]))
     if len(achadas) < min(minimo, len(itens)):
         return {}
     creditos = {}
@@ -1206,7 +1265,7 @@ def fotos_impacto(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
     # no impacto cada cartão é a sua foto: a que achou entra, mesmo sozinha (com o mínimo de 2, a foto achada para
     # "Interrompe circulação" se perdia e os dois cartões da cena 71 do brasil-selvagem saíam vazios)
     creditos = fotos_dos_itens(projeto, trecho, tipo, dados, ini, pasta, log, com_foto=COM_FOTO_IMPACTO, minimo=1,
-                               exigir_combina=True)
+                               exigir_combina=True, buscar_todos=True)
     if tipo in ("comparar", "antes_depois", "deslizar"):
         lados = [dados.get(k) for k in (("esq", "dir") if tipo == "comparar" else ("antes", "depois"))]
         if all(isinstance(l, dict) for l in lados):
@@ -1239,7 +1298,45 @@ def fotos_impacto(projeto, trecho, tipo, dados, ini, pasta, log=print) -> dict:
                 if _combina(melhor, mostra):
                     melhor["foto"], melhor["foto_id"] = dados["fundo"], dados["fundo_id"]
             break
+    if not dados.get("fundo"):
+        _fundo_do_banco(projeto, trecho, dados, pasta, creditos, log)
     return creditos
+
+
+def _fundo_do_banco(projeto, trecho, dados, pasta, creditos, log=print) -> bool:
+    """Nenhuma cena do trecho tem foto: o fundo vem do banco, pelo pedido da cena. Sem ele a cena animada era só
+    texto sobre um fundo liso, sem nada do assunto do roteiro."""
+    usadas = _usadas_no_video(projeto)
+    for c in trecho:
+        achada = _foto_do_banco(projeto, pasta, c, {"texto": str(c.get("texto") or "")}, usadas, log)
+        if achada is None:
+            continue
+        dados["fundo"] = achada[0].relative_to(pasta).as_posix()
+        dados["fundo_id"] = f"{achada[1].get('fonte')}:{achada[1].get('id')}"
+        creditos.setdefault(c["n"], []).append(achada[1])
+        return True
+    return False
+
+
+def fundo_da_cena(projeto, trecho, dados, pasta, creditos, log=print) -> bool:
+    """O fundo dos estilos que não são o impacto: a foto que alguma cena do trecho já tinha e, sem nenhuma, uma do
+    banco. A cena animada sempre mostra o assunto, em qualquer estilo (pedido do usuário em 2026-11-01): sem isso, no
+    misterio e no cinema a tela saía praticamente preta com uma linha de texto (animacoes-serra-5min, cenas 42 a 46 e
+    96 a 105). O impacto monta o fundo em fotos_impacto, que ainda escolhe o cartão de cada item."""
+    for c in trecho:
+        foto = _foto_da_cena(projeto, c)
+        if foto is None:
+            continue
+        arquivo = pasta / "assets" / "fotos" / f"fundo_{c['n']:04d}.jpg"
+        duracao = (_o_que_a_cena_tinha(c).get("midia") or {}).get("duracao")
+        if not _preparar_foto(foto[0], arquivo, foto[1].get("tipo") == "video", duracao):
+            continue
+        dados["fundo"] = arquivo.relative_to(pasta).as_posix()
+        dados["fundo_id"] = f"{foto[1].get('fonte')}:{foto[1].get('id')}"
+        if dados["fundo_id"] not in {f"{x.get('fonte')}:{x.get('id')}" for x in creditos.get(c["n"], [])}:
+            creditos.setdefault(c["n"], []).append(foto[1])
+        return True
+    return _fundo_do_banco(projeto, trecho, dados, pasta, creditos, log)
 
 
 def trechos_animados(cenas) -> list:
@@ -1307,17 +1404,31 @@ def _pasta_para_gravar(projeto, numeros):
             return pasta
         k += 1
 
+def _ficaria_vazia(cena_projeto, c) -> bool:
+    """Desfazer a animação desta cena a deixaria sem nada na tela: o que ela tinha antes (anim_reserva) não tem
+    arquivo e não existe imagem numerada dela. Cena vazia trava o render."""
+    antes = c.get("anim_reserva") or {}
+    if (antes.get("midia") or {}).get("arquivo"):
+        return False
+    return not cena_projeto.imagem(c["n"]).exists()
+
+
 def _planos_conferidos(projeto, pares, todas, log=print) -> list:
     """Os planos guardados passam de novo pela conferência antes de regravar: a regra pode ter ficado mais exigente
     depois (os títulos em português "O Teste", "Avaliação" num roteiro em inglês, everything-you-need-to-answer). O
     reprovado é pedido de novo ao modelo; sem plano novo que passe, a cena fica com a animação de antes."""
     saida = []
+    # a posição real do trecho: conferido sempre como "não é o primeiro", o plano de abertura da PRIMEIRA animação do
+    # vídeo era reprovado por "'abertura' só no primeiro trecho", e a cena 1 do animacoes-serra-5min perdia a abertura
+    # certa para um plano pior a cada regravação
+    comeco = min((min(c["n"] for c in grupo) for _, grupo in trechos_animados(todas)), default=None)
     for g, plano in pares:
         if plano.get("tipo") == "dirigida":
             saida.append((g, plano))
             continue
         item = _itens_util(projeto, [g], todas)[0]
-        problemas = conferir(plano["tipo"], plano["dados"], item["fala"], item["extras"], 1, 99,
+        posicao = 0 if comeco is not None and min(c["n"] for c in g) == comeco else 1
+        problemas = conferir(plano["tipo"], plano["dados"], item["fala"], item["extras"], posicao, 99,
                              lingua=item.get("lingua"))
         if not problemas:
             saida.append((g, plano))
@@ -1331,6 +1442,13 @@ def _planos_conferidos(projeto, pares, todas, log=print) -> list:
             # a animação reprovada (texto em outra língua, palavra que a fala não diz) é pior que a foto: a cena volta ao
             # que tinha antes dela (cena 242 do everything-you-need-to-answer, "Pilares da reputação")
             numeros = {c["n"] for c in g}
+            # ...mas só quando há o que mostrar no lugar: desfazer uma animação de cena que nunca teve foto deixa a
+            # cena VAZIA e o render para ("Faltam imagens de 2 cenas", 55 e 56 do animacoes-serra-5min). O clipe de
+            # antes é pior que o plano novo e melhor que nada: ele fica, e a cena segue no vídeo
+            if any(_ficaria_vazia(projeto, c) for c in g):
+                log(f"  animation-ai: o plano novo da cena {g[0]['n']} também não passa, e ela não tem foto para voltar; "
+                    "fica com a animação que já estava no vídeo")
+                continue
             desfazer(projeto, numeros)
             with _TRAVA_CENAS:
                 dados = projeto.ler_json("cenas.json")
@@ -1495,6 +1613,7 @@ def gravar(projeto, trecho, plano, log=print, exigir_imagem=False):
         eventos = sons_impacto(tipo, resolvidos, dur)  # o motor do impacto mexe em outros momentos que o motor.js
     else:
         creditos = fotos_dos_itens(projeto, trecho, tipo, resolvidos, ini, pasta, log)
+        fundo_da_cena(projeto, trecho, resolvidos, pasta, creditos, log)
     if exigir_imagem and not tem_imagem(resolvidos):
         raise SemImagem("nenhuma foto para a cena animada: só texto não entra no vídeo")
     variante = trecho[0]["n"]

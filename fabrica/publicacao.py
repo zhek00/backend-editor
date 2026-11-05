@@ -21,7 +21,6 @@ import hashlib
 import json
 import re
 
-TITULO_MAXIMO = 60
 TAGS_MAXIMO = 480  # o YouTube aceita 500 letras somando as tags
 DESCRICAO_MAXIMA = 4900
 CAPITULO_MINIMO = 10.0

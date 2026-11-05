@@ -86,6 +86,17 @@ def test_numero_conta_subindo_mas_ano_nao():
     assert a._partes_do_numero("1875")[4] is False
 
 
+def test_data_nao_conta_subindo():
+    # "14 de abril" contando mostrava "4 de abril" e "6 de abril" antes da data certa (cena 4 do davy)
+    assert a._partes_do_numero("14 de abril") == ("", 14.0, 0, " de abril", False)
+    assert a._partes_do_numero("19 de abril de 2011")[4] is False
+    assert a._partes_do_numero("14/04")[4] is False
+    # quantidade com unidade continua contando
+    assert a._partes_do_numero("2 anos")[4] is True
+    assert a._partes_do_numero("1.500 km")[4] is True
+    assert a._partes_do_numero("40 de abril")[4] is True
+
+
 # --------------------------------------------------------------------------------------------- complemento das fotos
 
 def test_estrutura_so_manda_ao_modelo_o_que_tem_o_que_desenhar():
@@ -280,3 +291,41 @@ def test_titulo_traduzido_de_uma_palavra_e_recusado():
     for titulo in ("The Test", "Very average", "Ten supermarkets"):
         assert not a._outra_lingua([titulo], fala), titulo
     assert not a._outra_lingua(["O que mais importa"], "o que mais importa é a qualidade de cada frango assado")
+
+
+def test_nao_desfaz_animacao_que_deixaria_a_cena_vazia(tmp_path):
+    # as cenas 55 e 56 do animacoes-serra-5min nunca tiveram foto: o plano guardado não passou mais na conferência,
+    # a animação foi desfeita e o render parou com "Faltam imagens ou vídeos de 2 cenas"
+    class Proj:
+        def imagem(self, n):
+            return tmp_path / f"{n:04d}.png"
+
+    p = Proj()
+    (tmp_path / "0007.png").write_bytes(b"x")
+    sem_nada = {"n": 55, "anim_reserva": {"midia": None}}
+    com_foto = {"n": 56, "anim_reserva": {"midia": {"arquivo": "midia/0056.jpg"}}}
+    com_imagem = {"n": 7, "anim_reserva": {"midia": None}}
+    assert a._ficaria_vazia(p, sem_nada)
+    assert not a._ficaria_vazia(p, com_foto)
+    assert not a._ficaria_vazia(p, com_imagem)
+    assert a._ficaria_vazia(p, {"n": 55})          # sem anim_reserva nenhuma
+
+
+def test_valor_sem_numero_nao_sai_duplicado():
+    # "centavoscentavos" e "uma fortunauma fortuna" na tela: o texto ficava no valor E no sufixo, e o motor
+    # desenha prefixo+valor+sufixo (cenas 31 e 32 do animacoes-serra-5min)
+    assert a._partes_do_numero("centavos") == ("", None, 0, "", False)
+    assert a._partes_do_numero("uma fortuna") == ("", None, 0, "", False)
+    assert a._partes_do_numero("--") == ("", None, 0, "", False)
+
+
+def test_unidade_no_singular_para_a_contagem():
+    # contando até "2 anos", a tela mostrava "1 anos"
+    assert a._singular(" anos") == " ano"
+    assert a._singular(" meses") == " mês"
+    assert a._singular(" metros") == " metro"
+    assert a._singular(" milhões") == " milhão"
+    assert a._singular(" MESES") == " MÊS"
+    # o que não é plural de palavra fica como está
+    for igual in ("%", " km", " km/h", "", " de abril"):
+        assert a._singular(igual) == igual

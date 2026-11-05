@@ -14,6 +14,11 @@ class _Projeto:
         self.config = config or {}
 
 
+@pytest.fixture(autouse=True)
+def _omnivoice_instalado(monkeypatch):
+    monkeypatch.setattr(voz_local, "instalado", lambda ambiente: True)
+
+
 def test_genaipro_vira_voz_local():
     from fabrica.projeto import Projeto
     p = Projeto.__new__(Projeto)
@@ -46,6 +51,33 @@ def test_pagas_podem_continuar_se_o_config_pedir():
     p.perfil, p.config = {"voz": {"provedor": "genaipro"}}, {"voz_local": {"no_lugar_das_pagas": False}}
     p.sem_narracao_paga()
     assert p.perfil["voz"]["provedor"] == "genaipro"
+
+
+def test_genaipro_escolhida_no_radar_fica():
+    # 2026-11-03: as duas vozes valem no Radar; a escolhida de propósito não vira a voz local
+    from fabrica.projeto import Projeto
+    p = Projeto.__new__(Projeto)
+    p.perfil, p.config = {"voz": {"provedor": "genaipro", "voice_id": "abc", "paga_escolhida": True}}, {}
+    p.sem_narracao_paga()
+    assert p.perfil["voz"]["provedor"] == "genaipro"
+
+
+def test_sem_o_omnivoice_instalado_nada_e_trocado(monkeypatch):
+    # o PC do Palhano (2026-10-29): sem o motor, trocar para a voz local quebraria a narração
+    from fabrica.projeto import Projeto
+    monkeypatch.setattr(voz_local, "instalado", lambda ambiente: False)
+    p = Projeto.__new__(Projeto)
+    p.perfil, p.config = {"voz": {"provedor": "genaipro", "voice_id": "abc"}}, {}
+    p.sem_narracao_paga()
+    assert p.perfil["voz"]["provedor"] == "genaipro"
+
+
+def test_canal_com_voz_local_pela_rota_de_canais():
+    from fabrica import api
+    bloco = api._bloco_da_voz({"provedor": "local", "voz_local": "kokoro:pm_alex", "nome": "Alex", "idioma": "pt"})
+    assert bloco == {"provedor": "local", "voz_local": "kokoro:pm_alex", "nome_da_voz": "Alex", "idioma": "pt",
+                     "idioma_da_voz": "pt"}
+    assert api._bloco_da_voz({"provedor": "genaipro", "voice_id": "abc"})["paga_escolhida"] is True
 
 
 def _bloco(tmp_path, voz):

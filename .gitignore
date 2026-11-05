@@ -16,15 +16,11 @@ vozes_candidatas*.json
 # registros da fábrica
 fabrica.log
 fabrica.log.erros
-mcp.log.erros
 *.log
 *.pyc
 aprendizados/
 efeitos/gerados/
 genaipro_medido.json
-clientes_mcp.json
-teste-cliente/
-tiplabs-cliente/
 
 vigia.log
 vigia.pid
@@ -39,6 +35,9 @@ motores_voz/*.log
 motores_voz/.cache/
 motores_voz/modelos/
 motores_voz/vozes/
+
+# estudio-real: produto separado (canais com rosto), repositorio a parte
+estudio-real/
 
 # quanto já foi usado das janelas de limite da assinatura do ChatGPT (fabrica/chatgpt_assinatura.py): é deste
 # computador, não do projeto

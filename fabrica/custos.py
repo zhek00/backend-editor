@@ -80,15 +80,7 @@ def estimar(projeto) -> dict:
 
     agente = roteirista.estimar(projeto, cenas)
     agente = 0.0 if projeto.existe("cenas.json") else agente["cenas"] + (0.0 if projeto.existe("roteiro_mapa.json") else agente["mapa"])
-    from . import cliente
-
-    pelo_cliente = cliente.pelo_cliente(projeto)
-    if pelo_cliente:
-        # projeto do MCP no modo antigo: o roteiro, a escolha das fotos e o julgamento saem da assinatura do Claude do
-        # cliente. No modo de agora (mcp.pelo_cliente: false) a fábrica paga os modelos, e a estimativa conta
-        agente = correcao = claude = escolha = 0.0
     return {
-        "pelo_cliente": pelo_cliente,
         "duracao": duracao,
         "cenas": cenas,
         "roteirista": agente,
@@ -153,9 +145,7 @@ def formatar(e: dict) -> str:
         f"Estimativa para {mmss(e['duracao'])} de vídeo com cerca de {e['cenas']} cenas",
         f"  narração        {dinheiro(e['voz'])}",
     ]
-    if e.get("pelo_cliente"):
-        linhas.append("  decisões        pela assinatura do seu Claude (roteiro, fotos, julgamento), sem custo na fábrica")
-    elif e["via_api"]:
+    if e["via_api"]:
         linhas.append(f"  cenas           {dinheiro(e['claude'])}")
         if e["reais"]:
             linhas.append(f"  material real   {dinheiro(e['escolha'])}  ({e['reais']} cenas, fotos e vídeos grátis)")

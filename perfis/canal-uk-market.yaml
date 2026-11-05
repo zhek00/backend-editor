@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: UK MARKET
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   # 2026-10-24: de volta à voz dos vídeos anteriores. A "Adam - Radio Announcer" (wBXNqKUATyqu0RtYt25i) levava mais
   # de 1h por bloco na fila da GenAIPro; esta responde em segundos.
   voice_id: auq43ws1oslv0tO4BDa7

@@ -172,20 +172,9 @@ def _captura_ligada(projeto) -> bool:
     return bool(cfg.get("conferir_na_captura")) and cfg.get("escolha") in ("mimo", "groq", "gemini")
 
 
-# (projeto, cena, candidato) -> julgamento que o Claude do cliente deu na própria escolha (projeto do MCP)
-_JUIZOS_DO_CLIENTE: dict = {}
-
-
 def _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log):
-    """O julgamento do Jev para o que o candidato mostra ({nota, sujeito, epoca...}), ou None se ele não puder julgar.
-
-    No projeto do MCP o Claude do cliente já julgou o candidato na própria escolha (_escolher_pelo_cliente): vale esse
-    julgamento, sem outra tarefa."""
+    """O julgamento do Jev para o que o candidato mostra ({nota, sujeito, epoca...}), ou None se ele não puder julgar."""
     from . import corrigir
-
-    juizo = _JUIZOS_DO_CLIENTE.get((projeto.nome, cena["n"], _chave(candidato)))
-    if juizo is not None:
-        return corrigir.veredito(frase, juizo["nota"], juizo.get("sujeito"), juizo.get("epoca"), quem="o Claude do cliente")
 
     # o Jev também lê o que o autor escreveu sobre o arquivo, que vem do endereço da página
     cena_do_candidato = {**cena, "midia": {"pagina": candidato.get("pagina", "")}}
@@ -1870,16 +1859,13 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
 
     Com descricoes (um dicionário), o modelo também diz o que vê em cada candidato indicado, e essas frases
     são guardadas junto, para o Jev conferir antes do download."""
-    from . import cliente
-
     resultado, pendentes = {}, []
     com_descricao = descricoes is not None
-    pelo_cliente = cliente.atende(projeto, "escolha das fotos")
     for cena in lote:
         cache = projeto.caminho("midia", "escolha", f"cena_{cena['n']:04d}{sufixo}.json")
         assinatura = hashlib.sha1(
             (json.dumps([_chave(c) for c in candidatos[cena["n"]]]) + ("|descricao" if com_descricao else "")
-             + (f"|v{VERSAO_ESCOLHA}" if VERSAO_ESCOLHA > 1 else "") + ("|cliente" if pelo_cliente else "")).encode()
+             + (f"|v{VERSAO_ESCOLHA}" if VERSAO_ESCOLHA > 1 else "")).encode()
         ).hexdigest()[:12]
         # cache gravado pela metade (queda durante a escrita) ou sem os campos esperados: a escolha é refeita, em vez de
         # derrubar o lote com JSONDecodeError ou KeyError
@@ -1888,7 +1874,6 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
             resultado[cena["n"]] = salvo["escolhas"]
             if com_descricao:
                 descricoes[cena["n"]] = {int(i): f for i, f in (salvo.get("vejo") or {}).items()}
-            _lembrar_juizos(projeto, cena["n"], candidatos[cena["n"]], salvo.get("juizo") or {})
             continue
         if not folhas[cena["n"]][1]:
             # nenhuma miniatura carregou: pode ser falha de rede, então a cena fica sem resposta e tenta de novo depois
@@ -1925,15 +1910,8 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
     cfg = projeto.config.get("claude") or {}
     instrucoes = INSTRUCOES_ESCOLHA.format(canal=projeto.perfil.get("nome", "")) + (
         INSTRUCOES_DESCRICAO if com_descricao else "")
-    vejos, juizos = {}, {}
-    if pelo_cliente:
-        respostas = _escolher_pelo_cliente(projeto, pendentes, candidatos, folhas, instrucoes, com_descricao, vejos,
-                                           juizos)
-        if respostas is None:
-            # o Claude do cliente parou depois da metade do vídeo: a cadeia de visão escolhe estas cenas
-            respostas = _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes,
-                                              _esquema_escolha(com_descricao), vejos)
-    elif (projeto.config.get("midia") or {}).get("escolha") not in (None, "", "claude"):
+    vejos = {}
+    if (projeto.config.get("midia") or {}).get("escolha") not in (None, "", "claude"):
         respostas = _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes,
                                           _esquema_escolha(com_descricao), vejos)
     elif cfg.get("via", "assinatura") == "api":
@@ -1951,56 +1929,12 @@ def _escolher_lote(projeto, lote, candidatos, folhas, descricoes=None, sufixo=""
         validos = folhas[cena["n"]][1]
         escolhas = [i for i in respostas[cena["n"]] if i in validos]
         vejo = {i: f for i, f in (vejos.get(cena["n"]) or {}).items() if i in validos}
-        juizo = {str(i): j for i, j in (juizos.get(cena["n"]) or {}).items() if i in validos}
         gravar_cache(cache, {"assinatura": assinatura, "escolhas": escolhas,
-                             "vejo": {str(i): f for i, f in vejo.items()},
-                             **({"juizo": juizo} if juizo else {})}, indent=None)
-        _lembrar_juizos(projeto, cena["n"], candidatos[cena["n"]], juizo)
+                             "vejo": {str(i): f for i, f in vejo.items()}}, indent=None)
         resultado[cena["n"]] = escolhas
         if com_descricao:
             descricoes[cena["n"]] = vejo
     return resultado
-
-
-def _lembrar_juizos(projeto, n, candidatos_da_cena, juizo):
-    """Guarda o julgamento que o cliente deu a cada candidato, para _nota_do_candidato usar no lugar do Jev."""
-    for i, j in (juizo or {}).items():
-        i = int(i)
-        if 0 <= i < len(candidatos_da_cena):
-            _JUIZOS_DO_CLIENTE[(projeto.nome, n, _chave(candidatos_da_cena[i]))] = j
-
-
-def _esquema_escolha_do_cliente():
-    """O esquema da escolha com as notas do juiz em cada candidato descrito."""
-    esquema = _esquema_escolha(True)
-    vejo = esquema["properties"]["cenas"]["items"]["properties"]["vejo"]["items"]
-    vejo["properties"].update({"combina": {"type": "integer"}, "sujeito": {"type": "integer"},
-                               "epoca": {"type": "integer"}})
-    vejo["required"] = [*vejo["required"], "combina", "sujeito"]
-    return esquema
-
-
-def _folha_leve(projeto, folha):
-    """A folha de candidatos menor, para o Claude do cliente: 1280 px de largura em vez de 1920.
-
-    O Claude cobra a imagem pela área (uns 1.380 tokens a folha cheia, uns 920 a de 1280 px). Cada miniatura fica com
-    320 x 180 px, o bastante para reconhecer o bicho, o lugar e o objeto, e o número continua legível. A escolha das
-    fotos foi 43% do consumo do mcp-cafe-5min, quase tudo nas folhas."""
-    from PIL import Image
-
-    largura = int((projeto.config.get("cliente") or {}).get("largura_da_folha", 1280))
-    folha = Path(folha)
-    destino = folha.with_name(folha.stem + "_leve.jpg")
-    try:
-        with Image.open(folha) as im:
-            if im.width <= largura:
-                return folha
-            if not destino.exists() or destino.stat().st_mtime < folha.stat().st_mtime:
-                im.convert("RGB").resize((largura, round(im.height * largura / im.width)), Image.LANCZOS).save(
-                    destino, quality=85)
-    except OSError:
-        return folha  # a folha que não abre vai como está
-    return destino
 
 
 def _palavras_unicas(texto, limite=90):
@@ -2013,83 +1947,6 @@ def _palavras_unicas(texto, limite=90):
             saida.append(parte.strip())
     texto = ", ".join(saida)
     return texto if len(texto) <= limite else texto[:limite].rsplit(" ", 1)[0] + "…"
-
-
-def _bloco_do_cliente(projeto, cena, candidatos, validos, numero_da_imagem):
-    """O pedido de uma cena na escolha pelo Claude do cliente, só com o que decide a escolha.
-
-    Sai o que não muda a decisão: os termos buscados, a duração, os trechos vizinhos e a descrição repetida (o "O que
-    deveria mostrar" vinha duas vezes). A lista de candidatos fica com o tipo, o banco e a descrição sem tags
-    repetidas, em até 90 letras (antes 150)."""
-    from . import corrigir
-
-    linhas = [f"Cena {cena['n']}", f"Narração: \"{cena['texto']}\"",
-              f"Deveria mostrar: {cena.get('mostrar') or cena['prompt']}"]
-    if (cena.get("aceitavel") or "").strip():
-        linhas.append(f"Mínimo para estar certa: {cena['aceitavel'].strip()}")
-    if cena.get("exato"):
-        linhas.append(f"Tem que ser: {cena['exato']}")
-    if e_de_epoca(cena):
-        linhas.append(f"Época {cena['epoca']}: só imagem daquela época (foto antiga, gravura, ilustração, museu)")
-    pessoa = corrigir._pessoa_da_cena(projeto, cena)
-    if pessoa:
-        linhas.append(f"Pessoa citada: {pessoa}")
-    if cena.get("item_citado"):
-        linhas.append(f"Item da lista nesta cena: {cena['item_citado']}")
-    bloco = corrigir._bloco_da_cena_no_mapa(projeto, cena)
-    if bloco:
-        linhas.append(f"Assunto do bloco: {bloco}")
-    linhas.append(f"Candidatos: [imagem {numero_da_imagem}]")
-    for i in validos:
-        c = candidatos[i]
-        tipo = f"vídeo {c['duracao']:.0f}s" if c["tipo"] == "video" and c.get("duracao") else c["tipo"]
-        linhas.append(f"  {i}. {tipo}, {c['fonte']}: {_palavras_unicas(c.get('descricao'))}")
-    return "\n".join(linhas)
-
-
-def _escolher_pelo_cliente(projeto, pendentes, candidatos, folhas, instrucoes, com_descricao, vejos, juizos):
-    """Projeto do MCP: o Claude do cliente escolhe as fotos de todas as cenas do lote numa tarefa só e já julga cada
-    escolhida, com a régua do Jev (corrigir.instrucoes_do_juizo).
-
-    No caminho dos modelos são uma chamada por cena para escolher e mais uma ao Jev por candidato antes do download; no
-    teste do MCP (mcp-pangolim) isso deu 6 tarefas para 3 cenas, e aqui é uma. A folha vai menor (_folha_leve) e o
-    texto só com o que decide (_bloco_do_cliente)."""
-    from . import cliente, corrigir
-
-    textos, imagens = [], []
-    for cena, _, _ in pendentes:
-        folha, validos = folhas[cena["n"]]
-        imagens.append(_folha_leve(projeto, folha))
-        textos.append(_bloco_do_cliente(projeto, cena, candidatos[cena["n"]], validos, len(imagens)))
-    pedido = (f"Responda as {len(pendentes)} cenas abaixo, uma por item, com o número de cada uma. A descrição de cada "
-              "candidato é como o autor descreveu o arquivo.\n\n" + "\n\n".join(textos))
-    esquema = _esquema_escolha_do_cliente() if com_descricao else ESQUEMA_ESCOLHA
-    if com_descricao:
-        instrucoes += corrigir.instrucoes_do_juizo()
-    try:
-        dados = cliente.pedir(projeto, "escolha das fotos (escolher e julgar)", instrucoes, pedido, esquema, imagens)
-    except cliente.Reserva:
-        return None
-    except cliente.Cancelada:
-        raise
-    except (RuntimeError, SystemExit):
-        return {}  # as cenas ficam para a próxima rodada
-    numeros = {c["n"] for c, _, _ in pendentes}
-    respostas = {}
-    for item in dados.get("cenas", []):
-        if not isinstance(item, dict) or item.get("cena") not in numeros:
-            continue
-        n = item["cena"]
-        respostas[n] = item.get("escolhas", [])
-        for v in item.get("vejo", []):
-            frase = compor_o_que_se_ve(v)
-            if not frase:
-                continue
-            vejos.setdefault(n, {})[int(v["indice"])] = frase
-            if v.get("combina") is not None:
-                juizos.setdefault(n, {})[int(v["indice"])] = {
-                    "nota": max(0, min(100, int(v["combina"]))), "sujeito": v.get("sujeito"), "epoca": v.get("epoca")}
-    return respostas
 
 
 def _escolher_pelo_modelo(projeto, pendentes, blocos, folhas, instrucoes, esquema=None, vejos=None):

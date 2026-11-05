@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: 한국의 미래 (Hangugui Mirae)
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: h5eZa8VFAq0EQ8E81dfL
   nome_da_voz: Yong Gyu - Calm Korean Male Narrator
   idioma_da_voz: ko

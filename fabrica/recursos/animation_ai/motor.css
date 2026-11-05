@@ -8,6 +8,15 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--
 .fundo { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
          background: radial-gradient(1100px 700px at 76% 14%, var(--brilho1), transparent 62%),
                      radial-gradient(900px 620px at 8% 96%, var(--brilho2), transparent 62%); }
+/* a foto do assunto atrás de tudo, e a cor do estilo por cima como véu: o assunto aparece e o contraste do tema
+   segue valendo (motor.js, FOTO e VEU). Sem isso, o estilo escuro sem foto saía como tela preta com uma linha */
+.foto-fundo { position: absolute; left: -60px; top: -40px; width: 2040px; height: 1160px; overflow: hidden; }
+.foto-fundo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.foto-fundo.clara img { filter: saturate(.55) brightness(1.5) contrast(.62); }
+.fundo.com-foto { opacity: var(--veu, .86);
+                  background: radial-gradient(1100px 700px at 76% 14%, var(--brilho1), transparent 62%),
+                              radial-gradient(900px 620px at 8% 96%, var(--brilho2), transparent 62%),
+                              var(--fundo); }
 .pontos { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: var(--pontos-opac, .55);
           background-image: radial-gradient(var(--ponto) var(--ponto-r, 1.6px), transparent calc(var(--ponto-r, 1.6px) + .1px));
           background-size: var(--pontos-tam, 34px) var(--pontos-tam, 34px); }

@@ -9,7 +9,7 @@ import threading
 
 from PIL import Image, ImageDraw
 
-from fabrica import cliente, midia, util
+from fabrica import midia, util
 
 
 # --- 1. palavras: plural sim, prefixo qualquer não -------------------------------------------------------------------
@@ -111,7 +111,6 @@ class _Projeto:
 
 
 def _lote(tmp_path, monkeypatch, conteudo_do_cache):
-    monkeypatch.setattr(cliente, "atende", lambda *a, **k: False)
     projeto = _Projeto(tmp_path)
     projeto.caminho("midia", "escolha", "cena_0001.json").write_text(conteudo_do_cache, encoding="utf-8")
     candidato = {"fonte": "pexels", "id": "1", "tipo": "foto", "miniatura": "x", "arquivo": "y", "duracao": None,

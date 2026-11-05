@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -231,3 +232,13 @@ def test_sem_mapa_nao_ha_bloco_nem_pessoa(tmp_path):
     projeto = _Projeto(tmp_path)
     assert corrigir._bloco_da_cena_no_mapa(projeto, {"bloco": 1}) == ""
     assert corrigir._pessoa_da_cena(projeto, {"texto": "Patterson"}) == ""
+
+
+def test_tudo_so_confere_depois_do_download_o_que_ficou_na_duvida(monkeypatch):
+    cenas = [{"n": 1, "captura": {"conferida": True, "nota": 92}},
+             {"n": 2, "captura": {"conferida": True, "nota": 92, "suspeita": True}},
+             {"n": 3, "captura": {"conferida": True, "nota": 35}},
+             {"n": 4, "captura": {}}]
+    monkeypatch.setattr(corrigir, "conferiveis", lambda p, numeros=None: cenas)
+    monkeypatch.setattr(midia, "nota_minima_da_conferencia", lambda p: 40)
+    assert corrigir.na_duvida(SimpleNamespace()) == {2, 3, 4}

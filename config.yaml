@@ -43,7 +43,6 @@ voz_local:
 # precisa de US$ 0,50 de saldo no OpenRouter); sem ela, é estimado pelas pausas do áudio
 fish:
   modelo: fish-audio/s2.1-pro-free:free
-  voz_padrao: 0b12d715e4c741399594fccb12d4bbe2   # "São Cipriano", masculina, grave e séria: a voz quando ninguém escolheu outra
   transcricao: openai/whisper-large-v3-turbo
   blocos_ao_mesmo_tempo: 3
 
@@ -60,18 +59,16 @@ cenas:
 
 gemini:
   modelo: gemini-3.8-flash    # US$ 0,75 por milhão de tokens lidos e US$ 3,75 por milhão escritos (pensamento conta como escrito)
-  modelo_visao: gemini-3.8-flash  # olha as miniaturas ao escolher material real. gemini-3.1-flash-lite sai bem mais barato
   tokens_por_minuto: 8000    # limite do plano gratuito por conta. A reserva para a resposta sai daqui
   saida_minima: 700          # abaixo disso o pedido é grande demais e quem chamou divide em dois
   raciocinio: low             # minimal, low, medium ou high. O pensamento conta como token escrito e era 60% do gasto
+  raciocinio_na_cadeia: minimal  # rota gemini: da cadeia (visão e texto): sem pensar, o pensamento é cobrado como escrita
   cenas_por_lote: 20
   tentativas: 6
 
 corrigir:
   provedor: jev            # jev: o modelo de visão descreve a imagem e o Jev julga (muito mais barato).
                            # openrouter/groq/gemini: um modelo de visão só olha e julga de uma vez
-  modelo_descricao: mimo   # quem descreve as imagens para o Jev: openrouter.modelo_principal
-  modelo_descricao_reserva: gemini  # entra sozinho quando o MiMo e a cota do Groq falham
   cenas_por_descricao: 1   # cenas por chamada ao descrever. Mais que 1 e o modelo troca as legendas entre elas
   paralelo: 16             # descrições ao mesmo tempo (eram 4, o gargalo: 152 cenas de um vídeo de 10 min levavam
                            # 1,5 min no Gemini 3.1; com 16, uns 25 s). O que o Gemini recusar pelo limite vai para a
@@ -154,7 +151,6 @@ openrouter:
     - nvidia/nemotron-3.5-lightning
   raciocinio_por_modelo:         # esforço de raciocínio só onde o modelo aceita: nenhum, low, medium ou high
     dots-studio/: nenhum        # o Dots pensava 7 mil tokens e levava 99 s numa escolha de fotos; sem pensar, 25 s
-    xiaomi/mimo: nenhum         # com o raciocínio ligado, alguns lotes de cenas gastavam tudo pensando e voltavam vazios
     stealth/: low               # modelos stealth pensam antes de responder (o Space Bunny gastava tudo pensando)
     qwen/: low                  # o Qwen Flash estourava os 10 mil tokens pensando na busca das cenas cortadas e refazia
                                 # com 24 mil, minutos cada (nunca-deve-ter-dentro-de-casa-parte-2, 2026-10-05)
@@ -168,7 +164,6 @@ groq:
   max_tokens: 3000           # reserva da resposta. Com 8000, cada escolha de fotos ocupava o minuto inteiro da chave,
                              # as 11 chaves saturavam na criação e a escolha caía no Qwen pago (2026-10-05)
   saida_minima: 700          # se sobrar menos que isso para a resposta, o pedido é dividido em dois
-  modelo_visao: qwen/qwen3.8-27b  # olha as miniaturas ao escolher material real
   cenas_por_lote: 20         # cenas decididas por chamada. Menos cenas gasta menos do limite por minuto
   contexto_antes: 3          # cenas anteriores mostradas só para dar contexto
   contexto_depois: 2         # cenas seguintes mostradas só para dar contexto
@@ -437,31 +432,3 @@ trilha:
   volume_db: -16              # volume da trilha gerada (o volume_musica_db do perfil tem prioridade)
   efeitos: true               # passagem, impacto, subida e toque, nos momentos que a partitura e as cenas pedem
   volume_efeitos_db: 0        # ajuste geral dos efeitos gerados
-
-# MCP (o Claude do cliente pensa o vídeo): o cliente só manda o roteiro e recebe o vídeo. Quem vende decide aqui o
-# estilo e a voz de todo vídeo do MCP (pedido do usuário em 2026-10-09: "o cliente não deve escolher nada").
-mcp:
-  perfil: documentario        # documentario (motion editorial onde ajuda) ou documentario-vox (motion em colagem Vox)
-  voz: ""                     # vazio: a voz do perfil (GenAIPro, centavos); "fish": a voz grátis da Fish Audio
-  perfis: [documentario, documentario-vox]
-  # As imagens que o vídeo captura (escolha das fotos, descrição, conferência, revisão) são vistas pela fábrica, não
-  # pelo Claude do cliente: os gratuitos escolhem (modelos_visao, abaixo), o Gemini descreve (seção descricao) e o Jev
-  # julga a descrição. Tira do cliente o trabalho mais pesado (no ouro-serra-1min, ver imagens foi 63% do consumo dele).
-  visao_pela_fabrica: true
-  # Desde 2026-10-09 o MCP não usa mais o Claude do cliente para nada: a fábrica pensa tudo sozinha. O cliente manda o
-  # roteiro, acompanha a porcentagem e recebe o vídeo, quase sem gastar a assinatura. pelo_cliente: true volta à fila
-  # de tarefas respondida pelo Claude dele.
-  pelo_cliente: false
-  # mapa, cenas, diretor e a orquestradora do Motion IA: vazio segue o caminho de sempre da fábrica, pelo OpenRouter e
-  # pelas APIs gratuitas do .env (roteirista.modelos: Nemotron Ultra gratuito, DeepSeek de reserva, depois a cadeia de
-  # principais com o Groq). Pedido do usuário em 2026-10-09: o Gemini fica só para ver as imagens.
-  modelos_roteiro: []
-  raciocinio_roteiro: low
-  modelos_texto:                   # trilha, contexto dos blocos, buscas novas e o resto do texto
-    - gemini:gemini-3.1-flash-lite
-    - qwen/qwen3.7-flash
-  raciocinio_gemini: minimal    # sem pensar: o pensamento é cobrado como escrita (108 tokens contra 0, mesma resposta)
-  # Quem olha as imagens no TipLabs (escolha das fotos, revisão; a descrição tem a seção descricao). Vazio: a mesma
-  # cadeia do site (midia.modelos_visao: o Groq grátis, depois o Gemini 2.5 Flash-Lite e o Qwen 3.7 Flash), pedido do
-  # usuário em 2026-10-10 para valer no TipLabs e no site. Uma lista aqui vale só para o TipLabs.
-  modelos_visao: []

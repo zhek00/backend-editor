@@ -4,34 +4,37 @@ Roteiro pronto entra, vídeo narrado sai, misturando fotos e vídeos reais com i
 
 ## Como funciona
 
-1. A GenAIPro gera a narração com as vozes da ElevenLabs, e a fábrica tira o tempo de cada palavra falada da legenda que ela devolve.
-2. O Claude divide a narração em cenas. Para cada cena ele decide se vai foto real, vídeo real ou imagem de IA, escreve os termos de busca e a descrição da imagem.
-3. Nas cenas reais o sistema busca candidatos no Wikimedia Commons, no Pexels e no Pixabay. O Claude olha as miniaturas e escolhe a que combina com a narração. Se nenhuma servir, a cena vira imagem de IA.
-4. O Google gera as imagens de IA com o Nano Banana 2. Nas cenas com a personagem ele usa a foto de referência para manter o mesmo rosto.
-5. O FFmpeg monta tudo. Fotos e imagens ganham movimento lento, fotos em pé ganham moldura com fundo desfocado, vídeos são cortados no tempo da cena. No fim entram narração, música e legenda.
+1. **Narração.** As vozes open source (OmniVoice, Kokoro e Qwen3-TTS) rodam dentro da própria fábrica, na placa de vídeo, sem chave e sem custo. O tempo de cada palavra vem do Whisper do Groq.
+2. **Cenas.** O agente de roteiro lê o roteiro inteiro, divide a narração em cenas de 3 a 5 segundos e decide, para cada uma, se vai foto real, vídeo real ou imagem de IA, com os termos de busca e a descrição.
+3. **Material real.** O sistema busca em até onze bancos ao mesmo tempo (Wikimedia, Pexels, Pixabay, Unsplash, iNaturalist e acervos de museu). Um modelo de visão olha as miniaturas e escolhe, e o Jev confere se a imagem mostra o que a narração fala.
+4. **Imagens de IA.** O GPT-5.4 Image 2, pelo OpenRouter, gera só as cenas que nenhum banco resolveu, até 35% do vídeo.
+5. **Animações.** Listas, datas, comparações e números viram cenas animadas (HyperFrames), misturadas com as fotos.
+6. **Render.** O FFmpeg monta tudo: movimento lento nas fotos, animações, trilha composta pela fábrica e legenda.
 
-Cada etapa salva o que fez. Se algo falhar no meio, o mesmo comando continua de onde parou sem pagar de novo.
+Os modelos de texto e de visão vão primeiro pelos gratuitos (Groq e os gratuitos do OpenRouter) e só depois pelos pagos. Cada etapa salva o que fez. Se algo falhar no meio, o mesmo comando continua de onde parou sem pagar de novo.
 
 ## Preparação, uma vez só
 
-1. Crie uma chave de API em cada serviço.
-   - GenAIPro em https://genaipro.io, na parte de API. Vai no `.env` como `GENAIPRO_API`. Todos os modelos gastam 1 crédito por caractere.
-   - ElevenLabs em https://elevenlabs.io, opcional, só para efeitos sonoros, música e voz por descrição.
-   - Google em https://aistudio.google.com/apikey, com faturamento ativado no projeto, porque o modelo de imagem não tem plano grátis
-   - Pexels em https://www.pexels.com/api, grátis
-   - Pixabay em https://pixabay.com/api/docs, grátis
-2. Copie `.env.exemplo` para `.env` e cole as chaves. O Wikimedia Commons não precisa de chave, mas exige um contato em `midia.contato` no `config.yaml`.
-3. Conecte o Claude Code à sua assinatura. Abra o app Terminal, digite `claude`, aperte Enter e dentro dele digite `/login`. O Claude da fábrica roda por aí, sem créditos de API. O consumo aparece em `uv run fabrica custo NOME`.
-4. Escolha a voz com `uv run fabrica vozes "nome da voz"` e cole o código em `voz.voice_id` no perfil.
+1. Copie `.env.exemplo` para `.env` e cole as chaves. As obrigatórias são OpenRouter, Groq, Google (Gemini), Pexels e Pixabay; o arquivo diz onde criar cada uma. O Wikimedia Commons não precisa de chave, mas exige um contato em `midia.contato` no `config.yaml`.
+2. Prepare os motores de voz, uma vez (uns 9 GB):
+
+   ```bash
+   uv sync --project motores_voz/omnivoice
+   uv sync --project motores_voz/qwen
+   ```
+
+3. Escolha a voz pela lista do editor, com prévia, e ponha o código dela em `voz.voz_local` no perfil (`kokoro:pm_alex`, `qwen:Ryan`, `omnivoice:community_pt_br_lucas`).
+4. Para as animações, instale o Node.js 22 ou mais. Sem ele essas cenas ficam com foto.
+5. Só para perfis com personagem, efeitos sonoros ou abertura: essas partes ainda usam o Claude da sua assinatura. Abra o terminal, digite `claude` e, dentro dele, `/login`. Os outros perfis não precisam.
 
 ## Teste sem custo
 
-Usa a voz do Mac e imagens de teste no lugar das de IA. As fotos reais do Wikimedia são buscadas de verdade, porque são grátis.
+Usa a voz do computador e imagens de teste no lugar das de IA. As fotos reais do Wikimedia são buscadas de verdade, porque são grátis.
 
 ```bash
 uv run fabrica novo teste --roteiro exemplos/roteiro-enoque.txt --perfil perfis/livro-de-enoque.yaml --offline
 uv run fabrica tudo teste
-open projetos/teste/final.mp4
+open projetos/teste/final.mp4   # no Windows: start projetos/teste/final.mp4
 ```
 
 ## Vídeo de verdade
@@ -62,19 +65,6 @@ Se o canal tiver personagem fixa, gere rostos, escolha um, copie para a pasta `p
 uv run fabrica personagem --perfil perfis/vo-cida.yaml
 ```
 
-## Textos na tela
-
-Com `textos_na_tela.ativo: true` no perfil, o Claude escolhe cenas para ganhar um texto animado. Existem quatro tipos.
-
-| Tipo | Como aparece |
-|---|---|
-| `destaque` | frase grande de impacto, com uma ou duas palavras numa caixa colorida |
-| `lista` | cartão com título e itens que surgem no momento em que são narrados |
-| `capitulo` | referência grande no canto, como CAP 104 |
-| `rotulo` | etiqueta pequena com o nome do livro ou fonte citada |
-
-Cores, fontes e quando usar cada tipo ficam no bloco `textos_na_tela` do perfil.
-
 ## Aula com avatar no canto
 
 Com o bloco `avatar` no perfil, como em `perfis/workshop.yaml`, o vídeo ganha um quadro no canto com o personagem falando, do jeito de aula online. O rosto vem do HeyGen e a voz continua sendo a da fábrica.
@@ -103,11 +93,11 @@ Com o bloco `abertura` no perfil, o vídeo começa com uma prévia de alguns seg
 
 ## Imagens em lote
 
-Com `imagens.lote: true` no `config.yaml`, as imagens de IA vão de uma vez para o modo lote do Google, pela metade do preço. O Google promete o resultado em até 24 horas e costuma entregar em minutos. Se o programa parar no meio da espera, rodar o mesmo comando continua esperando o mesmo lote. Com menos de `minimo_lote` imagens, como no `refazer`, a geração é na hora. `--direto` força a geração na hora.
+Só com o provedor `google` nas imagens. Com `imagens.lote: true` no `config.yaml`, as imagens de IA vão de uma vez para o modo lote do Google, pela metade do preço. O Google promete o resultado em até 24 horas e costuma entregar em minutos. Se o programa parar no meio da espera, rodar o mesmo comando continua esperando o mesmo lote. `--direto` força a geração na hora.
 
 ## Prática guiada, só áudio
 
-Para uma meditação guiada, em que a voz fala pouco e o silêncio é longo, o roteiro é texto comum com a marcação `[SILENCIO 90]` numa linha própria. O tempo vai em segundos ou em minutos e segundos, como `[SILENCIO 1:30]`. A GenAIPro grava só as falas, uma por vez, e o silêncio vem do FFmpeg, sem custo. A música do perfil entra baixa por baixo de tudo.
+Para uma meditação guiada, em que a voz fala pouco e o silêncio é longo, o roteiro é texto comum com a marcação `[SILENCIO 90]` numa linha própria. O tempo vai em segundos ou em minutos e segundos, como `[SILENCIO 1:30]`. A voz do perfil grava só as falas, uma por vez, e o silêncio vem do FFmpeg, sem custo. A música do perfil entra baixa por baixo de tudo.
 
 ```bash
 uv run fabrica meditacao pratica --roteiro roteiros/pratica.txt --perfil perfis/meditacao.yaml
@@ -121,56 +111,42 @@ A trilha ambiente pode ser gerada na ElevenLabs Music (opcional, precisa de `ELE
 uv run fabrica musica-gerar "Slow ambient meditation pad, soft warm drones, no melody, no percussion, very calm" --minutos 5 --nome ambiente-1
 ```
 
-## Voz da biblioteca da GenAIPro
+## Vozes
 
-Procure pelo nome, ouça as amostras e copie o código da escolhida para `voz.voice_id` no perfil. Não precisa adicionar a voz a nenhuma conta. O editor mostra a mesma biblioteca, com botão para ouvir cada voz.
+A narração usa as vozes open source do VoiceStudio e do voicebox (588 hoje), rodando dentro da fábrica. O editor mostra a lista com filtros de idioma e gênero e um botão para ouvir cada uma. O código da escolhida vai em `voz.voz_local` no perfil. A Fish Audio (grátis, pelo OpenRouter) também serve, com `voz.provedor: fish`.
 
-```bash
-uv run fabrica vozes "narrador" --idioma pt
-uv run fabrica creditos
-```
-
-O segundo comando mostra o saldo da GenAIPro e quando os créditos vencem, sem gastar nada.
-
-## Criar uma voz original
-
-Opcional, pela ElevenLabs direta (precisa de `ELEVENLABS_API_KEY`). A GenAIPro só narra com vozes da biblioteca pública, então a voz criada aqui só serve na fábrica depois de compartilhada na Voice Library da ElevenLabs.
-
-O Voice Design da ElevenLabs cria uma voz nova a partir de uma descrição. Cada rodada gera 3 prévias lendo um texto de teste, e todas aparecem numa página para ouvir.
-
-```bash
-uv run fabrica voz-desenhar "Elderly Brazilian man with a deep, gravelly voice and theatrical diction" --rotulo "grave e rouca"
-uv run fabrica voz-salvar 2 --nome "Narrador do canal"
-```
-
-O segundo comando guarda a prévia escolhida na sua conta e mostra o código que vai em `voz.voice_id`. As prévias expiram depois de algum tempo, então salve logo a que gostar.
+Os comandos `vozes` e `creditos` (biblioteca e saldo da GenAIPro) e `voz-desenhar` e `voz-salvar` (ElevenLabs direta) continuam na fábrica, mas a narração não usa mais esses serviços.
 
 ## Comandos
 
 | Comando | O que faz |
 |---|---|
 | `novo` | cria um projeto com roteiro e perfil |
-| `tudo` | narração, cenas, material real, imagens e render em sequência |
-| `narrar`, `cenas`, `midia`, `imagens`, `efeitos`, `render` | cada etapa separada, e `--forcar` refaz do zero |
+| `tudo` | narração, cenas, material real, imagens, animações, trilha e render em sequência |
+| `mapa`, `narrar`, `cenas`, `midia`, `imagens`, `animation-ai`, `trilha`, `render` | cada etapa separada, e `--forcar` refaz do zero |
 | `refazer` | troca o que aparece em cenas específicas |
-| `avatar-partes` | corta a narração nos áudios que vão para o HeyGen |
 | `revisar` | abre a página com todas as cenas |
-| `custo` | mostra a estimativa de gasto |
+| `servidor` | sobe o servidor do editor (no Windows, o `LIGAR-TIPLABS.ps1` sobe tudo) |
+| `publicacao`, `thumbs`, `shorts`, `publicar` | kit do YouTube, capas, shorts e envio |
+| `custo`, `consumo`, `tempos` | estimativa e gasto, planilha do OpenRouter e onde foi o tempo |
 | `status` | mostra o que já está pronto |
-| `personagem` | gera rostos candidatos para a personagem |
+| `restaurar` | volta um projeto excluído no editor (lixeira de 7 dias) |
+
+A lista completa, com o que cada um faz, está em `uv run fabrica --help` e no `CLAUDE.md`.
 
 ## Onde fica cada coisa
 
 | Caminho | Conteúdo |
 |---|---|
 | `perfis/` | um arquivo por canal, com voz, estilo, proporção de material real, personagem e ritmo |
-| `config.yaml` | preços para a estimativa, modelo do Claude e qualidade do render |
+| `config.yaml` | preços para a estimativa, modelos de cada etapa e qualidade do render |
 | `projetos/NOME/final.mp4` | vídeo pronto |
 | `projetos/NOME/creditos.txt` | créditos das fotos e vídeos reais, para a descrição do vídeo |
 | `projetos/NOME/legendas_final.srt` | legenda para subir junto no YouTube, já com a abertura e as falas dos clipes fixos |
 | `efeitos/` | biblioteca de efeitos sonoros do canal, reaproveitados entre vídeos |
 | `projetos/NOME/revisao.html` | página de revisão das cenas |
-| `musicas/` | músicas livres de direitos, apontadas no campo `musica` do perfil |
+| `musicas/` | músicas livres de direitos, apontadas no campo `musica` do perfil (sem elas, a fábrica compõe a trilha) |
+| `motores_voz/` | os motores das vozes open source, os modelos baixados e as prévias |
 
 ## Novo canal
 

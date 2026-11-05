@@ -1361,9 +1361,23 @@ class CanalPayload(BaseModel):
 
 def _bloco_da_voz(voz: Dict[str, Any]) -> Dict[str, Any]:
     provedor = voz.get("provedor")
+    if provedor == "local":  # as vozes grátis da fábrica (o Radar manda o código em voz_local)
+        codigo = str(voz.get("voz_local") or voz.get("voice_id") or "").strip()
+        try:
+            voz_local.resolver(codigo)
+        except voz_local.ErroVozLocal:
+            raise HTTPException(status_code=400, detail="Essa voz veio sem um código válido.")
+        bloco = {"provedor": "local", "voz_local": codigo}
+        if voz.get("nome"):
+            bloco["nome_da_voz"] = voz["nome"]
+        if voz.get("idioma"):
+            bloco.update({"idioma": str(voz["idioma"])[:2], "idioma_da_voz": voz["idioma"]})
+        return bloco
     if provedor not in ("genaipro", "fish") or not str(voz.get("voice_id") or "").strip():
         raise HTTPException(status_code=400, detail="Escolha uma voz da GenAI Pro ou da Fish Audio antes de salvar o canal.")
     bloco = {"provedor": provedor, "voice_id": str(voz["voice_id"]).strip()}
+    if provedor == "genaipro":  # escolhida de propósito: não vira a voz local (Projeto.sem_narracao_paga)
+        bloco["paga_escolhida"] = True
     for chave, destino in (("nome", "nome_da_voz"), ("idioma", "idioma_da_voz"), ("modelo", "modelo"),
                            ("estabilidade", "estabilidade"), ("similaridade", "similaridade"), ("estilo", "estilo"),
                            ("velocidade", "velocidade")):

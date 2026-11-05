@@ -1,5 +1,9 @@
 # Plano de atualizações da fábrica
 
+> **Documento histórico.** O que está marcado como feito virou regra e está descrito no `CLAUDE.md`, que vale por
+> cima deste plano. Algumas decisões daqui mudaram depois: o agente de roteiro saiu do Claude da assinatura (hoje é
+> a cadeia do OpenRouter e do Groq), a IA voltou a ter teto (35%) e a narração passou a ser open source.
+
 Escrito em 3 de outubro de 2026, a partir da análise do vídeo **virou-filme-em-1996** (os leões de Tsavo).
 
 **Objetivo:** cada cena mostra o que a narração fala, naquele segundo. O pior erro é a cena **totalmente errada**

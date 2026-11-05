@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: PH MERKAT
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: giAoKpl5weRTCJK7uB9b
   nome_da_voz: Owen - Engaging and Clear Storyteller
   idioma_da_voz: en

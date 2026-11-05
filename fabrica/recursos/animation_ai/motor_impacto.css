@@ -13,8 +13,8 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--
                         radial-gradient(900px 700px at 76% 72%, var(--brilho-b, rgba(255,210,63,.14)), transparent 60%),
                         var(--fundo, #07080A); }
 .escuro { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block;
-          background: radial-gradient(ellipse at 50% 40%, rgba(7,8,10,.35), rgba(7,8,10,.92) 75%); }
-.escuro.forte { background: rgba(7,8,10,.55); }
+          background: radial-gradient(ellipse at 50% 40%, rgba(7,8,10,.25), rgba(7,8,10,.80) 75%); }
+.escuro.forte { background: rgba(7,8,10,.38); }
 .escuro.lado { background: linear-gradient(to right, rgba(7,8,10,.15), rgba(7,8,10,.55) 45%, rgba(7,8,10,.9)); }
 .card { position: absolute; border-radius: 30px; overflow: hidden; background: #15171C;
         box-shadow: 0 50px 110px rgba(0,0,0,.65), 0 0 0 2px rgba(255,255,255,.10); }
@@ -76,9 +76,6 @@ svg.linhas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
 .camada { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; display: block; }
 .camada > img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .escuro.lado-baixo { background: linear-gradient(to top right, rgba(7,8,10,.92) 15%, rgba(7,8,10,.45) 55%, rgba(7,8,10,.25)); }
-.contador { position: absolute; left: 120px; top: 300px; font-weight: 900; font-size: 120px; line-height: 1;
-            color: var(--acc, #FFD23F); text-shadow: 0 14px 40px rgba(0,0,0,.6); }
-.contador span { font-size: .4em; color: rgba(255,255,255,.75); margin-left: 6px; }
 .tinta { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; mix-blend-mode: multiply;
          background: linear-gradient(135deg, rgba(255,210,63,.30), transparent 60%); }
 .tinta.vermelha { background: linear-gradient(315deg, rgba(255,77,61,.32), transparent 60%); }

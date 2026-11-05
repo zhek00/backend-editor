@@ -196,35 +196,3 @@ def limpar(projeto, log=print, verificar_conteudo_com_gemini=True) -> dict:
 
     return resultado
 
-
-def formatar_resultado(r: dict) -> str:
-    linhas = []
-    if r["cenas_com_problema_no_inicio"] == 0:
-        linhas.append("Nenhuma mídia suspeita encontrada.")
-    else:
-        linhas.append(
-            f"{r['cenas_com_problema_no_inicio']} cena(s) tinham mídia suspeita — "
-            f"{r['cenas_resolvidas_com_material_real']} resolvidas com material real gratuito."
-        )
-        if r["avisos_restantes"]:
-            linhas.append(f"{len(set(a['cena'] for a in r['avisos_restantes']))} cena(s) continuam com aviso.")
-    if r["imagens_ia_geradas"] or r["imagens_ia_com_falha"]:
-        linhas.append(f"{r['imagens_ia_geradas']} imagem(ns) de IA geradas.")
-        if r["imagens_ia_com_falha"]:
-            linhas.append(f"{len(r['imagens_ia_com_falha'])} imagem(ns) falharam: {', '.join(map(str, r['imagens_ia_com_falha']))}")
-    if r.get("cenas_prompt_duplicado"):
-        linhas.append(
-            f"{r['cenas_prompt_duplicado']} cena(s) tinham o mesmo prompt de imagem que outra cena, "
-            f"{r.get('cenas_prompt_duplicado_corrigidas', 0)} ganharam uma descrição própria."
-        )
-        if r.get("cenas_prompt_duplicado_com_falha"):
-            linhas.append(f"{len(r['cenas_prompt_duplicado_com_falha'])} continuam com prompt duplicado: "
-                          f"{', '.join(map(str, r['cenas_prompt_duplicado_com_falha']))}")
-    if r.get("cenas_conteudo_incompativel"):
-        linhas.append(
-            f"O Gemini achou {r['cenas_conteudo_incompativel']} cena(s) com conteúdo incompatível com a narração, "
-            f"{r.get('cenas_conteudo_corrigidas', 0)} corrigidas."
-        )
-        if r.get("cenas_conteudo_com_falha"):
-            linhas.append(f"{len(r['cenas_conteudo_com_falha'])} continuam com problema: {', '.join(map(str, r['cenas_conteudo_com_falha']))}")
-    return "\n".join(linhas)

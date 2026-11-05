@@ -167,13 +167,6 @@ def _ler_json(texto):
         return json.loads(achado.group(0))
 
 
-def parte_de_imagem(caminho):
-    """Uma imagem no formato que o OpenRouter espera, para montar um pedido com texto e imagem intercalados."""
-    with open(caminho, "rb") as arquivo:
-        return {"type": "image_url", "image_url": {
-            "url": "data:image/jpeg;base64," + base64.standard_b64encode(arquivo.read()).decode()}}
-
-
 def visao(projeto) -> list:
     """Quem olha as imagens (escolha das fotos, descrição para o Jev, revisão do vídeo pronto): midia.modelos_visao,
     os gratuitos que enxergam imagem primeiro e o pago por último; sem a lista, a cadeia de principais.
@@ -181,13 +174,6 @@ def visao(projeto) -> list:
     Pedido do usuário em 2026-10-05: no nunca-deve-ter-dentro-de-casa-parte-2 (30 min, 457 cenas) a escolha das
     fotos caiu toda no Qwen Flash pago, porque o Gemma gratuito estava em 429, e custou US$ 2,44: 1.351 chamadas,
     2.500 tokens de raciocínio em cada. A análise da mídia tem que ser gratuita; o pago é só a reserva, sem pensar."""
-    from . import cliente
-
-    if cliente.visao_pela_fabrica(projeto):
-        # projeto do MCP: as imagens que o vídeo captura são descritas pela API do Gemini (mcp.modelos_visao)
-        lista = [m for m in ((projeto.config.get("mcp") or {}).get("modelos_visao") or []) if m]
-        if lista:
-            return lista
     lista = [m for m in ((projeto.config.get("midia") or {}).get("modelos_visao") or []) if m]
     return lista or principais(projeto)
 
@@ -263,20 +249,9 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
 
     Com um modelo da cadeia de principais (ou de cadeia_de), quem não atender passa a vez para o seguinte na hora
     (nunca esperar). raciocinio: a tabela de esforço por modelo no lugar de openrouter.raciocinio_por_modelo."""
-    from . import cliente, pago
+    from . import pago
 
-    if cliente.atende(projeto, etapa, imagens=bool(imagens) or isinstance(pedido, list)):
-        # projeto do MCP: quem responde é o Claude de quem usa o MCP, pela fila (cliente.py). Se ele parou depois da
-        # metade do vídeo (cliente.Reserva), a cadeia de sempre responde: os gratuitos e o pago de reserva
-        try:
-            return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
-        except cliente.Reserva:
-            pass
     cfg = projeto.config.get("openrouter") or {}
-    do_mcp = [] if cadeia_de else cliente.modelos_do_mcp(projeto, etapa)
-    if do_mcp:
-        # projeto do MCP pensado pela fábrica: o Gemini no lugar do Claude do cliente, seja qual for o modelo pedido
-        cadeia_de, modelo = do_mcp, do_mcp[0]
     modelo = modelo or cfg.get("modelo", MODELO_PADRAO)
     cadeia = cadeia_de or principais(projeto)
     rotas = cadeia[cadeia.index(modelo):] if modelo in cadeia else [modelo]
@@ -366,33 +341,16 @@ def ve_imagem(projeto, rota) -> bool:
     return not any(rota.startswith(p) for p in so_texto)
 
 
-def _raciocinio_gemini(projeto, etapa):
-    """O roteiro pensa um pouco (mcp.raciocinio_roteiro); ver imagens e o resto, sem pensar (mcp.raciocinio_gemini)."""
-    from . import cliente
-    cfg = projeto.config.get("mcp") or {}
-    if cliente.grupo(etapa) == cliente.ROTEIRO:
-        return cfg.get("raciocinio_roteiro") or cfg.get("raciocinio_gemini")
-    return cfg.get("raciocinio_gemini")
-
-
 def uma_rota(projeto, etapa, instrucoes, pedido, esquema, log, rota, imagens, temperatura, cadeia=False,
              raciocinio=None):
     """Uma rota da cadeia: "groq:MODELO" vai pelo Groq (as 11 chaves do .env, de graça); o resto, pelo OpenRouter."""
-    from . import cliente
-
-    if cliente.atende(projeto, etapa, imagens=bool(imagens) or isinstance(pedido, list)):
-        # o Motion IA chama a rota direto, sem passar por perguntar
-        try:
-            return cliente.pedir(projeto, etapa, instrucoes, pedido, esquema, imagens, log=log)
-        except cliente.Reserva:
-            pass
     if rota.startswith("gemini:"):
-        # a API do Google com a GEMINI_API_KEY (faturamento do AI Studio): no MCP ela descreve e escolhe as imagens no
-        # lugar do Claude do cliente (mcp.visao_pela_fabrica). Quem não responde passa a vez na cadeia
+        # a API do Google com a GEMINI_API_KEY (faturamento do AI Studio), sem pensar (gemini.raciocinio_na_cadeia):
+        # o pensamento é cobrado como escrita. Quem não responde passa a vez na cadeia
         from . import gemini_local
         resposta = gemini_local.perguntar(projeto, etapa, instrucoes + regra_do_idioma(projeto), pedido, esquema, log=log,
                                           modelo=rota[7:], imagens=imagens, temperatura=temperatura, na_cadeia=True,
-                                          raciocinio=_raciocinio_gemini(projeto, etapa))
+                                          raciocinio=(projeto.config.get("gemini") or {}).get("raciocinio_na_cadeia"))
         faltam = [k for k in (esquema or {}).get("required", []) if not isinstance(resposta, dict) or k not in resposta]
         if faltam:
             raise RotaIndisponivel(f"o Gemini não trouxe as chaves {', '.join(faltam)} na etapa {etapa}")

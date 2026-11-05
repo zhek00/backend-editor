@@ -179,7 +179,7 @@
   // número herói: a foto num cartão e o número gigante contando, com o que ele mede
   R.heroi = function () {
     const t = T(s.t, 0.3);
-    fundo(s.fundo, { desfoque: 16 });
+    fundo(s.fundo, { desfoque: 10 });
     brilho(1350, 430, 340, "rgba(255,210,63,.32)", Math.max(0, t - 0.2));
     let prefixo = "", sufixo = "", numero = null, casas = 0, fixo = null;
     if (TIPO === "porcentagem") { numero = Number(s.valor); casas = T(s.casas, 0); sufixo = "%"; }
@@ -248,13 +248,13 @@
   // baralho: uma carta com foto por item, cada uma entrando no seu segundo e empurrando as anteriores para trás
   R.baralho = function () {
     const itens = (s.itens || []).filter(it => it && (it.texto || it.titulo));
-    fundo(s.fundo, { desfoque: 8, forte: true });  // com 20, o vídeo todo ficava fosco
+    fundo(s.fundo, { desfoque: 5, forte: true });  // com 20, o vídeo todo ficava fosco
     if (s.titulo) {
       const ti = texto(el(`<div class="bloco" ${PERMITE} style="left:0;top:34px;width:1920px;text-align:center"></div>`),
-                       "leve", "margin:0 auto", 1700, 80, 30);
+                       "leve sombra-txt", "margin:0 auto", 1700, 80, 30);
       escreve(ti, limpo(s.titulo), T(s.t_titulo, 0.2), { passo: 0.06 });
     }
-    const numerado = ["lista", "passos", "ranking", "pilha_cartoes"].includes(TIPO);
+    // sem bolinha de contagem (1, 2, 3): só a marca que diz alguma coisa (✓, ✕, ★, !)
     const marca = { errado: "✕", alerta: "!", estrela: "★", certo: "✓" }[s.marca] || (TIPO === "checklist" ? "✓" : null);
     const POS = ["50% 40%", "30% 50%", "70% 45%", "50% 70%", "20% 30%", "80% 60%"];
     const pilha = [];
@@ -276,7 +276,7 @@
       const nome = texto(caixa, "gigante sombra-txt", "font-size:112px", 890, 250, 44);
       escreve(nome, it.titulo || it.texto, t + 0.08, { passo: 0.06, jeito: "curto" });
       if (it.titulo && it.texto) escreve(texto(caixa, "serif", "font-size:46px;margin-top:10px;color:#fff", 890, 120, 26), limpo(it.texto), t + 0.4, { passo: 0.05, jeito: "curto" });
-      const simbolo = numerado ? String(i + 1) : marca;
+      const simbolo = marca;
       if (simbolo) {
         const selo = el(`<div class="selo" ${PERMITE} style="left:-34px;top:-34px">${esc(simbolo)}</div>`, emb);
         entra(selo, t + 0.3, "carimbo", 0.4);
@@ -301,14 +301,12 @@
   // ---- outros desenhos dos tipos de itens (lista, destaques, checklist...). Pedido do usuário em 2026-10-14: 15 dos 19
   // trechos animados do everything-you-need-to-answer saíram como o baralho, e o vídeo ficava sempre igual
   const itensDe = (max) => (s.itens || []).filter(it => it && (it.texto || it.titulo)).slice(0, max);
-  const simboloDe = (i) => {
-    const marca = { errado: "✕", alerta: "!", estrela: "★", certo: "✓" }[s.marca] || (TIPO === "checklist" ? "✓" : null);
-    return ["lista", "passos", "ranking", "pilha_cartoes"].includes(TIPO) ? String(i + 1) : marca;
-  };
+  const simboloDe = () =>
+    ({ errado: "✕", alerta: "!", estrela: "★", certo: "✓" })[s.marca] || (TIPO === "checklist" ? "✓" : null);
   function tituloNoAlto(top) {
     if (!s.titulo) return;
     const ti = texto(el(`<div class="bloco" ${PERMITE} style="left:0;top:${top}px;width:1920px;text-align:center"></div>`),
-                     "leve", "margin:0 auto", 1700, 80, 30);
+                     "leve sombra-txt", "margin:0 auto", 1700, 80, 30);
     escreve(ti, limpo(s.titulo), T(s.t_titulo, 0.2), { passo: 0.06 });
   }
 
@@ -316,7 +314,7 @@
   R.grade = function () {
     const itens = itensDe(4);
     if (itens.length < 2) { R.baralho(); return; }
-    fundo(s.fundo, { desfoque: 8, forte: true });
+    fundo(s.fundo, { desfoque: 5, forte: true });
     tituloNoAlto(40);
     const k = itens.length, gap = 40, w = Math.min(500, (1640 - (k - 1) * gap) / k), h = 540;
     const x0 = (1920 - (k * w + (k - 1) * gap)) / 2, y = 175;
@@ -346,7 +344,7 @@
   R.faixas = function () {
     const itens = itensDe(5);
     if (itens.length < 2) { R.baralho(); return; }
-    fundo(s.fundo, { desfoque: 8, forte: true });
+    fundo(s.fundo, { desfoque: 5, forte: true });
     tituloNoAlto(36);
     const n = itens.length, gap = 22, top0 = 140, alt = Math.min(150, (630 - (n - 1) * gap) / n);
     const fotoW = Math.round(alt * 1.7);
@@ -389,8 +387,6 @@
       } else {
         el(`<div class="bg vazio" ${PERMITE} style="left:0;top:0;width:100%;height:100%"></div>`, camada);
       }
-      const simbolo = simboloDe(i) || String(i + 1);
-      el(`<div class="contador" ${PERMITE}>${esc(simbolo)}<span ${PERMITE}>/${itens.length}</span></div>`, camada);
       const bloco = el(`<div class="bloco" ${PERMITE} style="left:120px;top:430px"></div>`, camada);
       escreve(texto(bloco, "gigante sombra-txt", "font-size:170px", 1680, 330, 64), it.titulo || it.texto,
               Math.max(t + 0.1, ts[i] - 0.05), { passo: 0.07, jeito: "soco", d: 0.45 });
@@ -436,7 +432,7 @@
 
   // comparar: um lado grande no meio; o outro entra e a tela divide (amarelo contra vermelho)
   R.comparar = function () {
-    fundo(s.fundo, { desfoque: 8, forte: true });
+    fundo(s.fundo, { desfoque: 5, forte: true });
     const lados = TIPO === "comparar" ? [s.esq || {}, s.dir || {}] : [s.antes || {}, s.depois || {}];
     const t0 = T(lados[0].t, 0.3), t1 = Math.max(T(lados[1].t, DUR * 0.45), t0 + 0.8);
     const neutro = !!s.neutro;
@@ -487,7 +483,7 @@
   R.ligacao = function () {
     const itens = (s.itens || []).filter(it => it && (it.texto || it.data));
     if (itens.length < 2) { R.frase(); return; }
-    fundo(s.fundo, { desfoque: 8, forte: true });
+    fundo(s.fundo, { desfoque: 5, forte: true });
     const destino = itens[itens.length - 1], fontes = itens.slice(0, -1);
     const k = fontes.length, w = Math.min(520, (1700 - (k - 1) * 30) / k), h = 250;
     const x0 = (1920 - (k * w + (k - 1) * 30)) / 2;

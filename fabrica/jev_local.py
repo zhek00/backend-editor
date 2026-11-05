@@ -120,13 +120,9 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
 
     Com jev.julgar_com: principal no config.yaml, ou FABRICA_JULGAR_COM=principal no ambiente (vale só para aquele
     processo, sem mexer no servidor que está no ar), quem julga é o modelo principal, que hoje é gratuito."""
-    from . import cliente
-
     relogio = time.monotonic()
     cfg = projeto.config.get("jev") or {}
-    if cliente.atende(projeto, etapa) or \
-            (os.environ.get("FABRICA_JULGAR_COM") or cfg.get("julgar_com") or "jev").strip().lower() == "principal":
-        # no projeto do MCP o Claude do cliente julga, com as mesmas perguntas do Jev (pela fila de cliente.py)
+    if (os.environ.get("FABRICA_JULGAR_COM") or cfg.get("julgar_com") or "jev").strip().lower() == "principal":
         try:
             return _pelo_mimo(projeto, etapa, estado, perguntas, log, "")
         except (Exception, SystemExit) as e:

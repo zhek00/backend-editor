@@ -149,12 +149,6 @@ def autorizar(projeto, rota, etapa, fora, log=print) -> bool:
     """Antes do primeiro modelo pago da cadeia. True: pode pagar. False: um gratuito voltou, tente a cadeia de novo.
 
     fora: {rota gratuita: segundo em que ela volta} das que estão de lado agora."""
-    from . import cliente
-
-    # projeto do MCP: a cadeia só chega aqui quando o Claude do cliente parou depois da metade do vídeo, e a reserva
-    # paga é a regra combinada (cliente.Reserva); ninguém está no editor para confirmar
-    if cliente.ativo(projeto):
-        return True
     # confirmar_pago false (pedido do usuário em 2026-10-10): o pago entra sozinho, e a produção só para com consumo
     # alto, acima do teto do vídeo. Liberado no editor, segue até o fim do dia
     alto = not confirmar(projeto) and consumo_alto(projeto)

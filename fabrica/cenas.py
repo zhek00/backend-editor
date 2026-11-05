@@ -24,7 +24,6 @@ from .util import ler_cache as _ler_cache  # None se ausente ou corrompido: a et
 ESTILO_ALVO_SEGUNDOS = 4.0
 ESTILO_MINIMO_SEGUNDOS = 3.0
 ESTILO_MAXIMO_SEGUNDOS = 5.0
-ESTILO_PROPORCAO_REAL = 0.9
 ESTILO_MINIMO_FOTOS = 0.70  # do material real, pelo menos isso tem que ser foto
 # nos primeiros minutos, esta fatia do material real é vídeo, para prender a atenção: (até o segundo, fatia)
 # os primeiros 40 s são o gancho: todo material real é vídeo (pedido do usuário em 2026-10-25: "os primeiros 40s são os

@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: Dr. Insecto
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: W1hAcdh0RNsPYUA7fkJh
   nome_da_voz: El Faraon - Deep, Powerful and Peaceful
   idioma_da_voz: es

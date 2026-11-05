@@ -500,9 +500,6 @@ def fluxo(d, dur, foto=None):
     return {"css": css, "html": html, "js": "\n".join(js)}
 
 
-ORDINAIS = {1: "º", 2: "º"}
-
-
 def ranking(d, dur, foto=None):
     """Posição num ranking: a posição em número grande e a lista de posições, com a dele acesa."""
     t = _tempos(dur)

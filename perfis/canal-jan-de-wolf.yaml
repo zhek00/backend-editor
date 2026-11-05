@@ -4,6 +4,7 @@ base: documentario.yaml
 nome: Jan de WOLF
 voz:
   provedor: genaipro
+  paga_escolhida: true             # escolhida no Radar: não vira a voz local
   voice_id: dLPO5AsXc3FZDbTh1IKa
   nome_da_voz: Ido - Informal, Friendly Narrator
   idioma_da_voz: nl
