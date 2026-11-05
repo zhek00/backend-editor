@@ -16,6 +16,8 @@ import threading
 from datetime import datetime
 from typing import Optional
 
+from .util import gravar_atomico
+
 _trava = threading.Lock()
 
 # categoria -> (rótulo, nome da unidade medida)
@@ -133,18 +135,34 @@ def registrar(projeto, categoria: str, motivo: str, valor_usd: float, detalhes: 
     }
     with _trava:
         arquivo = projeto.caminho("custos_reais.json")
-        historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
-        historico.append(linha)
-        arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+        lista = _lista_do_arquivo(arquivo)
+        if lista is None:
+            # o arquivo fica guardado ao lado, para dar para olhar; o registro recomeça daqui
+            arquivo.replace(arquivo.with_name(f"custos_reais.quebrado-{datetime.now():%Y%m%d-%H%M%S}.json"))
+            lista = []
+        lista.append(linha)
+        gravar_atomico(arquivo, json.dumps(lista, ensure_ascii=False, indent=2))
     from . import consumo  # imagem e transcrição pelo OpenRouter entram no registro central (Kie e GenAIPro não)
     consumo.registrar_custo(projeto, categoria, detalhes, valor_usd)
 
 
-def historico(projeto) -> list:
-    arquivo = projeto.pasta / "custos_reais.json"
+def _lista_do_arquivo(arquivo):
+    """O que está gravado, [] sem arquivo, ou None quando ele está quebrado.
+
+    Anotar um custo nunca pode parar a produção. Na queda de energia de 2026-11-04 (23:24) este arquivo do
+    17-ultimas-fotos virou 12 mil zeros: cada imagem nova era salva, a anotação estourava com "Expecting value", a
+    cena contava como falha e o `_gerar_uma` gerava a imagem de novo, pagando outra vez."""
     if not arquivo.exists():
         return []
-    return json.loads(arquivo.read_text(encoding="utf-8"))
+    try:
+        dados = json.loads(arquivo.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return dados if isinstance(dados, list) else None
+
+
+def historico(projeto) -> list:
+    return _lista_do_arquivo(projeto.pasta / "custos_reais.json") or []
 
 
 def _uso_dos_modelos(projeto) -> list:

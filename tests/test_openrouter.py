@@ -156,7 +156,76 @@ def test_antes_de_pagar_espera_uns_segundos_pelo_gratis(monkeypatch):
     projeto = SimpleNamespace(config={"openrouter": {"principais": ["groq:qwen/qwen3.8-27b", "qwen/qwen3.8-flash"]}})
     assert openrouter_local.perguntar(projeto, "teste", "i", "p", {}, log=lambda *a: None,
                                       modelo="groq:qwen/qwen3.8-27b") == {"ok": True}
-    assert rotas == ["groq:qwen/qwen3.8-27b", "groq:qwen/qwen3.8-27b"] and 0 < esperas[0] <= 21
+    # 20 s até a volta, mais o meio segundo de folga e até 2,5 s de sorteio (as cenas que escolhem ao mesmo tempo
+    # não voltam todas no mesmo instante, senão estouram o limite do minuto de novo na hora)
+    assert rotas == ["groq:qwen/qwen3.8-27b", "groq:qwen/qwen3.8-27b"] and 0 < esperas[0] <= 23
+    openrouter_local._FORA_DO_AR.clear()
+
+
+def test_espera_a_paga_rapida_em_vez_de_cair_na_de_reserva(monkeypatch, tmp_path):
+    # medido nos 26 vídeos de outubro: a reserva (Qwen 3.7 Flash) levou 22,9 s por chamada contra 2,1 s do Gemini 2.5
+    # Flash-Lite, 15% das chamadas e 66% de todo o tempo de modelo da escolha das fotos. A espera só valia para os
+    # gratuitos, então um 429 de minuto no Gemini jogava a escolha inteira na reserva
+    import time as _time
+    openrouter_local._FORA_DO_AR.clear()
+    rotas, esperas = [], []
+
+    def dormir(segundos):
+        # só volta quem a espera alcança: a cota do dia do Groq (1 h) segue de lado
+        esperas.append(segundos)
+        agora = _time.time()
+        for r, quando in list(openrouter_local._FORA_DO_AR.items()):
+            if quando - agora <= segundos:
+                del openrouter_local._FORA_DO_AR[r]
+
+    monkeypatch.setattr(openrouter_local.time, "sleep", dormir)
+
+    def rota(projeto, etapa, i, p, e, log, r, imagens, t, cadeia=False, raciocinio=None):
+        rotas.append(r)
+        if r == "groq:qwen/qwen3.8-27b":
+            openrouter_local._FORA_DO_AR[r] = _time.time() + 3600  # a cota do dia: não vale esperar
+            raise openrouter_local.RotaIndisponivel("a cota de 24 horas de todas as chaves do Groq está cheia")
+        if r == "google/gemini-2.5-flash-lite" and not esperas:
+            openrouter_local._FORA_DO_AR[r] = _time.time() + 12  # o limite do minuto: volta em 12 s
+            raise openrouter_local.RotaIndisponivel("429 rate limit")
+        return {"ok": True}
+
+    monkeypatch.setattr(openrouter_local, "uma_rota", rota)
+    cadeia = ["groq:qwen/qwen3.8-27b", "google/gemini-2.5-flash-lite", "qwen/qwen3.7-flash"]
+    projeto = SimpleNamespace(nome="x", pasta=tmp_path,
+                              config={"openrouter": {"principais": cadeia, "confirmar_pago": False},
+                                      "midia": {"espera_pelo_gratis": 0}})
+    assert openrouter_local.perguntar(projeto, "escolha de material real", "i", "p", {}, log=lambda *a: None,
+                                      modelo=cadeia[0], cadeia_de=cadeia, espera=0) == {"ok": True}
+    # o Groq caiu pelo dia (sem espera, midia.espera_pelo_gratis 0), o Gemini caiu pelo minuto e é esperado:
+    # a reserva paga jamais entra
+    assert "qwen/qwen3.7-flash" not in rotas
+    assert rotas == ["groq:qwen/qwen3.8-27b", "google/gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"]
+    assert 0 < esperas[0] <= 15
+    openrouter_local._FORA_DO_AR.clear()
+
+
+def test_gratuito_disponivel_entra_na_hora_sem_esperar_o_de_antes(monkeypatch):
+    # trocar um gratuito por outro gratuito não custa nada, então nunca vale esperar: a espera é só para não pagar
+    # e para não cair na reserva paga lenta
+    import time as _time
+    openrouter_local._FORA_DO_AR.clear()
+    rotas, esperas = [], []
+    monkeypatch.setattr(openrouter_local.time, "sleep", lambda s: esperas.append(s))
+
+    def rota(projeto, etapa, i, p, e, log, r, imagens, t, cadeia=False, raciocinio=None):
+        rotas.append(r)
+        if r == "groq:qwen/qwen3.8-27b":
+            openrouter_local._FORA_DO_AR[r] = _time.time() + 5  # fora por 5 s, bem dentro de espera_pelo_gratis
+            raise openrouter_local.RotaIndisponivel("429 limite do minuto")
+        return {"ok": True}
+
+    monkeypatch.setattr(openrouter_local, "uma_rota", rota)
+    cadeia = ["groq:qwen/qwen3.8-27b", "google/gemma-4-31b-it:free", "qwen/qwen3.7-flash"]
+    projeto = SimpleNamespace(nome="x", config={"openrouter": {"principais": cadeia}})
+    assert openrouter_local.perguntar(projeto, "teste", "i", "p", {}, log=lambda *a: None,
+                                      modelo=cadeia[0]) == {"ok": True}
+    assert rotas == ["groq:qwen/qwen3.8-27b", "google/gemma-4-31b-it:free"] and esperas == []
     openrouter_local._FORA_DO_AR.clear()
 
 

@@ -17,7 +17,7 @@ from datetime import datetime
 
 import httpx
 
-from .openrouter_local import _chave, cabecalhos, postar_com_sessao
+from .openrouter_local import _chave, cabecalhos, credito_reservado, postar_com_sessao
 from .util import gravar_cache, ler_cache
 
 URL = "https://openrouter.ai/api/alpha/decisions"
@@ -145,7 +145,7 @@ def decidir(projeto, etapa, estado: dict, perguntas: dict, log=print, modelo=Non
             continue
         if r.status_code == 401:
             raise SystemExit("A chave do OpenRouter foi recusada pelo Jev. Confira o arquivo .env.")
-        if r.status_code == 402:
+        if r.status_code == 402 and not credito_reservado(r):
             raise SystemExit("Acabou o crédito no OpenRouter. Adicione saldo em openrouter.ai/credits.")
         if r.status_code in (429, 500, 502, 503, 504, 529):
             ultimo_erro = f"o servidor do Jev caiu ({r.status_code})"

@@ -1,0 +1,13 @@
+# Canal criado no editor (2026-10-15). Herda tudo de documentario.yaml e guarda a voz do canal.
+# Para mudar estilo, diretrizes ou texto fixo da descrição, edite aqui (veja perfis/base-documentario.yaml).
+base: documentario.yaml
+nome: PH MERKAT
+voz:
+  provedor: genaipro
+  voice_id: giAoKpl5weRTCJK7uB9b
+  nome_da_voz: Owen - Engaging and Clear Storyteller
+  idioma_da_voz: en
+
+imagens:
+  provedor: assinatura
+  provedor_reserva: openrouter

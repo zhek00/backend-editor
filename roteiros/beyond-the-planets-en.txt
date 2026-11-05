@@ -1,0 +1,31 @@
+[TITULO] The Asteroid Belt
+
+Between Mars and Jupiter lies the asteroid belt, millions of rocky fragments left over from the birth of the solar system.
+
+[TITULO] Ceres
+
+Ceres is the largest object in the asteroid belt, a dwarf planet with bright white spots of salt on its surface.
+
+[TITULO] Comets
+
+Comets are frozen balls of ice and dust. When they come close to the Sun, they grow long glowing tails that stretch across the sky.
+
+[TITULO] Pluto
+
+Pluto is a small icy dwarf planet at the edge of the solar system. The New Horizons spacecraft revealed a giant heart-shaped plain of nitrogen ice.
+
+[TITULO] The Kuiper Belt
+
+Beyond Neptune lies the Kuiper Belt, a vast ring of frozen worlds. Arrokoth, a strange snowman-shaped rock, was visited by a spacecraft in 2019.
+
+[TITULO] The Oort Cloud
+
+Far beyond the Kuiper Belt, a giant cloud of icy objects may surround the whole solar system. It is the distant home of many comets.
+
+[TITULO] Voyager
+
+The Voyager probes, launched in 1977, have left the solar system. They now travel through interstellar space, carrying a golden record from Earth.
+
+[TITULO] Into the Stars
+
+Beyond the reach of the Sun, the Milky Way stretches out with billions of stars, and countless other worlds waiting to be discovered.

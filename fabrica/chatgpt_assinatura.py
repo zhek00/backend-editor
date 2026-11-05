@@ -3,8 +3,8 @@
 Pedido do usuário em 2026-11-01, no mesmo formato do Robô do Dotti: "criar as imagens pela assinatura". É o mesmo
 caminho que o Radar já usa para o roteiro (o Claude Code deste computador pela assinatura do claude.ai, veja
 radar/roteiro_claude.py): aqui quem entra é o Codex deste computador, logado com `codex login` na conta ChatGPT da
-pessoa. O login fica em ~/.codex/auth.json e a fábrica só o lê — a chave OPENAI_API_KEY nunca entra nesta conta,
-senão a OpenAI cobraria por fora da assinatura.
+pessoa. O login fica em ~/.codex-fabrica/auth.json (o Radar grava pelo "Conectar outra conta") e a fábrica só o
+lê — a chave OPENAI_API_KEY nunca entra nesta conta, senão a OpenAI cobraria por fora da assinatura.
 
 A rota é a mesma que o Codex usa (https://chatgpt.com/backend-api/codex/responses), com a ferramenta de imagem
 ligada. Ela NÃO é uma API pública da OpenAI: é a mesma porta do aplicativo, e a OpenAI pode mudá-la sem aviso. Por
@@ -28,8 +28,11 @@ import httpx
 
 from .config import RAIZ
 
-PASTA_CODEX = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-LOGIN = PASTA_CODEX / "auth.json"
+PASTA_CODEX = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))   # só para ler a versão do Codex
+# O login é só da fábrica (2026-11-02): no ~/.codex ele era o mesmo do Robô do Dotti, e os dois renovando o mesmo
+# login fizeram a OpenAI revogá-lo (token_revoked). O Radar grava nesta pasta (radar/chatgpt_conta.py).
+PASTA_LOGIN = Path(os.environ.get("FABRICA_CODEX_HOME") or (Path.home() / ".codex-fabrica"))
+LOGIN = PASTA_LOGIN / "auth.json"
 LIMITES = RAIZ / "chatgpt_limites.json"
 
 RESPOSTAS = "https://chatgpt.com/backend-api/codex/responses"
@@ -67,8 +70,8 @@ def _ler_login() -> dict:
     try:
         return json.loads(LOGIN.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise SemLogin(f"Não achei o login do ChatGPT em {LOGIN}. Rode `codex login` neste computador e entre com a "
-                       "conta da assinatura.")
+        raise SemLogin(f"Não achei o login do ChatGPT em {LOGIN}. Ligue a conta em Radar › Integrações › "
+                       "Conectar outra conta.")
     except (OSError, ValueError) as erro:
         raise SemLogin(f"Não consegui ler {LOGIN}: {str(erro)[:160]}")
 
@@ -106,13 +109,13 @@ def _renovar(dados: dict) -> dict:
     tokens = dados.get("tokens") or {}
     refresh = tokens.get("refresh_token")
     if not refresh:
-        raise SemLogin("O login do ChatGPT não tem refresh_token. Rode `codex login` de novo.")
+        raise SemLogin("O login do ChatGPT não tem refresh_token. Ligue a conta de novo em Radar › Integrações.")
     r = httpx.post(RENOVAR, timeout=30,
                    headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
                    data={"client_id": CLIENTE_CODEX, "grant_type": "refresh_token", "refresh_token": refresh,
                          "scope": "openid profile email"})
     if r.status_code in (400, 401):
-        raise SemLogin("O login do ChatGPT venceu. Rode `codex login` neste computador para entrar de novo.")
+        raise SemLogin("O login do ChatGPT venceu. Ligue a conta de novo em Radar › Integrações › Conectar outra conta.")
     if r.status_code != 200:
         raise RuntimeError(f"Não consegui renovar o login do ChatGPT ({r.status_code}): {r.text[:200]}")
     novo = r.json()
@@ -286,8 +289,10 @@ def gerar(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referenc
     tamanho = TAMANHOS.get(proporcao, TAMANHOS["16:9"])
     tentar = [_modelo_que_atende] if _modelo_que_atende else list(MODELOS_CONVERSA)
     recusados = []
+    renovado = False
     with httpx.Client(timeout=httpx.Timeout(600.0, connect=30.0), follow_redirects=True) as cliente:
-        for modelo in tentar:
+        while tentar:
+            modelo = tentar[0]
             corpo = _corpo(modelo, prompt, qualidade, tamanho, referencias)
             with cliente.stream("POST", RESPOSTAS, json=corpo, headers=_cabecalhos(token, conta)) as r:
                 if r.status_code == 429:
@@ -295,13 +300,24 @@ def gerar(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referenc
                     _guardar_limites(r.headers)
                     raise LimiteDaAssinatura("A assinatura do ChatGPT bateu no limite (janela de 5 horas ou da "
                                              "semana). " + _quando_volta())
+                if r.status_code == 401 and not renovado:
+                    # 2026-11-02: o ChatGPT deu "token_expired" para um access_token com 10 dias pela frente (o login
+                    # tinha sido refeito no Radar) e os vídeos foram para a reserva sem crédito. O exp do JWT não
+                    # basta: recusado, renova uma vez e pede de novo
+                    r.read()
+                    renovado = True
+                    with _trava:
+                        dados = _renovar(_ler_login())
+                    token = dados["tokens"]["access_token"]
+                    conta = dados["tokens"].get("account_id") or conta
+                    continue
                 if r.status_code in (401, 403):
                     r.read()
                     raise SemLogin("O ChatGPT recusou o login da assinatura. Rode `codex login` neste computador.")
                 if r.status_code != 200:
                     r.read()
                     if r.status_code == 400 and "model_not_found" in r.text:
-                        recusados.append(modelo)
+                        recusados.append(tentar.pop(0))
                         continue        # a conta não tem este modelo: o próximo da lista
                     raise RuntimeError(f"A assinatura do ChatGPT falhou ({r.status_code}): {r.text[:300]}")
                 limites = _guardar_limites(r.headers)

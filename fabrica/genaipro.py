@@ -14,6 +14,8 @@ As vozes padrão da ElevenLabs (George, Rachel...) são recusadas: só valem as 
 import json
 import os
 import re
+import statistics
+import threading
 import time
 
 import httpx
@@ -26,6 +28,33 @@ MODELOS = ("eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "
 MODELO_PADRAO = "eleven_multilingual_v2"
 VELOCIDADE_MIN, VELOCIDADE_MAX = 0.7, 1.2
 ESPERA_MAXIMA = 20 * 60  # uma tarefa grande pode ficar na fila da GenAIPro por alguns minutos
+# Quanto cada voz demora na fila, medido em cada tarefa (pedido do usuário em 2026-10-24). A "Adam - Radio Announcer"
+# levou 234 s numa frase de 5 palavras e mais de 1h por bloco, enquanto a voz anterior do canal UK levou 20 s: a
+# GenAIPro não diz qual voz é própria dela e qual vem da comunidade, então o aviso sai da medida.
+ARQUIVO_VELOCIDADE = "genaipro_vozes.json"
+LENTA_A_PARTIR = 5 * 60  # espera típica por tarefa a partir da qual a voz ganha o aviso
+_trava_velocidade = threading.Lock()
+
+# Os 32 idiomas que os modelos de narração falam (Multilingual v2 e, com hu, no e vi, o Turbo v2.5). Conferido em
+# 28/10/2026: a biblioteca tem vozes nativas em todos eles (as línguas só do Eleven v3 têm meia dúzia de vozes).
+IDIOMAS = [
+    {"id": "pt", "nome": "Português", "bandeira": "🇧🇷"}, {"id": "es", "nome": "Español", "bandeira": "🇪🇸"},
+    {"id": "en", "nome": "English", "bandeira": "🇺🇸"}, {"id": "fr", "nome": "Français", "bandeira": "🇫🇷"},
+    {"id": "de", "nome": "Deutsch", "bandeira": "🇩🇪"}, {"id": "it", "nome": "Italiano", "bandeira": "🇮🇹"},
+    {"id": "nl", "nome": "Nederlands", "bandeira": "🇳🇱"}, {"id": "pl", "nome": "Polski", "bandeira": "🇵🇱"},
+    {"id": "ru", "nome": "Русский", "bandeira": "🇷🇺"}, {"id": "uk", "nome": "Українська", "bandeira": "🇺🇦"},
+    {"id": "tr", "nome": "Türkçe", "bandeira": "🇹🇷"}, {"id": "ar", "nome": "العربية", "bandeira": "🇸🇦"},
+    {"id": "hi", "nome": "हिन्दी", "bandeira": "🇮🇳"}, {"id": "ta", "nome": "தமிழ்", "bandeira": "🇮🇳"},
+    {"id": "ja", "nome": "日本語", "bandeira": "🇯🇵"}, {"id": "zh", "nome": "中文", "bandeira": "🇨🇳"},
+    {"id": "ko", "nome": "한국어", "bandeira": "🇰🇷"}, {"id": "id", "nome": "Bahasa Indonesia", "bandeira": "🇮🇩"},
+    {"id": "ms", "nome": "Bahasa Melayu", "bandeira": "🇲🇾"}, {"id": "fil", "nome": "Filipino", "bandeira": "🇵🇭"},
+    {"id": "vi", "nome": "Tiếng Việt", "bandeira": "🇻🇳"}, {"id": "sv", "nome": "Svenska", "bandeira": "🇸🇪"},
+    {"id": "da", "nome": "Dansk", "bandeira": "🇩🇰"}, {"id": "no", "nome": "Norsk", "bandeira": "🇳🇴"},
+    {"id": "fi", "nome": "Suomi", "bandeira": "🇫🇮"}, {"id": "el", "nome": "Ελληνικά", "bandeira": "🇬🇷"},
+    {"id": "cs", "nome": "Čeština", "bandeira": "🇨🇿"}, {"id": "sk", "nome": "Slovenčina", "bandeira": "🇸🇰"},
+    {"id": "hu", "nome": "Magyar", "bandeira": "🇭🇺"}, {"id": "ro", "nome": "Română", "bandeira": "🇷🇴"},
+    {"id": "bg", "nome": "Български", "bandeira": "🇧🇬"}, {"id": "hr", "nome": "Hrvatski", "bandeira": "🇭🇷"},
+]
 
 
 class ErroGenAIPro(SystemExit):
@@ -130,6 +159,50 @@ def _voz(v: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------- velocidade de cada voz
+
+def _arquivo_velocidade():
+    from .config import RAIZ
+    return RAIZ / ARQUIVO_VELOCIDADE
+
+
+def _velocidades() -> dict:
+    try:
+        dados = json.loads(_arquivo_velocidade().read_text(encoding="utf-8"))
+        return dados if isinstance(dados, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def anotar_espera(voice_id: str, segundos: float) -> None:
+    """Guarda quanto a tarefa dessa voz ficou na fila da GenAIPro (as 10 últimas de cada voz)."""
+    if not voice_id:
+        return
+    with _trava_velocidade:
+        dados = _velocidades()
+        v = dados.setdefault(voice_id, {"esperas": []})
+        v["esperas"] = (v.get("esperas") or [])[-9:] + [round(segundos)]
+        v["quando"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            _arquivo_velocidade().write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass  # a medida é só para o aviso: nunca para a narração
+
+
+def lentidao(voice_id: str) -> dict:
+    """{"lenta": True, "minutos": N, "aviso": "..."} quando a voz costuma passar de 5 minutos por tarefa; {} se não."""
+    esperas = (_velocidades().get(voice_id or "") or {}).get("esperas") or []
+    if not esperas:
+        return {}
+    tipica = statistics.median(esperas)
+    if tipica < LENTA_A_PARTIR:
+        return {}
+    minutos = round(tipica / 60)
+    return {"lenta": True, "minutos": minutos,
+            "aviso": f"Voz lenta na GenAIPro: cada bloco tem levado uns {minutos} min ou mais na fila (provavelmente "
+                     "não é voz própria da GenAIPro). O vídeo pode levar horas só na narração."}
+
+
 # ---------------------------------------------------------------- narração
 
 def corpo_da_tarefa(texto: str, voz: dict) -> dict:
@@ -173,7 +246,14 @@ def narrar(texto: str, voz: dict, mp3, log=print) -> list:
         tarefa_id = _pedir("POST", "/v1/labs/task", json=corpo).json()["task_id"]
         anotacao.write_text(json.dumps({"id": tarefa_id, "corpo": corpo}, ensure_ascii=False), encoding="utf-8")
 
-    tarefa = _esperar(tarefa_id, lambda t: t.get("result"))
+    inicio = time.time()
+    try:
+        tarefa = _esperar(tarefa_id, lambda t: t.get("result"))
+    except ErroGenAIPro:
+        if time.time() - inicio >= ESPERA_MAXIMA:  # estourou a espera: a voz entra na conta como lenta
+            anotar_espera(corpo["voice_id"], time.time() - inicio)
+        raise
+    anotar_espera(corpo["voice_id"], time.time() - inicio)
     r = httpx.get(tarefa["result"], timeout=300, follow_redirects=True)
     r.raise_for_status()
     mp3.write_bytes(r.content)
@@ -193,7 +273,9 @@ def _esperar(tarefa_id, pronta, limite=ESPERA_MAXIMA) -> dict:
                                f"{tarefa.get('error') or 'Tente de novo.'}")
         if time.time() - inicio > limite:
             raise ErroGenAIPro(f"A GenAIPro não terminou em {limite // 60} minutos. Rode de novo: a mesma tarefa "
-                               "é retomada, sem pagar outra vez.")
+                               "é retomada, sem pagar outra vez. Se acontecer de novo, a voz é lenta na fila da "
+                               "GenAIPro (as que não são dela, da comunidade, podem levar horas): troque a voz no "
+                               "perfil para o vídeo sair hoje.")
         time.sleep(pausa)
         pausa = min(pausa * 1.3, 8.0)
 

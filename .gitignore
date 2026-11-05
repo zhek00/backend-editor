@@ -1,4 +1,7 @@
 .env
+# Cópias com o FABRICA_TOKEN: o remoto é público
+.env.*
+!.env.exemplo
 .venv/
 __pycache__/
 projetos/
@@ -40,3 +43,19 @@ motores_voz/vozes/
 # quanto já foi usado das janelas de limite da assinatura do ChatGPT (fabrica/chatgpt_assinatura.py): é deste
 # computador, não do projeto
 chatgpt_limites.json
+
+contas_youtube/
+drive_conta.json
+imagens_concorrencia.json
+dist/
+
+# palhano: banco, segredo.key e token da máquina (o README de lá diz que não vão para o Git)
+palhano/painel/dados/
+palhano/robo/dados/
+
+# Cópias de segurança e restos de sessão
+*.antes
+*.antes-*
+perfis.antes/
+tiplabs-log.txt
+api.diff

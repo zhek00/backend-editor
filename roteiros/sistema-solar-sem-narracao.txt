@@ -1,0 +1,39 @@
+[TITULO] O Sol
+
+No centro de tudo está o Sol, uma estrela gigante de gás quente. Sua luz leva oito minutos para chegar até a Terra, e as explosões na sua superfície lançam chamas maiores que planetas inteiros.
+
+[TITULO] Mercúrio
+
+Mercúrio é o planeta mais próximo do Sol. Sua superfície cinzenta é coberta de crateras, e um ano lá dura apenas oitenta e oito dias.
+
+[TITULO] Vênus
+
+Vênus é envolto por nuvens espessas e amareladas. Embaixo delas, o calor derrete chumbo, e o céu nunca se abre.
+
+[TITULO] Terra
+
+A Terra é o planeta azul, com oceanos, nuvens brancas e continentes verdes. É o único lugar conhecido onde existe vida.
+
+[TITULO] Marte
+
+Marte é o planeta vermelho, coberto de poeira e desertos. Tem o maior vulcão do Sistema Solar e cânions profundos, explorados hoje por robôs.
+
+[TITULO] Júpiter
+
+Júpiter é o maior de todos os planetas. Suas faixas coloridas giram em tempestades, e a Grande Mancha Vermelha é um furacão maior que a Terra.
+
+[TITULO] Saturno
+
+Saturno exibe anéis enormes feitos de gelo e rocha. Visto de perto, ele brilha dourado contra o espaço escuro.
+
+[TITULO] Urano
+
+Urano é um gigante de gelo azul esverdeado. Ele gira deitado de lado, como uma bola rolando em volta do Sol.
+
+[TITULO] Netuno
+
+Netuno é o planeta mais distante, de um azul profundo. Seus ventos são os mais rápidos do Sistema Solar, soprando mais rápido que o som.
+
+[TITULO] Nosso lugar no espaço
+
+Além de Netuno, o Sistema Solar segue em silêncio, cercado por bilhões de estrelas na Via Láctea. E tudo isso cabe em um pequeno canto da galáxia.

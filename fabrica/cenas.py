@@ -739,10 +739,12 @@ def planejar(projeto, log=print) -> list[dict]:
         log("  vídeo só com o personagem, sem cenas de imagem")
         return cenas
     unidades = alinhamento["unidades"]
-    # o ritmo de corte é do estilo de vídeo, igual em qualquer perfil — não vem do perfil
-    alvo = ESTILO_ALVO_SEGUNDOS
-    minimo = ESTILO_MINIMO_SEGUNDOS
-    maximo = ESTILO_MAXIMO_SEGUNDOS
+    # o ritmo de corte é do estilo de vídeo, igual em qualquer perfil — não vem do perfil. Um vídeo pode pedir outro
+    # (cenas.segundos_minimo e segundos_maximo, pela Nova produção do Radar)
+    ritmo = projeto.config.get("cenas") or {}
+    minimo = float(ritmo.get("segundos_minimo") or ESTILO_MINIMO_SEGUNDOS)
+    maximo = float(ritmo.get("segundos_maximo") or ESTILO_MAXIMO_SEGUNDOS)
+    alvo = (minimo + maximo) / 2 if ritmo.get("segundos_maximo") else ESTILO_ALVO_SEGUNDOS
 
     if projeto.offline:
         grupos = _agrupar_por_tempo(unidades, alvo, projeto.perfil)

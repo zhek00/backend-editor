@@ -27,7 +27,8 @@ from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import animacoes, aprendizados, cenas, chatgpt_assinatura, corrigir, diretor, fish, pago, voz_local, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, midia, narracao, nichos, render, roteirista, verificar
+from . import drive, faxina, garimpo, video_ia
+from . import acordado, animacoes, aprendizados, cenas, chatgpt_assinatura, corrigir, diretor, entrega_pc, fish, pago, voz_local, publicacao, qualidade, shorts, thumbnail, rostos, revisao_video, trilha, custos, custos_reais, genaipro, imagens, limpeza, lixeira, midia, narracao, nichos, render, roteirista, verificar
 from . import tempos
 from . import texto as tx
 from . import youtube_publicar as ytpub
@@ -120,6 +121,42 @@ app.add_middleware(
 )
 
 
+CABECALHOS_DE_PROXY =("x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip", "cf-ray")
+
+
+def pedido_do_proprio_computador(request) -> bool:
+    """O pedido nasceu neste computador (o LIGAR e o VIGIA conferindo se a fábrica responde). Pedido que passou por
+    túnel ou proxy nunca conta, mesmo chegando por 127.0.0.1: o túnel da Cloudflare entrega tudo da internet por
+    127.0.0.1, e um "X-Forwarded-For: 127.0.0.1" escrito por quem pede abria a lista de projetos sem token
+    (2026-10-20)."""
+    cliente_ip = request.client.host if request.client else ""
+    if cliente_ip not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        return False
+    return not any(request.headers.get(h) for h in CABECALHOS_DE_PROXY)
+
+
+HOSTS_LOCAIS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def acesso_local_sem_token(request) -> bool:
+    """Painel aberto no próprio computador (http://localhost:PORTA) entra sem token (pedido do usuário em 2026-10-21,
+    para o Claude operar o painel no navegador do app). Pela internet (editor.bbnews.cc, túnel) o token segue
+    obrigatório: pedido com cabeçalho de túnel ou proxy nunca conta (pedido_do_proprio_computador). E só vale para o
+    próprio painel: o Host tem de ser localhost (contra DNS rebinding) e a origem, se o navegador disser, também
+    (Origin e Sec-Fetch-Site), senão qualquer site aberto no navegador poderia mandar pedidos para a fábrica."""
+    if not pedido_do_proprio_computador(request):
+        return False
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0].lower()
+    if host not in HOSTS_LOCAIS:
+        return False
+    origem = (request.headers.get("origin") or "").lower()
+    if origem:
+        sem_porta = origem.split("://", 1)[-1].rsplit(":", 1)[0]
+        if not origem.startswith("http://") or sem_porta not in HOSTS_LOCAIS:
+            return False
+    return request.headers.get("sec-fetch-site", "same-origin") in ("same-origin", "none")
+
+
 @app.middleware("http")
 async def exigir_token(request: Request, call_next):
     """Tranca a API com FABRICA_TOKEN, sempre — local ou exposta na internet.
@@ -153,9 +190,9 @@ async def exigir_token(request: Request, call_next):
                     headers={"Access-Control-Allow-Origin": request.headers.get("origin", "*")},
                 )
         else:
-            # Sem token: permite health check local do server.py (127.0.0.1) em /api/projetos
-            cliente_ip = request.client.host if request.client else ""
-            if cliente_ip in ("127.0.0.1", "::1", "localhost", "testclient") and caminho == "/api/projetos":
+            # Sem token: permite health check local (LIGAR e VIGIA) em /api/saude, só do próprio computador
+            if acesso_local_sem_token(request) or (caminho in ("/api/projetos", "/api/saude")
+                                                   and pedido_do_proprio_computador(request)):
                 return await call_next(request)
             return JSONResponse(
                 status_code=401,
@@ -208,10 +245,9 @@ def _salvar_criacao(task_id: str) -> None:
     if not pasta.exists():
         return
     copia.pop("_salvo_em", None)
-    tmp = pasta / (ARQ_CRIACAO + ".tmp")
     try:
-        tmp.write_text(json.dumps(copia, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-        tmp.replace(pasta / ARQ_CRIACAO)
+        from .util import gravar_atomico
+        gravar_atomico(pasta / ARQ_CRIACAO, json.dumps(copia, ensure_ascii=False, indent=1, default=str), tentativas=8)
     except OSError:
         pass
 
@@ -284,17 +320,41 @@ def _etapa_tentando(task_id: str, nome, rotulo: str, funcao):
             _atualizar(task_id, mensagem=f"{rotulo}: retomando...")
 
 
-def cenas_sem_arquivo(p: Projeto) -> List[int]:
-    """Cenas que o render recusaria: a mesma regra do render.origem_da_cena."""
+def _nomes_em(pasta: Path, sub: str) -> set:
+    """Os nomes dentro de uma subpasta do projeto, de uma vez só (em minúsculas: o Windows não diferencia)."""
+    try:
+        return {e.name.lower() for e in os.scandir(pasta / sub)}
+    except OSError:
+        return set()
+
+
+def _cenas_sem_arquivo(pasta: Path, cenas: List[dict]) -> List[int]:
+    """A mesma regra, com as cenas já lidas e sem abrir o projeto: é assim que a listagem confere em lote.
+
+    Duas escolhas de velocidade, porque isto corre milhares de cenas a cada listagem. A pasta é lida de uma vez e
+    o resto é procura na memória, no lugar de uma ida ao disco por cena. E o caminho da imagem é montado à mão: o
+    Projeto.imagem passa pelo caminho(), que cria a pasta mãe — um mkdir por cena, escrita no disco para não
+    escrever nada."""
+    dentro: Dict[str, set] = {}
+
+    def tem(caminho: str) -> bool:
+        sub, _, nome = caminho.replace("\\", "/").rpartition("/")
+        if sub not in dentro:
+            dentro[sub] = _nomes_em(pasta, sub)
+        return nome.lower() in dentro[sub]
+
     faltam = []
-    for c in p.ler_json("cenas.json")["cenas"]:
+    for c in cenas:
         m = c.get("midia")
-        if m and m.get("arquivo"):
-            if not (p.pasta / m["arquivo"]).exists():
-                faltam.append(c["n"])
-        elif not p.imagem(c["n"]).exists():
+        arquivo = m.get("arquivo") if m else None
+        if not tem(str(arquivo) if arquivo else f"imagens/{c['n']:04d}.png"):
             faltam.append(c["n"])
     return faltam
+
+
+def cenas_sem_arquivo(p: Projeto) -> List[int]:
+    """Cenas que o render recusaria: a mesma regra do render.origem_da_cena."""
+    return _cenas_sem_arquivo(p.pasta, p.ler_json("cenas.json")["cenas"])
 
 
 def _soltar_midia_sumida(p: Projeto) -> None:
@@ -308,6 +368,26 @@ def _soltar_midia_sumida(p: Projeto) -> None:
             mexeu = True
     if mexeu:
         p.salvar_json("cenas.json", dados)
+
+
+def _marcar_sem_foto_no_banco(p: Projeto, log=print) -> list[int]:
+    """A cena de acervo que terminou a esteira sem nenhuma foto passa a ser cena de IA (sem_midia_real).
+
+    Sem isso ela não é imagem de IA pendente (midia.precisa_ia) e a criação parava pedindo ajuda com a IA ligada: no
+    20-gigantes-da-era-do-gelo (2026-11-01) a cena 376 ("museum collection"), devolvida ao banco pelo teto de IA e sem
+    foto nenhuma lá, jogou 3h28 de produção fora com o recado "ou ligue a IA no config.yaml", já ligada."""
+    dados = p.ler_json("cenas.json")
+    sem_arquivo = set(cenas_sem_arquivo(p))
+    marcadas = [c for c in dados["cenas"]
+                if c["n"] in sem_arquivo and not c.get("midia") and not midia.precisa_ia(c)]
+    if not marcadas:
+        return []
+    for c in marcadas:
+        c["sem_midia_real"] = True
+    p.salvar_json("cenas.json", dados)
+    log(f"  {len(marcadas)} cena(s) sem nenhuma foto no banco viram imagem de IA: "
+        + ", ".join(str(c["n"]) for c in marcadas[:30]))
+    return [c["n"] for c in marcadas]
 
 
 def _executar_criacao(nome: str, task_id: str) -> None:
@@ -330,6 +410,37 @@ def _executar_criacao(nome: str, task_id: str) -> None:
         _salvar_criacao(task_id)
         with TAREFAS_LOCK:
             CRIACOES_ATIVAS.discard(nome)
+    with TAREFAS_LOCK:
+        terminou = (TAREFAS.get(task_id) or {}).get("status") == "concluido"
+    if terminou:
+        _renderizar_sozinho(nome, task_id)
+
+
+class _RodaJa:
+    """No lugar do BackgroundTasks do FastAPI: o render automático roda numa linha própria, como o do botão."""
+
+    def __init__(self, nome: str):
+        self.nome = nome
+
+    def add_task(self, funcao, *args, **kwargs):
+        threading.Thread(target=funcao, args=args, kwargs=kwargs, daemon=True, name=f"render-{self.nome}").start()
+
+
+def _renderizar_sozinho(nome: str, task_id: str) -> None:
+    """A criação terminou: o render começa sozinho, pelo mesmo caminho do botão Renderizar, e no fim saem o kit de
+    publicação, as thumbnails, os shorts e a pasta de entrega (iniciar_publicacao). Pedido do usuário em 2026-10-15.
+    Desliga com criacao.renderizar_ao_terminar: false no config.yaml."""
+    try:
+        if not (Projeto(nome).config.get("criacao") or {}).get("renderizar_ao_terminar", True):
+            return
+        disparar_render(nome, RenderPayload(), _RodaJa(nome))
+        _log_tarefa(task_id, "  render começou sozinho; no fim, a pasta com o vídeo, o título e a descrição")
+        _atualizar(task_id, mensagem="Cenas prontas! O vídeo está sendo renderizado sozinho.")
+        _salvar_criacao(task_id)
+    except HTTPException as erro:
+        _log_tarefa(task_id, f"  o render automático não começou: {erro.detail}")
+    except (Exception, SystemExit) as erro:
+        _log_tarefa(task_id, f"  o render automático não começou: {str(erro)[:200]}")
 
 
 def _esperar_o_agente(task_id: str, p, cenas_prontas) -> None:
@@ -497,12 +608,20 @@ def _esteira(nome: str, task_id: str) -> None:
     if faltam:
         # nunca copiar a imagem de outra cena: mais uma busca de imagem NOVA do assunto, nos 9 bancos
         _soltar_midia_sumida(p)
+        _atualizar(task_id, progresso_pct=95,
+                   mensagem=f"Procurando foto nos bancos para {len(faltam)} cena(s) que ficaram sem imagem...")
         _etapa(task_id, "Completar cenas", lambda: midia.buscar(p, apenas=set(faltam), log=log_w, permissivo=True))
     # regra fixa: jamais repetir imagem, conferido na imagem em si, antes de dizer que está pronto
+    # cada etapa daqui para baixo diz o que está fazendo: a mensagem ficava na da última rodada acima, e no
+    # 20-gigantes-da-era-do-gelo (2026-11-01) o site mostrou "completando 1 cena (rodada 3)" por 52 min enquanto a
+    # conferência das completadas refazia dezenas de imagens
+    _atualizar(task_id, progresso_pct=95, mensagem="Conferindo se nenhuma imagem se repete no vídeo...")
     _etapa(task_id, "Sem imagens repetidas", lambda: midia.tirar_repetidas(p, log=log_w))
     # o que o Completar cenas pôs depois da conferência (a rodada que aceita o que a busca achou) passa pelo Jev
     # agora: a errada busca de novo e, com a IA ligada, vira imagem de IA. Nunca para o vídeo
     try:
+        _atualizar(task_id, progresso_pct=96,
+                   mensagem="Conferindo com o Jev as cenas completadas no fim (a errada é refeita)...")
         with tempos.medir(p, "Conferência das completadas", log=log_w):
             corrigir.conferir_completadas(p, log=log_w)
     except ParadaPrecisaDeVoce:
@@ -512,6 +631,9 @@ def _esteira(nome: str, task_id: str) -> None:
     if cenas_sem_arquivo(p) and midia.ia_ativa(p):
         # a repetida que não achou foto nova nos bancos vai para a imagem de IA (ia.ativa). Antes a criação parava
         # pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com a IA ligada)
+        _marcar_sem_foto_no_banco(p, log_w)
+        _atualizar(task_id, progresso_pct=97,
+                   mensagem=f"Imagem de IA para {len(cenas_sem_arquivo(p))} cena(s) que os bancos não tinham...")
         _etapa(task_id, "Imagens de IA", lambda: imagens.gerar(p, log=log_w))
     if cenas_sem_arquivo(p):
         # nada do assunto nos bancos nem em outra cena do mesmo assunto: pôr outra coisa seria gafe, então pede ajuda
@@ -545,11 +667,16 @@ def _esteira(nome: str, task_id: str) -> None:
         except (Exception, SystemExit) as erro_anim:
             log_w(f"  as cenas animadas falharam, elas seguem com a foto: {erro_anim}")
 
-    # PASSO 7: diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames, gratuito). É uma
-    # melhoria: a cena que não der para animar continua com a foto, e uma falha aqui nunca para o vídeo
-    if animacoes.ligada(p):
-        _atualizar(task_id, etapa="animacoes", progresso_pct=97,
-                   mensagem="Animando os diagramas, textos na tela e mapas no tempo da narração...")
+    # PASSOS 7 e 8 e o render adiantado, AO MESMO TEMPO (pedido do usuário em 2026-10-12, para a criação andar mais
+    # rápido). Daqui em diante a imagem de cada cena está decidida: as animações por cima dependem só do tempo da fala,
+    # a trilha só do roteiro, e os clipes do render só da imagem de cada cena. Antes era uma fila: no
+    # 12-animais-estranhos (25 min) as animações começaram aos 107 min e o render só depois de tudo. Os clipes
+    # adiantados têm o nome tirado do conteúdo, e o render de verdade os reaproveita e só junta tudo.
+    def passo_animacoes():
+        # PASSO 7: diagramas, textos na tela, linhas do tempo e mapas viram animação (HyperFrames, gratuito). É uma
+        # melhoria: a cena que não der para animar continua com a foto, e uma falha aqui nunca para o vídeo
+        if not animacoes.ligada(p):
+            return
         try:
             with tempos.medir(p, "Animações (diagramas, textos, mapas)", log=log_w):
                 resumo_anim = animacoes.gerar(p, log=log_w, trava=trava_do_projeto(nome))
@@ -558,15 +685,32 @@ def _esteira(nome: str, task_id: str) -> None:
         except (Exception, SystemExit) as erro_anim:
             log_w(f"  as animações falharam, as cenas seguem com foto: {erro_anim}")
 
-    # PASSO 8: o modelo compõe a trilha pelos blocos do roteiro e o código toca (gratuito). Se falhar aqui, o render
-    # tenta de novo; e o vídeo nunca deixa de sair por causa dela
-    if trilha.ligada(p):
-        _atualizar(task_id, etapa="trilha", progresso_pct=98, mensagem="Compondo a trilha sonora do vídeo...")
+    def passo_trilha():
+        # PASSO 8: o modelo compõe a trilha pelos blocos do roteiro e o código toca (gratuito). Se falhar aqui, o
+        # render tenta de novo; e o vídeo nunca deixa de sair por causa dela
+        if not trilha.ligada(p):
+            return
         try:
             with tempos.medir(p, "Trilha", log=log_w):
                 trilha.gerar(p, log=log_w)
         except (Exception, SystemExit) as erro_trilha:
             log_w(f"  a trilha não saiu agora, o render tenta de novo: {erro_trilha}")
+
+    def adiantar_render():
+        if cenas_sem_arquivo(p):
+            return
+        try:
+            render.adiantar_clipes(p, log_w)
+        except (Exception, SystemExit) as erro_render:
+            log_w(f"  o render adiantado parou, o render de verdade monta o que faltar: {str(erro_render)[:200]}")
+
+    if video_ia.config(p).get("fracao"):
+        _etapa(task_id, "Vídeo de IA", lambda: video_ia.gerar(p, log=log_w))
+    _atualizar(task_id, etapa="animacoes", progresso_pct=97,
+               mensagem="Animações, trilha e os clipes do render, ao mesmo tempo...")
+    with ThreadPoolExecutor(max_workers=3) as juntos:
+        for futuro in [juntos.submit(f) for f in (passo_animacoes, passo_trilha, adiantar_render)]:
+            futuro.result()
 
     try:
         with tempos.medir(p, "Nota de qualidade", log=log_w):
@@ -957,7 +1101,11 @@ def criar_projeto(payload: CriarProjetoPayload, bg_tasks: BackgroundTasks):
     Cria um novo projeto a partir de roteiro, perfil e voz.
     Dispara as 4 etapas de geração em background e retorna 202 Accepted.
     """
-    nome = payload.nome.strip().lower()
+    # o nome vira nome de pasta sozinho ("Animais do Brasil" -> "animais-do-brasil"), em vez de recusar
+    import unicodedata
+    nome = unicodedata.normalize("NFD", payload.nome or "")
+    nome = "".join(c for c in nome if not unicodedata.combining(c)).lower()
+    nome = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9_-]+", "-", nome)).strip("-_")[:80]
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", nome):
         raise HTTPException(
             status_code=400,
@@ -1165,16 +1313,93 @@ def listar_perfis():
         if _perfil_de_avatar(f):
             continue  # precisa dos vídeos do HeyGen, que não vêm no pacote: pelo site nunca ficaria pronto
         desc = nomes_bonitos.get(stem, stem.replace("-", " ").title())
+        voz = _voz_do_canal(f)
+        if stem.startswith(PREFIXO_CANAL):
+            try:
+                desc = carregar_perfil(str(f)).get("nome") or desc
+            except (Exception, SystemExit):
+                pass
         itens.append({
             "id": stem,
             "caminho": f"perfis/{f.name}",
             "titulo": desc,
-            "arquivo": f.name
+            "arquivo": f.name,
+            "voz": voz,  # a voz do canal: o editor marca ela sozinho quando o canal é escolhido
+            "canal_do_editor": stem.startswith(PREFIXO_CANAL),
         })
 
     # o documentário genérico vem primeiro: é o padrão de quem não escolhe
     itens.sort(key=lambda i: i["id"] != "documentario")
     return {"perfis": itens}
+
+
+PREFIXO_CANAL = "canal-"  # canais criados pelo editor (perfis/canal-NOME.yaml), com a voz escolhida
+
+
+def _voz_do_canal(caminho: Path) -> Optional[Dict[str, Any]]:
+    """A voz guardada no canal, no formato do seletor de voz do editor. None quando o canal não tem voz escolhida
+    (o perfil base traz COLE_AQUI_O_VOICE_ID)."""
+    try:
+        voz = carregar_perfil(str(caminho)).get("voz") or {}
+    except (Exception, SystemExit):
+        return None
+    voice_id = str(voz.get("voice_id") or "").strip()
+    if voz.get("provedor") not in ("genaipro", "fish") or not voice_id or "COLE" in voice_id:
+        return None
+    return {k: v for k, v in {
+        "provedor": voz.get("provedor"), "voice_id": voice_id, "nome": voz.get("nome_da_voz"),
+        "idioma": voz.get("idioma_da_voz"), "modelo": voz.get("modelo"), "estabilidade": voz.get("estabilidade"),
+        "similaridade": voz.get("similaridade"), "estilo": voz.get("estilo"), "velocidade": voz.get("velocidade"),
+    }.items() if v not in (None, "")}
+
+
+class CanalPayload(BaseModel):
+    nome: str
+    base: str  # o perfil de onde o canal herda estilo e diretrizes (perfis/ARQUIVO.yaml)
+    voz: Dict[str, Any]
+
+
+def _bloco_da_voz(voz: Dict[str, Any]) -> Dict[str, Any]:
+    provedor = voz.get("provedor")
+    if provedor not in ("genaipro", "fish") or not str(voz.get("voice_id") or "").strip():
+        raise HTTPException(status_code=400, detail="Escolha uma voz da GenAI Pro ou da Fish Audio antes de salvar o canal.")
+    bloco = {"provedor": provedor, "voice_id": str(voz["voice_id"]).strip()}
+    for chave, destino in (("nome", "nome_da_voz"), ("idioma", "idioma_da_voz"), ("modelo", "modelo"),
+                           ("estabilidade", "estabilidade"), ("similaridade", "similaridade"), ("estilo", "estilo"),
+                           ("velocidade", "velocidade")):
+        if voz.get(chave) not in (None, ""):
+            bloco[destino] = voz[chave]
+    return bloco
+
+
+@app.post("/api/canais")
+def salvar_canal(payload: CanalPayload):
+    """Cria (ou atualiza) um canal com a voz escolhida: perfis/canal-NOME.yaml, herdando do perfil base.
+
+    Pedido do usuário em 2026-10-15: escolher o canal no novo vídeo e a voz já vir com ele. Canal que já existe com o
+    mesmo nome tem a voz e a base trocadas; o resto do arquivo fica."""
+    import yaml
+    nome = " ".join(payload.nome.split())[:60]
+    import unicodedata
+    slug = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", nome.lower()).encode("ascii", "ignore").decode()).strip("-")
+    if not slug:
+        raise HTTPException(status_code=400, detail="Dê um nome ao canal.")
+    base = Path(payload.base).name
+    if not (RAIZ / "perfis" / base).exists():
+        raise HTTPException(status_code=400, detail=f"O perfil base {base} não existe.")
+    arquivo = RAIZ / "perfis" / f"{PREFIXO_CANAL}{slug}.yaml"
+    if base == arquivo.name:  # atualizar a voz do próprio canal: mantém a base que ele já tinha
+        atual = yaml.safe_load(arquivo.read_text(encoding="utf-8")) or {}
+        base = atual.get("base") or "documentario.yaml"
+    dados = yaml.safe_load(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else {}
+    dados = dados or {}
+    dados.update({"base": base, "nome": nome, "voz": _bloco_da_voz(payload.voz)})
+    cabecalho = (f"# Canal criado no editor ({datetime.now():%Y-%m-%d}). Herda tudo de {base} e guarda a voz "
+                 "do canal.\n# Para mudar estilo, diretrizes ou texto fixo da descrição, edite aqui (veja "
+                 "perfis/base-documentario.yaml).\n")
+    arquivo.write_text(cabecalho + yaml.safe_dump(dados, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {"sucesso": True, "caminho": f"perfis/{arquivo.name}", "id": arquivo.stem, "titulo": nome,
+            "voz": _voz_do_canal(arquivo)}
 
 
 def _perfil_de_avatar(caminho: Path) -> bool:
@@ -1208,24 +1433,52 @@ def listar_vozes_genaipro(idioma: str = "pt", busca: str = "", genero: str = "",
     """Vozes da biblioteca da GenAIPro, com prévia em áudio. Sem busca, traz as de narração mais usadas do idioma.
 
     Não gasta créditos. A resposta fica guardada por uma hora pra não repetir a consulta."""
-    idioma = idioma if any(i["id"] == idioma for i in IDIOMAS_VOZ) else "pt"
+    idioma = idioma if any(i["id"] == idioma for i in genaipro.IDIOMAS) else "pt"
     genero = genero if genero in ("male", "female") else ""
     busca = (busca or "").strip()[:60]
-    base = {"modelos": MODELOS_NARRACAO, "idiomas": IDIOMAS_VOZ, "idioma_atual": idioma,
+    base = {"modelos": MODELOS_NARRACAO, "idiomas": genaipro.IDIOMAS, "idioma_atual": idioma,
             "preco_por_mil": round(custos_reais.preco_por_caractere(config_geral())[0] * 1000, 4)}
     if not genaipro.tem_chave():
         return {**base, "vozes": [], "erro": "Falta a chave da GenAIPro. Cole em GENAIPRO_API no .env."}
     chave_cache = (idioma, busca.lower(), genero, pagina)
     guardado = _CACHE_VOZES.get(chave_cache)
+    # o aviso de voz lenta sai da medida mais recente, nunca do que ficou guardado por uma hora
+    com_aviso = lambda lista: [v | genaipro.lentidao(v.get("voice_id")) for v in lista]
     if guardado and time.time() - guardado[0] < _CACHE_VOZES_SEGUNDOS:
-        return {**base, "vozes": guardado[1]}
+        return {**base, "vozes": com_aviso(guardado[1][0]), "tem_mais": guardado[1][1]}
     try:
-        vozes = genaipro.vozes(busca=busca or None, idioma=idioma, genero=genero or None,
-                               uso=None if busca else "narrative_story", quantidade=30, pagina=pagina)
+        vozes, tem_mais = _vozes_do_idioma(idioma, busca, genero, pagina)
     except SystemExit as e:
         return {**base, "vozes": [], "erro": str(e)}
-    _CACHE_VOZES[chave_cache] = (time.time(), vozes)
-    return {**base, "vozes": vozes}
+    _CACHE_VOZES[chave_cache] = (time.time(), (vozes, tem_mais))
+    return {**base, "vozes": com_aviso(vozes), "tem_mais": tem_mais}
+
+
+PAGINAS_POR_VEZ = 4  # cada página da GenAIPro traz umas 20 vozes
+
+
+def _vozes_do_idioma(idioma, busca, genero, pagina):
+    """Só as vozes do idioma pedido, juntando 4 páginas da GenAIPro por vez. Medido em 29/10/2026: cada página traz
+    umas 20 vozes (japonês tem mais de 176), e no idioma com pouca voz de narração ela completa com outras línguas
+    (sueco: 17 em sueco e 58 em inglês, hindi, espanhol...). Com menos de 40, entra também quem não é de narração."""
+    def buscar(uso):
+        paginas = range(pagina * PAGINAS_POR_VEZ, (pagina + 1) * PAGINAS_POR_VEZ)
+        with ThreadPoolExecutor(max_workers=PAGINAS_POR_VEZ) as grupo:
+            lotes = list(grupo.map(lambda p: genaipro.vozes(busca=busca or None, idioma=idioma, genero=genero or None,
+                                                            uso=uso, quantidade=30, pagina=p), paginas))
+        return [v for lote in lotes for v in lote], bool(lotes[-1])
+
+    vozes, tem_mais = buscar(None if busca else "narrative_story")
+    do_idioma = [v for v in vozes if v["idioma"] == idioma]
+    if len(do_idioma) < 40 and not busca:
+        outras, tem_mais = buscar(None)
+        do_idioma += [v for v in outras if v["idioma"] == idioma]
+    vistas, unicas = set(), []
+    for v in do_idioma:
+        if v["voice_id"] not in vistas:
+            vistas.add(v["voice_id"])
+            unicas.append(v)
+    return unicas, tem_mais
 
 
 _CACHE_VOZES_FISH: Dict[tuple, tuple] = {}
@@ -1549,6 +1802,72 @@ def salvar_chaves(entrada: ChavesEntrada):
     return {"ok": True, "atualizadas": sorted(novas)}
 
 
+@app.get("/api/saude")
+async def saude():
+    """A fábrica está de pé: o LIGAR e o VIGIA conferem aqui. É async e não lê nada, então responde na hora mesmo com a
+    criação ocupando tudo. Antes eles conferiam na /api/projetos, que lê o cenas.json e o perfil de todo projeto (uns
+    4 s parada); com a criação trabalhando ela passava dos 20 s, o vigia achava que a fábrica travou e reiniciava no
+    meio do vídeo (4 vezes no tescos-60-billion, em 2026-10-27), e a esteira refazia o fim da criação a cada vez."""
+    return {"ok": True}
+
+
+# A listagem é pedida o tempo todo — o painel e o Radar (Produzir, Acompanhar e Resultados) voltam a ela a cada
+# poucos segundos — e o que ela tem de caro quase nunca muda: ler as cenas, conferir no disco o arquivo de cada
+# uma e procurar a capa. Com 31 projetos e 11 mil cenas somadas isso levava 4 s por chamada e a tela ficava
+# parada esperando. Agora cada projeto guarda o que leu e só relê quando a data de algo que importa muda: o
+# projeto.json, as cenas, o alinhamento e as duas pastas de material (a data de uma pasta muda quando um arquivo
+# entra ou sai dela, que é exatamente o que a conferência olha).
+_LISTA_LIDA: Dict[str, tuple] = {}
+
+
+def _assinatura(pasta: Path) -> tuple:
+    def quando(nome: str) -> float:
+        try:
+            return (pasta / nome).stat().st_mtime
+        except OSError:
+            return -1.0
+    # a data das pastas basta quase sempre, mas o Windows só marca a hora de 15 em 15 ms: um arquivo que entra no
+    # mesmo instante da leitura passaria despercebido e o projeto ficaria para sempre com a resposta velha. Contar
+    # quantos arquivos há dentro fecha essa fresta, e é uma leitura de pasta, não uma ida ao disco por cena.
+    return (tuple(quando(n) for n in ("projeto.json", "cenas.json", "alinhamento.json", "imagens", "midia")),
+            len(_nomes_em(pasta, "imagens")), len(_nomes_em(pasta, "midia")))
+
+
+def _lido_do_projeto(pasta: Path) -> Dict[str, Any]:
+    """A parte cara de um projeto, guardada até o disco mudar. `completas` sai sem a esteira: ela não é do disco."""
+    assinatura = _assinatura(pasta)
+    guardado = _LISTA_LIDA.get(pasta.name)
+    if guardado and guardado[0] == assinatura:
+        return guardado[1]
+
+    try:
+        info = json.loads((pasta / "projeto.json").read_text(encoding="utf-8"))
+    except Exception:
+        info = {}
+
+    cenas_count = 0
+    completas = False
+    if (pasta / "cenas.json").exists():
+        try:
+            cenas = json.loads((pasta / "cenas.json").read_text(encoding="utf-8")).get("cenas", [])
+            cenas_count = len(cenas)
+            completas = cenas_count > 0 and not _cenas_sem_arquivo(pasta, cenas)
+        except (Exception, SystemExit):
+            pass
+
+    duracao = 0.0
+    if (pasta / "alinhamento.json").exists():
+        try:
+            duracao = json.loads((pasta / "alinhamento.json").read_text(encoding="utf-8")).get("duracao", 0.0)
+        except Exception:
+            pass
+
+    lido = {"info": info, "cenas_count": cenas_count, "completas": completas,
+            "duracao": duracao, "capa": _capa_do_projeto(pasta)}
+    _LISTA_LIDA[pasta.name] = (assinatura, lido)
+    return lido
+
+
 @app.get("/api/projetos")
 def listar_projetos():
     """Lista todos os projetos existentes em projetos/."""
@@ -1558,44 +1877,23 @@ def listar_projetos():
     lista = []
     for p in sorted(PROJETOS.iterdir()):
         if p.is_dir() and (p / "projeto.json").exists():
-            try:
-                info = json.loads((p / "projeto.json").read_text(encoding="utf-8"))
-            except Exception:
-                info = {}
-
-            cenas_count = 0
-            cenas_completas = False
-            if (p / "cenas.json").exists():
-                try:
-                    cenas = json.loads((p / "cenas.json").read_text(encoding="utf-8")).get("cenas", [])
-                    cenas_count = len(cenas)
-                    # com a esteira ainda trabalhando não conta como pronto: a conferência tira e põe imagens
-                    cenas_completas = (cenas_count > 0 and p.name not in CRIACOES_ATIVAS
-                                       and not cenas_sem_arquivo(Projeto(p.name)))
-                except (Exception, SystemExit):
-                    pass
-
-            duracao = 0.0
-            if (p / "alinhamento.json").exists():
-                try:
-                    duracao = json.loads((p / "alinhamento.json").read_text(encoding="utf-8")).get("duracao", 0.0)
-                except Exception:
-                    pass
-
+            lido = _lido_do_projeto(p)
+            info = lido["info"]
             lista.append({
                 "nome": p.name,
                 "perfil": info.get("perfil", ""),
                 "offline": info.get("offline", False),
                 "criado": info.get("criado", ""),
-                "cenas_count": cenas_count,
-                "duracao": duracao,
+                "cenas_count": lido["cenas_count"],
+                "duracao": lido["duracao"],
                 "tem_final": (p / "final.mp4").exists(),
                 "tem_narracao": (p / "narracao.wav").exists(),
-                # o painel só libera o "Editar" quando nenhuma cena está sem imagem ou vídeo
-                "cenas_completas": cenas_completas,
+                # o painel só libera o "Editar" quando nenhuma cena está sem imagem ou vídeo; com a esteira ainda
+                # trabalhando não conta como pronto, e isso fica fora do guardado porque muda sem o disco mudar
+                "cenas_completas": lido["completas"] and p.name not in CRIACOES_ATIVAS,
                 # o que a esteira de criação está fazendo agora, para o painel não mostrar "processando" à toa
                 "criacao": _resumo_criacao(p.name),
-                "capa": _capa_do_projeto(p),
+                "capa": lido["capa"],
             })
 
     return {"projetos": lista}
@@ -1726,16 +2024,29 @@ def apagar_projeto(nome: str):
     if raiz_resolvida not in pasta_resolvida.parents:
         raise HTTPException(status_code=403, detail="Acesso negado.")
 
+    # vídeo pronto ainda trabalhando (kit, thumbnails, shorts, entrega) ou render, Corrigir...: recusa. A criação
+    # continua podendo ser parada pelo × (a esteira para quando o projeto some)
+    with TAREFAS_LOCK:
+        publicando = nome in _PUBLICANDO
+    if publicando:
+        raise HTTPException(status_code=409, detail=(
+            "O vídeo ainda está montando o kit de publicação, as thumbnails e os shorts. "
+            "Espere terminar para apagar."))
+    _recusar_se_ocupado(nome, ("render_",) + _MEXEM_NA_MIDIA, "apagar")
+
+    # vai para projetos/_lixeira, não é apagado de vez (fabrica/lixeira.py)
     try:
-        lixeira.mandar(nome)
-        return {"ok": True, "nome": nome, "lixeira": True}
+        lixeira.mover(pasta_resolvida)
     except PermissionError as e:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Não foi possível apagar o projeto: um arquivo ainda está em uso ({e}).",
-        )
+        raise HTTPException(status_code=409,
+                            detail=f"Não foi possível apagar o projeto: um arquivo ainda está em uso ({e}).")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Não foi possível apagar o projeto: {e}")
+    try:
+        lixeira.limpar_antigos()
+    except Exception:
+        pass
+    return {"ok": True, "nome": nome, "lixeira": True}
 
 
 @app.get("/api/projetos/{nome}/custos")
@@ -1886,7 +2197,12 @@ def iniciar_publicacao(nome: str, forcar: bool = False) -> bool:
         try:
             for etapa, funcao in (("kit de publicação", lambda pr: publicacao.gerar(pr, log=print, forcar=forcar)),
                                   ("thumbnails", lambda pr: thumbnail.gerar(pr, log=print)),
-                                  ("shorts", lambda pr: shorts.gerar(pr, log=print) if shorts.config(pr)["ativo"] else None)):
+                                  ("shorts", lambda pr: shorts.gerar(pr, log=print) if shorts.config(pr)["ativo"] else None),
+                                  # a pasta do vídeo pronto no computador, com a descrição (entrega_pc.py)
+                                  ("entrega no computador", lambda pr: entrega_pc.entregar(pr, log=print)),
+                                  ("google drive", lambda pr: drive.enviar(pr, log=print)),
+                                  # o disco aperta depressa: as sobras dos vídeos antigos saem aqui (faxina.py)
+                                  ("faxina de disco", lambda pr: faxina.faxinar(log=print))):
                 try:
                     funcao(Projeto(nome))
                 except (Exception, SystemExit) as erro:
@@ -1897,6 +2213,32 @@ def iniciar_publicacao(nome: str, forcar: bool = False) -> bool:
 
     threading.Thread(target=trabalhar, daemon=True, name=f"publicacao-{nome}").start()
     return True
+
+
+@app.get("/api/garimpo/contas")
+def garimpo_contas():
+    return garimpo.listar_contas()
+
+
+@app.post("/api/garimpo/contas")
+def garimpo_conta_nova(corpo: Dict[str, Any]):
+    try:
+        return {"nome": garimpo.salvar_conta(corpo.get("nome"), corpo.get("cookies"))}
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro))
+
+
+@app.post("/api/garimpo/contas/{nome}/testar")
+def garimpo_conta_testar(nome: str):
+    try:
+        return garimpo.testar_conta(nome)
+    except ValueError as erro:
+        raise HTTPException(status_code=404, detail=str(erro))
+
+
+@app.delete("/api/garimpo/contas/{nome}")
+def garimpo_conta_apagar(nome: str):
+    return {"ok": garimpo.apagar_conta(nome)}
 
 
 @app.get("/consumo/openrouter.csv")
@@ -2960,7 +3302,8 @@ def youtube_conectar(request: Request):
 
 
 @app.get("/api/youtube/oauth/callback")
-def youtube_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+def youtube_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None,
+                     state: Optional[str] = None):
     """O Google volta pra cá depois do login."""
     def pagina(titulo: str, corpo: str) -> HTMLResponse:
         return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -2976,10 +3319,32 @@ h1 {{ font-size: 18px; }} p {{ color: #94a3b8; font-size: 13px; }}
     if not code:
         return pagina("Não deu para conectar", "Faltou o código de autorização. Feche esta aba e tente de novo.")
     try:
+        if state == drive.ESTADO:  # o Drive volta pela mesma URL do YouTube: não há outra para cadastrar no Google
+            drive.concluir_autorizacao(code, _redirect_uri(request))
+            return pagina("Conectado!", "O Google Drive já está ligado à fábrica. Pode fechar esta aba.")
         ytpub.concluir_autorizacao(code, _redirect_uri(request))
     except SystemExit as e:
         return pagina("Não deu para conectar", f"{e} Pode fechar esta aba e tentar de novo.")
     return pagina("Conectado!", "Sua conta do YouTube já está ligada à fábrica. Pode fechar esta aba e voltar ao painel.")
+
+
+@app.get("/api/drive/status")
+def drive_status():
+    return {"conectado": drive.conectada()}
+
+
+@app.get("/api/drive/conectar")
+def drive_conectar(request: Request):
+    try:
+        return {"url": drive.url_autorizacao(_redirect_uri(request))}
+    except SystemExit as erro:
+        raise HTTPException(status_code=400, detail=str(erro))
+
+
+@app.post("/api/drive/desconectar")
+def drive_desconectar():
+    drive.desconectar()
+    return {"sucesso": True}
 
 
 @app.get("/api/youtube/status")
@@ -3090,7 +3455,15 @@ def servir_arquivo_projeto(nome: str, caminho: str, baixar: bool = False):
     # do arquivo antigo misturados com o novo e travava em 0:00. no-cache obriga a conferir se mudou.
     cabecalho = {"Cache-Control": "no-cache"} if arquivo.suffix.lower() in (".mp4", ".wav", ".mp3") else None
     if baixar:
-        return FileResponse(arquivo, media_type=mime_type or "application/octet-stream", filename=arquivo.name, headers=cabecalho)
+        # o vídeo, a versão em pé, a thumbnail, a legenda e os shorts baixam com o título, nunca final.mp4 ou S01.mp4
+        # (metadados.py, pedido do usuário em 2026-10-20)
+        try:
+            from . import metadados
+
+            baixado = metadados.nome_para_baixar(Projeto(nome), caminho) or arquivo.name
+        except (Exception, SystemExit):
+            baixado = arquivo.name
+        return FileResponse(arquivo, media_type=mime_type or "application/octet-stream", filename=baixado, headers=cabecalho)
     return FileResponse(arquivo, media_type=mime_type or "application/octet-stream", headers=cabecalho)
 
 
@@ -3316,6 +3689,17 @@ def servir_arquivo_raiz(caminho: str):
     return FileResponse(arquivo, media_type=mime_type or "application/octet-stream")
 
 
+class _EditorSempreEmDia(StaticFiles):
+    """Os arquivos do editor com "Cache-Control: no-cache": o navegador confere a cada carregamento se mudou (pela
+    ETag, sem baixar de novo o que está igual). Sem isso ele guardava o js/api.js antigo depois de uma atualização e o
+    editor quebrava com "API.salvarCanal is not a function" (2026-10-15)."""
+
+    async def get_response(self, path, scope):
+        resposta = await super().get_response(path, scope)
+        resposta.headers["Cache-Control"] = "no-cache"
+        return resposta
+
+
 def criar_app(frontend_dir: Optional[str] = None):
     """Cria e configura o app FastAPI, opcionalmente montando os estáticos do frontend."""
     if not frontend_dir:
@@ -3323,9 +3707,16 @@ def criar_app(frontend_dir: Optional[str] = None):
         if padrao.exists() and (padrao / "index.html").exists():
             frontend_dir = str(padrao)
     if frontend_dir and Path(frontend_dir).exists():
-        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+        app.mount("/", _EditorSempreEmDia(directory=frontend_dir, html=True), name="frontend")
     retomar_criacoes_interrompidas()
+    acordado.vigiar(_ha_tarefa_andando)
     # a cada 15 min, o que a chave do OpenRouter gastou contra o que a fábrica registrou (relatorios/vazamento.csv)
     from . import consumo
     consumo.vigiar(log=print)
     return app
+
+
+def _ha_tarefa_andando() -> bool:
+    """Criação, render, Corrigir, publicação... andando: o computador não pode dormir (fabrica/acordado.py)."""
+    with TAREFAS_LOCK:
+        return any(t.get("status") in ("processando", "renderizando", "enviando") for t in TAREFAS.values())

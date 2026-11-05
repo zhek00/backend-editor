@@ -47,8 +47,17 @@ function Matar($porta) {
     Start-Sleep -Seconds 2
 }
 
+# o editor servido pela fabrica, procurado como no LIGAR-TIPLABS (PastaDoEditor): religada sem ele, o editor sumiria
+function ArgsDoEditor {
+    $acima = Split-Path $PASTA -Parent
+    foreach ($p in @((Join-Path $PASTA 'front-editor'), (Join-Path $acima 'front-editor'), (Join-Path $acima 'tiplabs\front-editor'))) {
+        if (Test-Path (Join-Path $p 'index.html')) { return @('--frontend', $p) }
+    }
+    return @()
+}
+
 function LigarFabrica {
-    Start-Process -FilePath $uv -ArgumentList @('run', '--no-sync', 'fabrica', 'servidor', '--porta', "$PORTA") `
+    Start-Process -FilePath $uv -ArgumentList (@('run', '--no-sync', 'fabrica', 'servidor', '--porta', "$PORTA") + (ArgsDoEditor)) `
         -WorkingDirectory $PASTA -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $PASTA 'fabrica.log') -RedirectStandardError (Join-Path $PASTA 'fabrica.log.erros')
 }
@@ -61,7 +70,9 @@ function LigarMcp {
 }
 
 $servicos = @(
-    @{ Nome = 'fabrica'; Porta = $PORTA;     Url = "http://localhost:$PORTA/api/projetos"; Ligar = ${function:LigarFabrica}; Falhas = 0 },
+    # /api/saude responde na hora; a /api/projetos passava dos 20 s com a criacao ocupada e o vigia reiniciava a
+    # fabrica no meio do video (2026-10-27). Fabrica antiga, sem a /api/saude, responde 404: conta como viva
+    @{ Nome = 'fabrica'; Porta = $PORTA;     Url = "http://localhost:$PORTA/api/saude"; Ligar = ${function:LigarFabrica}; Falhas = 0 },
     @{ Nome = 'MCP';     Porta = $PORTA_MCP; Url = "http://127.0.0.1:$PORTA_MCP/mcp";      Ligar = ${function:LigarMcp};     Falhas = 0 }
 )
 
@@ -82,8 +93,9 @@ while ($true) {
             continue
         }
         $s.Falhas++
-        if ($s.Falhas -ge 2) {
-            Anotar "$($s.Nome) travado (sem responder 2 vezes seguidas): reiniciando"
+        # reiniciar mata o video que esta sendo feito: so depois de 3 minutos seguidos sem nenhuma resposta
+        if ($s.Falhas -ge 3) {
+            Anotar "$($s.Nome) travado (sem responder 3 vezes seguidas): reiniciando"
             Matar $s.Porta
             & $s.Ligar
             $s.Falhas = 0

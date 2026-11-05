@@ -59,6 +59,68 @@ ESTILO_PADRAO = {
     "escurecer": 0.62,       # quanto a camada escurece as cenas por baixo (0 a 1)
 }
 
+# Temas prontos para as animações de um vídeo (animacoes.estilo.tema, ou a Nova produção do Radar). Cada um é só uma
+# paleta por cima do padrão: os desenhos são os mesmos, e o que estiver escrito em animacoes.estilo vale por cima.
+# Os temas de papel têm texto escuro, e os desenhos escrevem direto sobre o véu: por isso eles trazem um véu claro e
+# forte. O veu fica fora do padrão de propósito: entrar no padrão mudaria a assinatura de toda animação já pronta.
+TEMAS = {
+    "noticiario": {"destaque": "#E5352B", "texto": "#FFFFFF", "secundaria": "#C9D3E0",
+                   "painel": "rgba(10, 22, 46, 0.86)", "alerta": "#FFC400", "escurecer": 0.55},
+    "dossie": {"destaque": "#C8A45A", "texto": "#EDE3CF", "secundaria": "#A79C86",
+               "painel": "rgba(30, 25, 18, 0.84)", "alerta": "#A8321F", "escurecer": 0.66},
+    "cinema": {"destaque": "#D9B26A", "texto": "#F4EFE6", "secundaria": "#A9A398",
+               "painel": "rgba(6, 6, 8, 0.80)", "alerta": "#C2313F", "escurecer": 0.68},
+    "jornal": {"destaque": "#B3261E", "texto": "#1C1A17", "secundaria": "#55504A",
+               "painel": "rgba(238, 230, 214, 0.94)", "alerta": "#B3261E", "veu": "238, 230, 214", "escurecer": 0.93},
+    "caderno": {"destaque": "#2B5FC7", "texto": "#1F2A44", "secundaria": "#5B6784",
+                "painel": "rgba(250, 247, 236, 0.94)", "alerta": "#D13A2E", "veu": "250, 247, 236", "escurecer": 0.93},
+    "planilha": {"destaque": "#1E8E4E", "texto": "#10261A", "secundaria": "#4C6657",
+                 "painel": "rgba(240, 248, 243, 0.94)", "alerta": "#C62828", "veu": "240, 248, 243", "escurecer": 0.93},
+    "hacker": {"destaque": "#39FF88", "texto": "#D6FFE6", "secundaria": "#6FB58A",
+               "painel": "rgba(3, 14, 8, 0.86)", "alerta": "#FF4D4D", "escurecer": 0.72},
+    "terror": {"destaque": "#B0121F", "texto": "#E9E2DC", "secundaria": "#8C8580",
+               "painel": "rgba(8, 5, 6, 0.88)", "alerta": "#E11D2E", "escurecer": 0.78},
+    "colagem": {"destaque": "#B3261E", "texto": "#14213D", "secundaria": "#4A5468",
+                "painel": "rgba(248, 242, 226, 0.95)", "alerta": "#F2B705", "veu": "226, 212, 186", "escurecer": 0.92},
+    "cinetico": {"destaque": "#FFD400", "texto": "#FFFFFF", "secundaria": "#D0D0D0",
+                 "painel": "rgba(0, 0, 0, 0.82)", "alerta": "#FF3B30", "escurecer": 0.7},
+    "arquivo": {"destaque": "#8C5A2B", "texto": "#2A2118", "secundaria": "#6A5A46",
+                "painel": "rgba(226, 209, 170, 0.95)", "alerta": "#A8321F", "veu": "226, 209, 170", "escurecer": 0.94},
+    "reaberto": {"destaque": "#F2C200", "texto": "#EFEFEF", "secundaria": "#9A9A9A",
+                 "painel": "rgba(16, 16, 16, 0.88)", "alerta": "#E11D2E", "escurecer": 0.76},
+}
+
+# O que muda além da cor: textura, letra e moldura de cada tema, por cima dos desenhos de sempre. Os ids são da página
+# montada em _montar_html. Pseudoelementos, para não mexer no que os desenhos escrevem.
+DESENHOS = {
+    "noticiario": '#conteudo::after { content: ""; position: absolute; left: 0; right: 0; bottom: 120px; height: 10px; '
+                  'background: var(--destaque); }',
+    "dossie": '#conteudo, #conteudo * { font-family: "Courier New", monospace !important; } #conteudo::before { content: ""; position: absolute; '
+              'inset: 60px; border: 3px dashed var(--secundaria); opacity: .45; }',
+    "cinema": '#root::before, #root::after { content: ""; position: absolute; left: 0; right: 0; height: 12%; background: #000; '
+              'z-index: 5; } #root::before { top: 0; } #root::after { bottom: 0; }',
+    "jornal": '#conteudo { font-family: "Titulo", serif; } #conteudo::before { content: ""; position: absolute; left: 110px; '
+              'right: 110px; top: 80px; border-top: 8px double var(--texto); }',
+    "caderno": '#veu { background-image: repeating-linear-gradient(0deg, transparent 0 58px, rgba(43, 95, 199, .22) 58px 60px), '
+               'linear-gradient(90deg, transparent 88px, rgba(209, 58, 46, .55) 88px 91px, transparent 91px); }',
+    "planilha": '#veu { background-image: repeating-linear-gradient(0deg, transparent 0 44px, rgba(30, 142, 78, .24) 44px 45px), '
+                'repeating-linear-gradient(90deg, transparent 0 150px, rgba(30, 142, 78, .24) 150px 151px); }',
+    "hacker": '#conteudo, #conteudo * { font-family: "Courier New", monospace !important; } #veu { background-image: repeating-linear-gradient(0deg, '
+              'transparent 0 3px, rgba(57, 255, 136, .08) 3px 4px); }',
+    "terror": '#root::after { content: ""; position: absolute; inset: 0; pointer-events: none; '
+              'background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .85) 100%); }',
+    "colagem": '#conteudo { font-family: "Titulo", serif; transform: rotate(-.8deg); } #conteudo::before { content: ""; '
+               'position: absolute; right: 150px; top: 70px; width: 210px; height: 46px; background: rgba(242, 183, 5, .55); '
+               'transform: rotate(4deg); }',
+    "cinetico": '#conteudo { font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; }',
+    "arquivo": '#conteudo, #conteudo * { font-family: "Courier New", monospace !important; } #conteudo::before { content: ""; position: absolute; '
+               'left: 70px; top: 44px; width: 340px; height: 44px; background: var(--destaque); opacity: .28; '
+               'border-radius: 10px 10px 0 0; } #conteudo::after { content: ""; position: absolute; inset: 88px 70px 170px; '
+               'border: 2px solid var(--secundaria); opacity: .4; }',
+    "reaberto": '#conteudo::after { content: ""; position: absolute; left: -60px; right: -60px; top: 96px; height: 34px; '
+                'transform: rotate(-3deg); background: repeating-linear-gradient(45deg, var(--destaque) 0 40px, #111 40px 80px); }',
+}
+
 _TRAVA_NODE = threading.Lock()
 _NODE = {}
 _TRAVA_ARQUIVO = threading.Lock()
@@ -96,7 +158,11 @@ def node_pronto() -> str:
 
 
 def _estilo(projeto) -> dict:
-    return {**ESTILO_PADRAO, **(config(projeto).get("estilo") or {})}
+    escolhido = dict(config(projeto).get("estilo") or {})
+    nome = str(escolhido.pop("tema", "") or "").strip().lower()
+    tema = TEMAS.get(nome, {})
+    desenho = {"desenho": DESENHOS[nome]} if nome in DESENHOS else {}
+    return {**ESTILO_PADRAO, **tema, **desenho, **escolhido}
 
 
 def _tamanho(projeto):
@@ -185,10 +251,8 @@ def ler(projeto) -> list:
 def _salvar(projeto, itens) -> None:
     arquivo = projeto.pasta / ARQUIVO
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    temporario = arquivo.with_suffix(".tmp")
-    temporario.write_text(json.dumps({"itens": sorted(itens, key=lambda i: i["c_ini"])}, ensure_ascii=False, indent=1),
-                          encoding="utf-8")
-    temporario.replace(arquivo)
+    from .util import gravar_atomico
+    gravar_atomico(arquivo, json.dumps({"itens": sorted(itens, key=lambda i: i["c_ini"])}, ensure_ascii=False, indent=1))
 
 
 def _atualizar_item(projeto, novo, trava=None) -> None:
@@ -205,6 +269,22 @@ def _assinatura_render(projeto, item, ancora) -> str:
                        _tamanho(projeto), config(projeto).get("versao", VERSAO_PADRAO), _estilo(projeto),
                        VERSAO_DESIGN, VERSAO_CAMADA], ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(base.encode()).hexdigest()[:12]
+
+
+SOM_DO_MODELO = {"numero": "contador", "lista": "passagem", "fluxo": "passagem", "linha_do_tempo": "passagem"}
+
+
+def sons_na_linha(projeto, log=print) -> list:
+    """(segundo, arquivo) de um som curto na entrada de cada animação, com animacoes.som ligado. Vem desligado: os
+    canais de hoje não têm esse som, e a Nova produção do Radar liga por vídeo."""
+    if not config(projeto).get("som"):
+        return []
+    from . import camadas
+
+    sons = [(item["ini"], camadas.som(SOM_DO_MODELO.get(item.get("modelo"), "pop"))) for item in validas(projeto)]
+    if sons:
+        log(f"  som nos textos da tela: {len(sons)} evento(s)")
+    return sons
 
 
 def validas(projeto) -> list:
@@ -389,7 +469,7 @@ def _erros_para_o_modelo(erros_conferencia) -> list:
 def _montar_html(partes, dur, largura, altura, estilo, lang="pt-BR") -> str:
     """A página da camada: fundo transparente, o véu escuro que entra e sai, e o conteúdo do modelo."""
     dur = round(dur, 3)
-    cores = "".join(f"--{k}: {v};" for k, v in estilo.items() if k != "escurecer")
+    cores = "".join(f"--{k}: {v};" for k, v in estilo.items() if k not in ("escurecer", "veu", "desenho"))
     saida = max(dur - 0.35, 0.0)
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -404,11 +484,13 @@ def _montar_html(partes, dur, largura, altura, estilo, lang="pt-BR") -> str:
       * {{ margin: 0; padding: 0; box-sizing: border-box; }}
       html, body {{ width: {largura}px; height: {altura}px; overflow: hidden; background: transparent; }}
       #root {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
-      #veu {{ position: absolute; inset: 0; background: rgba(8, 6, 4, {float(estilo.get("escurecer", 0.62)):.2f}); }}
+      #veu {{ position: absolute; inset: 0; background: rgba({estilo.get("veu", "8, 6, 4")}, {float(estilo.get("escurecer", 0.62)):.2f}); }}
       #conteudo {{ position: absolute; inset: 0; padding: 110px 110px 210px 110px; font-family: "Texto", sans-serif;
                    color: var(--texto); }}
       /* do trecho */
 {partes["css"]}
+      /* do tema */
+      {estilo.get("desenho", "")}
     </style>
   </head>
   <body>

@@ -68,7 +68,7 @@ def test_ia_reprovada_e_refeita_pelo_pedido_que_o_jev_escreveu(monkeypatch, tmp_
     monkeypatch.setattr(corrigir, "_avaliar", lambda *a, **k: {9: dict(errada)})
     monkeypatch.setattr(corrigir, "_guardar", lambda *a, **k: None)
     pedidos = []
-    monkeypatch.setattr(imagens, "refazer", lambda projeto, numeros, prompt=None, log=None: pedidos.append(prompt))
+    monkeypatch.setattr(imagens, "refazer", lambda projeto, numeros, prompt=None, log=None: pedidos.append(prompt[9]))
     corrigir.conferir_ia(projeto, log=lambda *a: None)
     assert pedidos and pedidos[0].startswith("Close-up of a translucent jellyfish")
     assert "lionfish" not in pedidos[0] and "peixe-leão" not in pedidos[0].split("IMPORTANT")[0]
@@ -88,9 +88,9 @@ def test_correcao_anterior_da_fabrica_nao_conta_como_escolha_da_pessoa(monkeypat
     pedidos = []
 
     def refazer(projeto, numeros, prompt=None, log=None):
-        pedidos.append(prompt)
+        pedidos.append(prompt[9])
         dados = projeto.ler_json("cenas.json")
-        dados["cenas"][0]["prompt_manual"] = prompt
+        dados["cenas"][0]["prompt_manual"] = prompt[9]
         projeto.salvar_json("cenas.json", dados)
 
     monkeypatch.setattr(imagens, "refazer", refazer)
@@ -109,6 +109,36 @@ def test_pedido_da_pessoa_continua_valendo(monkeypatch, tmp_path):
     monkeypatch.setattr(corrigir, "_avaliar", lambda *a, **k: {9: dict(errada)})
     monkeypatch.setattr(corrigir, "_guardar", lambda *a, **k: None)
     pedidos = []
-    monkeypatch.setattr(imagens, "refazer", lambda projeto, numeros, prompt=None, log=None: pedidos.append(prompt))
+    monkeypatch.setattr(imagens, "refazer", lambda projeto, numeros, prompt=None, log=None: pedidos.append(prompt[9]))
     corrigir.conferir_ia(projeto, log=lambda *a: None)
     assert pedidos[0].startswith("a blue jellyfish in a glass bowl")
+
+
+class _ProjetoVarias(_Projeto):
+    """Várias cenas de IA reprovadas, para conferir que elas são refeitas de uma vez."""
+
+    def __init__(self, pasta, cenas):
+        self.pasta = pathlib.Path(pasta)
+        (self.pasta / "imagens").mkdir()
+        for c in cenas:
+            (self.pasta / "imagens" / f"{c['n']:04d}.png").write_bytes(b"png")
+        self._dados = {"cenas": list(cenas)}
+
+
+def test_as_imagens_reprovadas_sao_refeitas_de_uma_vez(monkeypatch, tmp_path):
+    # uma a uma, as 23 imagens refeitas do 20-gigantes-da-era-do-gelo (2026-11-01) levaram 14 min em fila, a 36 s
+    # cada: agora vai um pedido por cena numa chamada só, e o lote sai em imagens.processos ao mesmo tempo
+    cenas = [{"n": n, "tipo": "ia", "prompt": f"pedido {n}", "mostrar": f"cena {n}"} for n in (4, 7, 9)]
+    projeto = _ProjetoVarias(tmp_path, cenas)
+    errada = {"nota": 2, "sujeito": 10, "veredito": "nao_combina", "legenda": "outra coisa", "prompt_novo": ""}
+    monkeypatch.setattr(corrigir, "imagem_de_ia", lambda c: True)
+    monkeypatch.setattr(corrigir, "_avaliar", lambda *a, **k: {n: dict(errada) for n in (4, 7, 9)})
+    monkeypatch.setattr(corrigir, "_guardar", lambda *a, **k: None)
+    chamadas = []
+    monkeypatch.setattr(imagens, "refazer",
+                        lambda projeto, numeros, prompt=None, log=None: chamadas.append((list(numeros), prompt)))
+    corrigir.conferir_ia(projeto, log=lambda *a: None)
+    assert len(chamadas) == 1, "as imagens reprovadas voltaram a ser refeitas uma a uma"
+    numeros, pedidos = chamadas[0]
+    assert sorted(numeros) == [4, 7, 9] and sorted(pedidos) == [4, 7, 9]
+    assert all(pedidos[n].startswith(f"pedido {n}") for n in (4, 7, 9))

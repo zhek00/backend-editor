@@ -211,6 +211,7 @@ def test_exato_dentro_da_busca_tambem_e_buscado_sozinho():
 
     b = object.__new__(midia.Buscador)
     b.blocos, b.nomes, b.quantidade, b.log = {}, set(), 24, lambda *a: None
+    b.cfg = {}
     b._das_fontes = das_fontes
     cena = {"n": 35, "tipo": "foto_real", "busca": "New York stock exchange screen", "exato": "New York Stock Exchange",
             "busca_alternativa": "stock market screen", "sujeito": "stock exchange screen"}

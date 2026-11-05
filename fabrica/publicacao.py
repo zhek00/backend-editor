@@ -89,12 +89,6 @@ def _tem_imagem_de_ia(projeto) -> bool:
                for c in projeto.ler_json("cenas.json").get("cenas") or [])
 
 
-def _creditos(projeto) -> str:
-    if not projeto.existe("creditos.txt"):
-        return ""
-    return (projeto.pasta / "creditos.txt").read_text(encoding="utf-8").strip()
-
-
 ESQUEMA = {
     "type": "object",
     "properties": {
@@ -186,24 +180,48 @@ def _limpar(dados, caps, titulo_reserva):
             "nomes_capitulos": nomes, "thumbs": thumbs[:3]}
 
 
-def descricao(textos, caps, creditos, aviso_voz=True) -> str:
+TEXTO_FIXO_MAXIMO = 1500
+RODAPE_MAXIMO = 3000
+
+
+def rodape(projeto) -> str:
+    """O texto do canal que FECHA a descrição (perfil, publicacao.rodape): a apresentação do canal e o aviso legal.
+
+    Pedido do usuário em 2026-10-24: "quero algo já automático direto na fábrica, a descrição quando eu selecionar
+    o vídeo já vem pronta". É o mesmo em todo vídeo do canal, então mora no perfil e não passa pelo modelo: a
+    fábrica entrega a descrição inteira e ninguém precisa montar nada depois dela."""
+    return str((projeto.perfil.get("publicacao") or {}).get("rodape") or "").strip()[:RODAPE_MAXIMO]
+
+
+def texto_fixo(projeto) -> str:
+    """O texto do canal que abre a descrição de todo vídeo (perfil, publicacao.texto_fixo), como está escrito:
+    links, redes, aviso de patrocínio. Não passa pelo modelo nem é traduzido. Pedido do usuário em 2026-10-12."""
+    return str((projeto.perfil.get("publicacao") or {}).get("texto_fixo") or "").strip()[:TEXTO_FIXO_MAXIMO]
+
+
+def descricao(textos, caps, aviso_voz=True, topo="", fim="") -> str:
+    """A descrição que vai para o YouTube: o resumo do vídeo, os capítulos, o aviso de voz e o texto do canal.
+
+    **Sem a lista de onde vêm as imagens** (pedido do usuário em 2026-10-25: "não quero ficar dando a
+    referência"). A fábrica continua escrevendo o `creditos.txt` na pasta do projeto, para quem precisar
+    conferir de onde veio cada imagem; o que não acontece mais é essa lista sair publicada embaixo do vídeo.
+    """
     from . import idioma
 
-    partes = [textos.get("resumo") or ""]
+    partes = [topo, textos.get("resumo") or ""]
     lingua = idioma.lingua_do_texto(textos.get("resumo") or "")
     if caps:
         partes.append(idioma.frase("capitulos", lingua) + "\n" + "\n".join(f"{mmss(c['inicio'])} {n}"
                                                 for c, n in zip(caps, textos["nomes_capitulos"])))
-    if creditos:
-        partes.append(creditos)
     if aviso_voz:
         partes.append(idioma.frase("voz", lingua))
+    if fim:
+        partes.append(fim)
     if textos.get("hashtags"):
         partes.append(" ".join(textos["hashtags"]))
     texto = "\n\n".join(p.strip() for p in partes if p and p.strip())
     if len(texto) > DESCRICAO_MAXIMA:
-        # os créditos são o que mais cresce: cortados no fim, com aviso, e o resto fica inteiro
-        texto = texto[:DESCRICAO_MAXIMA - 60].rsplit("\n", 1)[0] + "\n(créditos completos no arquivo creditos.txt)"
+        texto = texto[:DESCRICAO_MAXIMA].rsplit("\n", 1)[0]
     return texto
 
 
@@ -230,12 +248,19 @@ def gerar(projeto, log=print, forcar=False) -> dict:
             origem = "sem modelo"
     cfg = projeto.config.get("publicacao") or {}
     sintetico = _tem_imagem_de_ia(projeto)
+    # o título que a pessoa deu ao vídeo (editor e robô gravam em titulo_entrega) vai exatamente como ela escreveu;
+    # o do modelo vira alternativa (pedido do usuário em 2026-10-20)
+    titulo, alternativos = textos["titulo"], list(textos["titulos_alt"])
+    escolhido = str((getattr(projeto, "dados", None) or {}).get("titulo_entrega") or "").strip()
+    if escolhido and escolhido != titulo:
+        titulo, alternativos = escolhido[:100], [t for t in [titulo, *alternativos] if t and t != escolhido]
     dados = {
         "assinatura": marca if origem != "sem modelo" else None,
         "textos": textos,
-        "titulo": textos["titulo"],
-        "titulos_alt": textos["titulos_alt"],
-        "descricao": descricao(textos, caps, _creditos(projeto), cfg.get("aviso_voz_sintetica", True)),
+        "titulo": titulo,
+        "titulos_alt": alternativos,
+        "descricao": descricao(textos, caps, cfg.get("aviso_voz_sintetica", True),
+                               texto_fixo(projeto), rodape(projeto)),
         "tags": textos["tags"],
         "hashtags": textos["hashtags"],
         "comentario_fixado": textos["comentario_fixado"],

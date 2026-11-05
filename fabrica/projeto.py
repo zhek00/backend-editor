@@ -24,6 +24,10 @@ class Projeto:
             override = self.dados.get(f"{secao}_override")
             if override:
                 self.perfil[secao] = {**(self.perfil.get(secao) or {}), **override}
+        # o que a Nova produção do Radar escolheu só para este vídeo (edição, transição, avatar, música), por cima do perfil
+        for secao, valor in (self.dados.get("perfil_override") or {}).items():
+            atual = self.perfil.get(secao)
+            self.perfil[secao] = {**atual, **valor} if isinstance(atual, dict) and isinstance(valor, dict) else valor
         self.config = config_geral()
         self.sem_narracao_paga()
         # ajustes do config.yaml que valem só neste projeto (o MCP cria projeto sem imagem de IA, por exemplo):
@@ -79,10 +83,8 @@ class Projeto:
         return json.loads((self.pasta / nome).read_text(encoding="utf-8"))
 
     def salvar_json(self, nome: str, dados) -> None:
-        destino = self.caminho(nome)
-        temporario = destino.with_name(destino.name + ".tmp")
-        temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporario.replace(destino)
+        from .util import gravar_atomico
+        gravar_atomico(self.caminho(nome), json.dumps(dados, ensure_ascii=False, indent=2))
 
     def roteiro(self) -> str:
         """Texto narrado, já sem as marcações [SIMBOLO]."""

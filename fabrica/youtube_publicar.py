@@ -327,7 +327,8 @@ def plano(projeto, quando=None, privacidade="public", com_shorts=False, com_thum
     if momento is not None and momento <= datetime.now(timezone.utc) + timedelta(minutes=10):
         raise SystemExit("A data de publicação precisa estar pelo menos 10 minutos no futuro.")
     tags_finais = list(tags if tags is not None else kit.get("tags") or [])
-    video = {"arquivo": "final.mp4", "titulo": (titulo or kit.get("titulo") or projeto.nome)[:100],
+    video = {"arquivo": "final.mp4", "titulo": (titulo or projeto.dados.get("titulo_entrega") or kit.get("titulo")
+                                                  or projeto.nome)[:100],
              "descricao": descricao if descricao is not None else kit.get("descricao", ""), "tags": tags_finais,
              "privacidade": "private" if momento else privacidade,
              "publicar_em": momento.isoformat() if momento else None, "sintetico": bool(kit.get("sintetico")),
@@ -362,6 +363,9 @@ def publicar_projeto(projeto, quando=None, privacidade="public", com_shorts=Fals
     def progresso_de(k):
         return (lambda pct: on_progresso(round((k + pct / 100) / total * 100, 1))) if on_progresso else None
 
+    from . import metadados
+
+    metadados.gravar(projeto, log=log)  # o MP4 sobe com o título, a descrição e as tags dentro (grátis, segundos)
     log(f"  enviando o vídeo: {v['titulo']}")
     recurso = publicar(projeto.pasta / v["arquivo"], v["titulo"], v["descricao"], v["tags"], v["privacidade"],
                        pl["categoria"], progresso_de(0), momento, v["sintetico"], pl["idioma"])

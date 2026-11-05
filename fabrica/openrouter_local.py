@@ -7,6 +7,7 @@ roteador escolhe, então cada chamada grava em uso_openrouter.json o custo real 
 import base64
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -98,12 +99,27 @@ def sessao(projeto) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", nome)[:120]
 
 
+def credito_reservado(r) -> bool:
+    """402 que não é falta de saldo: o OpenRouter reserva o custo máximo de cada pedido em andamento e recusa o que
+    passaria do saldo (in_flight_budget_exhausted). Medido em 2026-10-29 com US$ 7 de saldo: de 8 imagens pedidas
+    juntas, 2 voltaram 402 e as outras saíram. Esperar os pedidos em andamento terminarem resolve; a fábrica tratava
+    como "acabou o crédito" e largava todas as imagens de IA do vídeo."""
+    return r.status_code == 402 and ("in_flight" in r.text or "in-flight" in r.text)
+
+
 def postar_com_sessao(post, url, corpo, projeto, **kw):
     """POST com o session_id do projeto no corpo (Jev e imagens também aparecem na aba Sessions). Se a interface
-    recusar o campo (400 ou 422 citando session), manda de novo sem ele: a sessão nunca trava a produção."""
-    r = post(url, json={**corpo, "session_id": sessao(projeto)}, **kw)
+    recusar o campo (400 ou 422 citando session), manda de novo sem ele: a sessão nunca trava a produção.
+    O 402 de crédito reservado (credito_reservado) espera os outros pedidos e tenta de novo, por até 3 minutos."""
+    enviado = {**corpo, "session_id": sessao(projeto)}
+    r = post(url, json=enviado, **kw)
     if r.status_code in (400, 422) and "session" in r.text.lower():
-        r = post(url, json=corpo, **kw)
+        enviado = corpo
+        r = post(url, json=enviado, **kw)
+    limite = time.time() + 180
+    while credito_reservado(r) and time.time() < limite:
+        time.sleep(random.uniform(3, 10))  # sorteado: as 6 imagens juntas não voltam todas no mesmo segundo
+        r = post(url, json=enviado, **kw)
     return r
 
 
@@ -114,11 +130,14 @@ def _registrar(projeto, etapa, uso, modelo_usado, segundos=None):
              "custo_usd": uso.get("cost", 0) or 0}
     if segundos is not None:
         linha["segundos"] = round(segundos, 1)  # o que a fábrica esperou, com as novas tentativas (tempos.py)
-    with _trava:
-        arquivo = projeto.caminho("uso_openrouter.json")
-        historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
-        historico.append(linha)
-        arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+    # projeto apagado no meio da chamada: não recria a pasta só com este arquivo (o editor não a mostra e ela atrapalha
+    # restaurar da lixeira); o registro central abaixo guarda o consumo
+    if (projeto.pasta / "projeto.json").exists():
+        with _trava:
+            arquivo = projeto.caminho("uso_openrouter.json")
+            historico = json.loads(arquivo.read_text(encoding="utf-8")) if arquivo.exists() else []
+            historico.append(linha)
+            arquivo.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
     if not str(modelo_usado).startswith("aimlapi:"):
         # o registro central (consumo.py): fica mesmo depois de o projeto ser apagado ou entregue
         from . import consumo
@@ -207,18 +226,35 @@ def gratuita(rota) -> bool:
     return rota.endswith(":free") or rota == "openrouter/free" or rota.startswith(("groq:", "stealth/"))
 
 
-def _espera_pelo_gratis(projeto, rotas, limite=None):
-    """Segundos até a primeira rota gratuita da cadeia voltar, se ela está fora só por pouco (o limite do minuto);
-    None se não há gratuita para esperar, ou se ela demora mais que openrouter.espera_pelo_gratis (60 s). limite
-    no lugar dele: a cadeia de visão usa midia.espera_pelo_gratis (0, vai direto ao pago rápido)."""
-    if limite is None:
-        limite = (projeto.config.get("openrouter") or {}).get("espera_pelo_gratis", 60)
-    limite = float(limite)
+def _espera_por_melhor(projeto, rotas, rota, limite_gratis=None):
+    """(segundos, rota) até uma rota MELHOR que esta voltar, se ela está fora só por pouco (o limite do minuto);
+    (None, None) se não há o que esperar, ou se a volta demora mais do que vale a pena.
+
+    Melhor é a que vem antes na cadeia: os gratuitos na frente e, entre os pagos, a ordem da lista, do mais rápido ao
+    de reserva. Esperar pelo gratuito é para não pagar (openrouter.espera_pelo_gratis, 60 s; ou o limite que a cadeia
+    de visão passa em limite_gratis, midia.espera_pelo_gratis). Esperar pela paga rápida é para não cair na de
+    reserva, muito mais lenta (openrouter.espera_pela_rapida, 30 s): medido nos 26 vídeos de outubro, na escolha das
+    fotos e nas descrições, o Qwen 3.7 Flash de reserva levou 22,9 s por chamada contra 2,1 s do Gemini 2.5
+    Flash-Lite. Eram 15% das chamadas e 66% de todo o tempo de modelo; no 25-animais-estranhos-e-raros-da-china,
+    487 escolhas no Qwen levaram 9.587 s, que o Gemini faria em uns 1.000."""
+    cfg = projeto.config.get("openrouter") or {}
+    if limite_gratis is None:
+        limite_gratis = cfg.get("espera_pelo_gratis", 60)
+    limite_rapida = cfg.get("espera_pela_rapida", 30)
     agora = time.time()
-    voltas = [_FORA_DO_AR[r] - agora for r in rotas if gratuita(r) and _FORA_DO_AR.get(r, 0) > agora]
-    if not voltas or min(voltas) > limite:
-        return None
-    return max(min(voltas), 0) + 0.5
+    candidatas = []
+    for melhor in (rotas[:rotas.index(rota)] if rota in rotas else []):
+        volta = _FORA_DO_AR.get(melhor, 0) - agora
+        if volta <= 0:
+            continue  # essa já voltou: a volta do laço tenta ela antes desta
+        if volta <= float(limite_gratis if gratuita(melhor) else limite_rapida):
+            candidatas.append((volta, melhor))
+    if not candidatas:
+        return None, None
+    volta, melhor = min(candidatas)
+    # um pingo de sorteio na espera: com 6 a 8 cenas escolhendo ao mesmo tempo, todas voltavam no mesmo instante,
+    # estouravam o limite do minuto de novo na hora e a escolha inteira caía na rota de reserva por minutos
+    return max(volta, 0) + 0.5 + random.uniform(0, 2.5), melhor
 
 
 def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=None, imagens=(), temperatura=None,
@@ -252,7 +288,7 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
     gratis = [r for r in rotas if gratuita(r)]
     rotas = gratis + [r for r in rotas if not gratuita(r)]
     # o que a chamada passou, para tempos.anotar_chamada: cada rota tentada, as puladas por estarem fora do ar e as
-    # esperas paradas (pelo gratuito e pela confirmação do pago)
+    # esperas paradas (pela rota melhor que esta e pela confirmação do pago)
     comeco, tentadas, puladas, esperas, ok = time.time(), [], set(), {}, False
     try:
         while True:
@@ -262,19 +298,24 @@ def perguntar(projeto, etapa, instrucoes, pedido, esquema, log=print, modelo=Non
             erro, de_novo = None, False
             for k, rota in enumerate(vivas):
                 ultima = k == len(vivas) - 1
+                if _esperas < 3 and not gratuita(rota) and rota != rotas[0]:
+                    # antes de usar uma rota PAGA que não é a primeira escolha: se uma melhor está fora só pelo limite
+                    # do minuto, espera uns segundos por ela. Vale para não pagar (no nunca-deve-ter-dentro-de-casa-
+                    # parte-2 um pico da conferência, com o Groq e os gratuitos do OpenRouter no limite do minuto ao
+                    # mesmo tempo, mandou 27 descrições para o Qwen pago em 1 minuto) e, desde 2026-10-25, para não
+                    # cair na rota paga de RESERVA, 11x mais lenta que a paga rápida: era disso que vinham os 66% do
+                    # tempo de modelo da escolha das fotos e das descrições (_espera_por_melhor). Um gratuito
+                    # disponível nunca espera: ele entra na hora, porque trocar um gratuito por outro só custaria tempo
+                    segundos, melhor = _espera_por_melhor(projeto, rotas, rota, espera)
+                    if segundos is not None:
+                        log(f"  o {melhor} está no limite do minuto: esperando {segundos:.0f} s em vez de usar o {rota}")
+                        time.sleep(segundos)
+                        chave = "pelo gratuito" if gratuita(melhor) else "pela paga rápida"
+                        esperas[chave] = round(esperas.get(chave, 0) + segundos, 2)
+                        _esperas += 1
+                        de_novo = True
+                        break
                 if not gratuita(rota) and gratis:
-                    if _esperas < 3:
-                        # antes de pagar: se os gratuitos estão fora só pelo limite do minuto, espera uns segundos por
-                        # eles. No nunca-deve-ter-dentro-de-casa-parte-2 um pico da conferência (Groq e gratuitos do
-                        # OpenRouter no limite do minuto ao mesmo tempo) mandou 27 descrições para o Qwen pago em 1 minuto
-                        segundos = _espera_pelo_gratis(projeto, rotas, espera)
-                        if segundos is not None:
-                            log(f"  os gratuitos estão no limite do minuto: esperando {segundos:.0f} s em vez de pagar o {rota}")
-                            time.sleep(segundos)
-                            esperas["pelo gratuito"] = round(esperas.get("pelo gratuito", 0) + segundos, 2)
-                            _esperas += 1
-                            de_novo = True
-                            break
                     # todos os gratuitos esgotaram: o pago só com a confirmação da pessoa (pago.py)
                     fora = {r: _FORA_DO_AR[r] for r in gratis if _FORA_DO_AR.get(r, 0) > time.time()}
                     t = time.time()
@@ -452,6 +493,11 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
             time.sleep(min(30, 3 * 2 ** erros))
             continue
         texto_erro = r.text.lower() if r.status_code != 200 else ""
+        if credito_reservado(r):
+            # há saldo, só está reservado para os pedidos em andamento: espera eles terminarem, sem gastar tentativa
+            log("  OpenRouter com o saldo reservado pelos pedidos em andamento, esperando")
+            time.sleep(random.uniform(3, 10))
+            continue
         if cadeia and (r.status_code in (402, 404) or (r.status_code == 403 and ("fund" in texto_erro or "balance" in texto_erro))):
             # sem saldo nesta conta, ou o modelo saiu do ar: as próximas chamadas já vão direto para o seguinte
             # 404 por causa da imagem (o openrouter/free mandou para um modelo que só lê texto) não é modelo retirado
@@ -459,9 +505,12 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
             por_imagem = r.status_code == 404 and "image" in texto_erro
             _fora_do_ar(rota, 5 if por_imagem else 24 * 60 if r.status_code == 404 else 30, f"{r.status_code} {r.text[:120]}")
         if cadeia and r.status_code == 429:
-            # limite do dia dos modelos gratuitos não volta em minutos; limite por minuto volta logo
+            # limite do dia dos modelos gratuitos não volta em minutos; limite por minuto volta logo, em segundos
+            # (openrouter.espera_no_limite_do_minuto). Era um minuto inteiro, mais do que qualquer espera que
+            # _espera_por_melhor aceita: a rota rápida saía de cena e a escolha das fotos ia toda para a de reserva
             por_dia = "per-day" in texto_erro or "per day" in texto_erro or "daily" in texto_erro
-            _fora_do_ar(rota, 60 if por_dia else 1, f"429 {r.text[:120]}")
+            fora = 60 * 60 if por_dia else cfg.get("espera_no_limite_do_minuto", 15)
+            _fora_do_ar(rota, fora / 60, f"429 {r.text[:120]}")
         if cadeia and r.status_code in (500, 502, 503, 504) and erros >= 1:
             _fora_do_ar(rota, 2, f"{r.status_code} do servidor")
         if r.status_code == 401:

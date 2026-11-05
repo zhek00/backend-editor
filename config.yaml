@@ -33,7 +33,7 @@ assinaturas:
 # das vozes: GET /api/vozes/local no editor. O tempo das palavras sai do Whisper do Groq (grátis)
 voz_local:
   voz: "omnivoice:community_pt_br_lucas"  # a voz quando o perfil não diz voz.voz_local (Lucas, pt-BR, gravada)
-  no_lugar_das_pagas: true
+  no_lugar_das_pagas: false            # 2026-10-29: OmniVoice não instalado; GenAI Pro de volta para todos
   blocos_ao_mesmo_tempo: 1             # a placa de vídeo grava um bloco por vez
   passos_omnivoice: 16                 # 16 = 20 min de vídeo em uns 4 min; 32 leva o dobro, sem diferença medida
   desligar_depois: true                # o motor sai da placa no fim da narração (o render e as animações usam ela)
@@ -95,6 +95,8 @@ descricao:
   resolucao: baixa         # baixa, media ou alta: na baixa a imagem gasta metade dos tokens (856 contra 1.692)
   lado: 512                # maior lado da miniatura enviada, em pixels
   max_tokens: 600          # a resposta de uma cena tem uns 160 tokens
+  limite_segundos: 15      # passou disso (ou o Google deu 429/503), o Gemini fica 3 min de lado e a cadeia de visão
+                           # descreve. No tescos-60-billion (2026-10-27) ele levou de 20 a 80 s por imagem; 0 sem limite
 
 # O OpenRouter serve só para falar com o Jev, que não tem API própria. Todo o resto roda no Groq, com o
 # Gemini de reserva: o roteador jev-router escolhe modelos caros sozinho (já chegou a usar o Claude Sonnet).
@@ -126,8 +128,12 @@ openrouter:
                                 # pararam a fábrica 15 min (20:17 a 20:32) em modelos que pensavam até o limite, de 137 a
                                 # 273 s cada: o openrouter/free sorteou MiniMax M3.1, Nemotron 3.5 Lightning e Cohere North
                                 # (saiu da cadeia), e o Qwen 3.8 Flash pago (que estava aqui) pensou 14 mil tokens por chamada
-  espera_pelo_gratis: 60         # antes de pagar, espera até isso (s) por um gratuito que está fora só pelo limite do
-                                # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min
+    - gemini:gemini-3.1-flash-lite  # o mesmo Gemini pelas GEMINI_API_KEY do .env, com a cota própria, para quando o
+                                # OpenRouter devolve 429 do Google (pedido do usuário em 2026-10-29)
+  espera_pelo_gratis: 5          # antes de pagar, espera até isso (s) por um gratuito que está fora só pelo limite do
+                                # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min. Era 60:
+                                # pedido do usuário em 2026-10-29, com o Groq voltando aos poucos cada chamada esperava
+                                # 1 min e não saiu nenhuma imagem de IA em 10 min
   confirmar_pago: false          # false: o pago entra sozinho, mas sempre depois de TODOS os gratuitos da cadeia. Pedido
                                 # do usuário em 2026-10-10 ("deve ser aprovado o consumo automaticamente"): com a cota
                                 # do Groq cheia, o brasil-selvagem (20 min) ficou quase 2 h na escolha esperando o
@@ -170,7 +176,8 @@ groq:
 ia:
   ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA (conferida pelo Jev).
                              # false: vídeo só com banco de imagens, nenhuma IA
-  teto: 0.35                 # no máximo 35% das cenas do vídeo com imagem de IA (pedido do usuário em 2026-10-15: o
+  teto: 0.25                 # 25% desde 2026-10-27 (entregas rápidas: no tescos-60-billion a IA levou 27 min). Antes 35%:
+                             # no máximo 35% das cenas do vídeo com imagem de IA (pedido do usuário em 2026-10-15: o
                              # everything-you-need-to-answer saiu com 54%). A IA fica com quem mais precisa (momento que
                              # ninguém fotografou, foto reprovada, época); as cenas acima do teto ganham foto de banco do
                              # assunto do bloco (imagens._teto_da_ia). 0 ou vazio: sem teto
@@ -184,7 +191,10 @@ roteirista:
                              # mimo: só a cadeia de principais. claude: o Claude da assinatura (não usar na fábrica)
   # agente de roteiro (mapa e cenas) e diretor do Corrigir, em cadeia, e depois a cadeia de principais. Pedido do
   # usuário em 2026-10-05, o máximo de gratuito: o Nemotron Ultra gratuito na frente, o DeepSeek pago de reserva.
-  # Comparados com o mesmo pedido em 3 lotes reais, ele foi igual ou melhor e não estourou o limite pensando
+  # Comparados com o mesmo pedido em 3 lotes reais, ele foi igual ou melhor e não estourou o limite pensando.
+  # O Nemotron é lento: medido em 2026-10-30, 352 s por lote contra 132 s do DeepSeek, mas pôr o DeepSeek pago na frente
+  # sairia por uns US$ 0,34 a 0,85 por vídeo de 30 min (US$ 0,012 o lote), e o usuário preferiu não pagar isso. A ordem
+  # desta lista não decide quem atende: todo gratuito vem antes de qualquer pago (openrouter_local.perguntar)
   modelos:
     - nvidia/nemotron-3-ultra-550b-a55b:free
     - deepseek/deepseek-v4-flash
@@ -192,11 +202,15 @@ roteirista:
                              # Tsavo (8,5 min): uns US$ 0,22 por vídeo, cerca de US$ 0,01 por lote de cenas
   esforco_claude: medium     # low, medium ou high: quanto o Claude pensa em cada lote de cenas
   cenas_por_lote: 10         # trechos por chamada. O mapa e o perfil vão juntos e ocupam boa parte do limite do Groq
-  paralelo: 16               # partes do roteiro decididas ao mesmo tempo. Eram 4, depois 8 (pedido do usuário em
+  paralelo: 20               # partes do roteiro decididas ao mesmo tempo (20 desde 2026-10-27, o limite por minuto do
+                             # OpenRouter grátis: com 1 lote por parte, 20 lotes saem juntos em ~4 min). Eram 4, depois 8 (pedido do usuário em
                              # 2026-10-10), 16 desde 2026-10-14: o Nemotron Ultra grátis leva ~4 min por lote, e com 8
                              # saíam 2 lotes por minuto (o JSON de cenas do everything-you-need-to-answer levou 25 min no
                              # teste). Com 16 são uns 4 pedidos por minuto, longe do limite do OpenRouter grátis (20)
-  lotes_por_trecho: 3        # bloco grande é decidido em partes de até 3 lotes, ao mesmo tempo. Dentro de uma parte os
+  lotes_por_trecho: 1        # 1 desde 2026-10-27 (pedido do usuário, para acelerar): no tescos-60-billion os 3 lotes
+                             # em fila de cada parte, uns 4 min cada, levaram o JSON de cenas a 11 min; cada lote
+                             # solto vê a fala logo antes dele no lugar das cenas decididas.
+                             # Antes (3): bloco grande é decidido em partes de até 3 lotes, ao mesmo tempo. Dentro de uma parte os
                              # lotes saem em fila; no everything-you-need-to-answer (2026-10-14) um bloco com 65% do
                              # roteiro andou sozinho, lote a lote, por 1h20. Menos = mais rápido, menos continuidade
 
@@ -224,6 +238,13 @@ midia:
   modelos_visao:
     - groq:qwen/qwen3.8-27b          # grátis: 11 chaves do Groq, 4 s por folha
     - google/gemini-2.5-flash-lite   # o pago mais rápido com bom custo: US$ 0,10 e 0,40 por milhão de tokens
+    - gemini:gemini-3.1-flash-lite   # o mesmo Gemini pelas GEMINI_API_KEY do .env, com a cota própria. Pedido do usuário
+                                     # em 2026-10-29: o OpenRouter devolvia 429 do Google quase sempre e tudo caía no Qwen
+                                     # Fica DEPOIS do 2.5 de propósito: com ele na frente (tentado em 2026-10-30) cada
+                                     # escolha deixa de dormir de 10 a 18 s esperando o 2.5 voltar do limite do minuto,
+                                     # mas custa US$ 0,25 e 1,50 por milhão contra 0,10 e 0,40 do 2.5. Medido no
+                                     # coreia-inventou-nova-tecnologia-para-sub: as 1.046 chamadas de visão custaram
+                                     # US$ 0,34 no 2.5 e custariam US$ 1,14 aqui. O tempo não vale esse preço
     - qwen/qwen3.7-flash             # reserva: o pago mais barato (lento na escolha, 28 s), para nunca parar
   # quem só pode usar grátis (as thumbnails e o Motion IA, VISAO.perguntar com so_gratuitos): os lentos ficam aqui
   visao_gratuitos:
@@ -248,13 +269,17 @@ midia:
   processos: 8               # cenas buscando material real ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10
                            # para acelerar: no teste-frango (5,5 min) a busca levou uns 20 dos 43 min da criação. Banco
                            # no limite fica de lado e a busca segue com os outros (Buscador, LimiteAtingido)
-  escolhas_ao_mesmo_tempo: 4 # lotes de 6 cenas escolhidos e conferidos ao mesmo tempo pelo modelo principal e pelo Jev
+  escolhas_ao_mesmo_tempo: 8 # 8 desde 2026-10-27 (entregas rápidas: a busca do 12-animais levou 26 min com 4). Lotes de 6 cenas escolhidos e conferidos ao mesmo tempo pelo modelo principal e pelo Jev
   candidatos: 12             # fotos ou vídeos mostrados ao modelo por cena (com 9 bancos, 8 era pouco)
   cenas_por_escolha: 6       # cenas mostradas ao Claude em cada rodada de escolha
   espera_maxima: 3600        # segundos que a fábrica espera quando uma fonte atinge o limite de buscas
 
 imagens:
-  lote: true                 # manda as imagens em lote ao Google, metade do preço, pronto em minutos ou horas
+  lote: false                # false desde 2026-10-30 (pedido do usuário): o lote do Google custa metade, mas fica
+                             # pronto "em minutos ou horas" e a fábrica espera parado por ele (espera_lote_horas).
+                             # Só vale para canal com imagens.provedor google: os canais de hoje herdam
+                             # provedor openrouter do documentario.yaml, e para eles isto nunca mudou nada. true volta
+                             # ao lote, e um perfil com imagens.lote true usa o lote só naquele canal
   minimo_lote: 8             # com menos imagens que isso gera na hora, como no refazer
   espera_lote_horas: 24
   processos: 16              # imagens de IA geradas ao mesmo tempo, fora do lote. Eram 6: no everything-you-need-

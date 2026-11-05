@@ -57,3 +57,52 @@ def test_excluir_animacao_pela_faixa_motion(monkeypatch, tmp_path):
     assert salvos[-1] == ["a", "c"]
     assert animacoes.remover_item(projeto, "todos") == ["b"]  # a que já estava desligada não conta de novo
     assert animacoes.remover_item(projeto, "nao-existe") == []
+
+
+def test_tema_troca_a_paleta_e_o_config_vale_por_cima():
+    from types import SimpleNamespace
+
+    from fabrica import animacoes
+
+    def projeto(estilo):
+        return SimpleNamespace(config={"animacoes": {"estilo": estilo}}, perfil={})
+
+    assert animacoes._estilo(projeto({"tema": "hacker"}))["destaque"] == "#39FF88"
+    assert animacoes._estilo(projeto({"tema": "hacker", "destaque": "#123456"}))["destaque"] == "#123456"
+    assert animacoes._estilo(projeto({"tema": "nao-existe"}))["destaque"] == animacoes.ESTILO_PADRAO["destaque"]
+    assert "tema" not in animacoes._estilo(projeto({"tema": "hacker"}))
+
+
+def test_todo_tema_preenche_as_mesmas_chaves_do_padrao():
+    from fabrica import animacoes
+
+    for nome, tema in animacoes.TEMAS.items():
+        assert set(animacoes.ESTILO_PADRAO) <= set(tema), nome
+
+
+def test_tema_de_papel_tem_veu_claro_e_sem_tema_o_veu_fica_igual():
+    from fabrica import animacoes
+
+    partes = {"css": "", "html": "", "js": ""}
+    claro = animacoes._montar_html(partes, 3, 1920, 1080, {**animacoes.ESTILO_PADRAO, **animacoes.TEMAS["jornal"]})
+    assert "rgba(238, 230, 214, 0.93)" in claro and "--veu" not in claro
+    padrao = animacoes._montar_html(partes, 3, 1920, 1080, animacoes.ESTILO_PADRAO)
+    assert "rgba(8, 6, 4, 0.62)" in padrao
+
+
+def test_todo_tema_tem_desenho_proprio():
+    from fabrica import animacoes
+
+    assert set(animacoes.DESENHOS) == set(animacoes.TEMAS)
+
+
+def test_desenho_do_tema_entra_na_pagina_e_sem_tema_nao():
+    from types import SimpleNamespace
+
+    from fabrica import animacoes
+
+    partes = {"css": "", "html": "", "js": ""}
+    tema = animacoes._estilo(SimpleNamespace(config={"animacoes": {"estilo": {"tema": "hacker"}}}, perfil={}))
+    pagina = animacoes._montar_html(partes, 3, 1920, 1080, tema)
+    assert "Courier New" in pagina and "--desenho" not in pagina
+    assert "Courier New" not in animacoes._montar_html(partes, 3, 1920, 1080, animacoes.ESTILO_PADRAO)

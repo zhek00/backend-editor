@@ -51,12 +51,59 @@ def com_avatar(projeto, sem_avatar=False) -> bool:
     return bool((projeto.perfil.get("avatar") or {}).get("ativo")) and not sem_avatar
 
 
+# estilo de edição do vídeo (perfil: `visual: cinema`), vindo do motor do Robô PALHANO em 2026-10-12. Vai no fim do
+# filtro de cada cena: cor, granulado, vinheta e, no cinema deitado, as faixas pretas. Sem `visual` no perfil nada
+# muda, e os clipes já prontos não mudam de nome (o campo só entra no cfg quando existe).
+VISUAIS = {
+    "documentario": "eq=contrast=1.03:saturation=1.05",
+    "investigacao": "eq=saturation=0.55:contrast=1.08:brightness=-0.03,noise=alls=8:allf=t,vignette=PI/4",
+    "noticiario": "eq=contrast=1.05",
+    "energia": "eq=saturation=1.3:contrast=1.1",
+    "cinema": "eq=contrast=1.1:saturation=0.9,colorbalance=rs=-0.05:bs=0.07:rh=0.05",
+}
+FAIXAS_DE_CINEMA = "drawbox=x=0:y=0:w=iw:h=ih*0.12:color=black:t=fill,drawbox=x=0:y=ih*0.88:w=iw:h=ih*0.12:color=black:t=fill"
+
+
+# transições entre as cenas: cada clipe entra e sai numa cor, sem sobrepor um ao outro, para os clipes continuarem se
+# emendando sem codificar de novo. Sem `transicao` no perfil é corte seco, e os clipes prontos não mudam de nome.
+TRANSICOES = {"preto": ("black", 0.14), "branco": ("white", 0.10), "brasa": ("0xFF6A00", 0.14), "flash": ("white", 0.05)}
+CAMADAS = ("brasas", "poeira")
+
+
+def _com_transicao(filtro: str, cfg, quadros, fps) -> str:
+    nome = cfg.get("transicao")
+    if nome not in TRANSICOES:
+        return filtro
+    cor, dura = TRANSICOES[nome]
+    fim = max(quadros / fps - dura, 0)
+    return f"{filtro},fade=t=in:st=0:d={dura}:color={cor},fade=t=out:st={fim:.3f}:d={dura}:color={cor}"
+
+
+def _com_visual(filtro: str, cfg) -> str:
+    visual = cfg.get("visual")
+    if visual not in VISUAIS:
+        return filtro
+    filtro += "," + VISUAIS[visual]
+    if visual == "cinema" and not cfg.get("vertical"):
+        filtro += "," + FAIXAS_DE_CINEMA
+    return filtro
+
+
 def configuracao(projeto, vertical=False):
     """Ajustes do render. Na versão em pé (Reels e Shorts) a tela vira 1080x1920 e vale a seção vertical do config.
 
     A seção vertical fica fora da seção render de propósito: os ajustes do render entram no nome de cada clipe,
     e mexer neles faria a versão deitada de todo projeto renderizar de novo."""
     cfg = dict(projeto.config.get("render") or {})
+    visual = str(projeto.perfil.get("visual") or "").strip().lower()
+    if visual in VISUAIS:
+        cfg["visual"] = visual
+    transicao = str(projeto.perfil.get("transicao") or "").strip().lower()
+    if transicao in TRANSICOES:
+        cfg["transicao"] = transicao
+    camada = str(projeto.perfil.get("camada") or "").strip().lower()
+    if camada in CAMADAS:
+        cfg["camada"] = camada
     if vertical:
         v = projeto.config.get("vertical") or {}
         cfg.update({"largura": v.get("largura", 1080), "altura": v.get("altura", 1920), "vertical": True,
@@ -68,14 +115,34 @@ def arquivo_final(projeto, vertical=False):
     return projeto.pasta / ("final_vertical.mp4" if vertical else "final.mp4")
 
 
+# Os renders correndo neste processo. O Radar deixa até 8 vídeos ao mesmo tempo, e cada render pedia metade dos núcleos
+# sem saber dos outros: com três juntos a máquina tinha uma vez e meia mais trabalho do que núcleos.
+_renders_rodando = set()
+
+
+def _parte_da_maquina(total, piso=1) -> int:
+    """A fatia de `total` que cabe a este render, repartida entre os que estão correndo agora. O piso garante que
+    nenhum vídeo fique parado esperando o outro."""
+    with _trava_placa:
+        rodando = max(1, len(_renders_rodando))
+    return max(piso, total // rodando)
+
+
 def renderizar(projeto, log=print, sem_avatar=False, vertical=False):
     from . import tempos
 
     # o render inteiro e as partes dele vão para o tempos.json (pedido do usuário em 2026-10-13: medir antes de
     # acelerar)
     esperar_clipes_adiantados(projeto, log)
-    with tempos.medir(projeto, "Render em pé (total)" if vertical else "Render (total)", log=log):
-        return _renderizar(projeto, log, sem_avatar, vertical)
+    chave = str(projeto.pasta)
+    with _trava_placa:
+        _renders_rodando.add(chave)
+    try:
+        with tempos.medir(projeto, "Render em pé (total)" if vertical else "Render (total)", log=log):
+            return _renderizar(projeto, log, sem_avatar, vertical)
+    finally:
+        with _trava_placa:
+            _renders_rodando.discard(chave)
 
 
 def _renderizar(projeto, log, sem_avatar, vertical):
@@ -164,6 +231,7 @@ def _renderizar(projeto, log, sem_avatar, vertical):
     try:
         sons = list(sons) + motion_ia.sons_na_linha(projeto, cenas, log)
         sons = list(sons) + animation_ai.sons_na_linha(projeto, cenas, log)
+        sons = list(sons) + animacoes.sons_na_linha(projeto, log)
     except (Exception, SystemExit) as erro:
         log(f"  sons dos clipes de motion ficaram de fora: {str(erro)[:160]}")
     legenda = _legendas_finais(projeto, trechos, fecho, duracao, atraso, base)
@@ -173,7 +241,9 @@ def _renderizar(projeto, log, sem_avatar, vertical):
         if velho.name not in validos:
             velho.unlink()
     pendentes = [t for t in tarefas if not t["destino"].exists()]
-    processos = cfg.get("processos") or max(1, (os.cpu_count() or 4) // 2)
+    processos = cfg.get("processos") or _parte_da_maquina(max(1, (os.cpu_count() or 4) // 2), piso=2)
+    if len(_renders_rodando) > 1:
+        log(f"  {len(_renders_rodando)} vídeos renderizando nesta máquina: {processos} clipes de cada vez neste")
     log(f"  {len(pendentes)} clipes para renderizar, {len(tarefas) - len(pendentes)} já prontos")
     with tempos.medir(projeto, "Render: clipes", clipes=len(pendentes), processos=processos),             ThreadPoolExecutor(processos) as executor:
         futuros = {executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg): t for t in pendentes}
@@ -282,7 +352,7 @@ def adiantar_clipes(projeto, log=print):
                 pasta_textos = projeto.caminho("render", "textos", "_").parent
                 pendentes = [t for t in _tarefas_da_linha(projeto, linha, cfg, pasta_clipes, 0.35, so_prontas=True)
                              if not t["destino"].exists()]
-                processos = max(1, (cfg.get("processos") or max(1, (os.cpu_count() or 4) // 2)) // 2)
+                processos = max(1, (cfg.get("processos") or _parte_da_maquina(max(1, (os.cpu_count() or 4) // 2))) // 2)
                 log(f"  adiantando {len(pendentes)} clipes em segundo plano")
                 with ThreadPoolExecutor(processos) as executor:
                     for futuro in [executor.submit(_clipe, t, pasta_fotos, pasta_textos, projeto.perfil, cfg)
@@ -478,6 +548,7 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
         entradas, filtro = _entrada_video(arquivo, frames, cfg)
     else:
         entradas, filtro = ["-i", _preparar_foto(arquivo, pasta_fotos, cfg)], _filtro_foto(tarefa["movimento"], frames, cfg)
+    filtro = _com_transicao(_com_visual(filtro, cfg), cfg, frames, fps)
 
     duracao = frames / fps
     simbolos, titulos = tarefa["simbolos"], tarefa["titulos"]
@@ -500,7 +571,18 @@ def _clipe(tarefa, pasta_fotos, pasta_textos, perfil, cfg):
             efeitos += f",fade=t=out:st={max(camada['fim'] - transicao, camada['inicio']):.3f}:d={transicao}:alpha=1"
         grafo.append(f"[{i}:v]{efeitos}[c{i}]")
         grafo.append(f"[b{i - 1}][c{i}]overlay=x='{x}':y='{y}':eval=frame[b{i}]")
-    grafo.append(f"[b{len(camadas)}]format=yuv420p[v]")
+    fim_do_grafo = f"b{len(camadas)}"
+    if cfg.get("camada") in CAMADAS:
+        from . import camadas as particulas
+
+        n = len(camadas) + 1
+        # cada clipe começa o laço num ponto: com o mesmo começo, as partículas pulariam de volta a cada corte
+        entradas += ["-stream_loop", "-1", "-ss", f"{frames % 150 / 30:.2f}", "-i", particulas.laco(cfg["camada"])]
+        # em RGB: em yuv o screen também soma os canais de cor, e o vídeo inteiro fica magenta
+        grafo.append(f"[{n}:v]scale={largura}:{altura},setsar=1,format=gbrp[particulas]")
+        grafo.append(f"[{fim_do_grafo}]format=gbrp[fundo];[fundo][particulas]blend=all_mode=screen:shortest=1[comcamada]")
+        fim_do_grafo = "comcamada"
+    grafo.append(f"[{fim_do_grafo}]format=yuv420p[v]")
 
     rodar([
         "ffmpeg", "-y", "-loglevel", "error", *entradas,
@@ -770,21 +852,82 @@ _placa = {}
 _trava_placa = threading.Lock()
 
 
-def _placa_funciona() -> bool:
-    """A placa de vídeo NVIDIA codifica H.264? Testado uma vez por execução, com um quadro preto."""
+# A escada de codificadores por placa, na ordem em que são provados. Cada máquina tem no máximo um que
+# serve: o nvenc precisa de uma NVIDIA, o qsv de uma Intel, o amf de uma AMD. O que recusa sai da escada e
+# o seguinte é provado; nenhum servindo, a montagem final sai em libx264 (CPU), mais devagar e inteira.
+# O {cq} de cada linha recebe render.cq_placa.
+#
+# O AMF só entra pedido (render.codificador: amf). Medido em 2026-11-05 nesta placa AMD, na montagem de verdade de uma
+# cópia do roteiro-3, 3 rodadas de cada: libx264 34 s, h264_amf speed 41 s. No vídeo 17-ultimas-fotos, com o perfil
+# quality, a montagem levou 39,5 s por minuto de vídeo contra 23 s do libx264. Num clipe isolado o speed parecia 23%
+# mais rápido; na montagem os filtros correm na CPU de qualquer jeito, e levar os quadros até a placa custa mais do
+# que ela devolve. O nvenc foi medido em 2026-10-27 e ganha da CPU. O qsv não foi medido: não há Intel aqui.
+SO_SE_PEDIR = {"h264_amf"}
+ESCADA_DE_PLACA = (
+    ("h264_nvenc", "NVIDIA", ["-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "{cq}", "-b:v", "0",
+                              "-spatial-aq", "1"]),
+    ("h264_qsv", "Intel", ["-preset", "medium", "-global_quality", "{cq}"]),
+    ("h264_amf", "AMD", ["-quality", "speed", "-rc", "cqp", "-qp_i", "{cq}", "-qp_p", "{cq}"]),
+)
+
+
+def _argumentos_da_placa(codec, cfg) -> list:
+    cq = str(cfg.get("cq_placa", 24))
+    for nome, _, argumentos in ESCADA_DE_PLACA:
+        if nome == codec:
+            return ["-c:v", codec, *[a.format(cq=cq) for a in argumentos], "-pix_fmt", "yuv420p"]
+    return []
+
+
+def _prova_de_um_segundo(codec, cfg) -> str:
+    """Codifica 1 s de preto com os argumentos de verdade deste codificador. Devolve "" quando passou, ou o
+    motivo da recusa. Os argumentos são os mesmos do trabalho para a prova não aprovar o que vai falhar."""
+    try:
+        rodar(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=black:s=256x144:d=1:r=30",
+               *_argumentos_da_placa(codec, cfg), "-f", "null", "-"])
+        return ""
+    except (RuntimeError, OSError) as erro:
+        linhas = [l.strip() for l in str(erro).splitlines() if l.strip()]
+        # as últimas linhas do ffmpeg são o desfecho ("Nothing was written into output file"), não o motivo:
+        # o motivo é a linha de erro anterior a elas (o "Cannot load nvcuda.dll" da placa que não está aqui)
+        ruido = ("Nothing was written", "Conversion failed", "Error opening output file", "frame=", "Falhou ",
+                 "Terminating thread", "Error while opening encoder", "Task finished with error code",
+                 "Could not open encoder", "Error sending frames")
+        uteis = [l for l in linhas
+                 if not l.startswith(("[out#", "[vost#", "[aost#", "[vf#")) and not any(r in l for r in ruido)]
+        # a PRIMEIRA linha é o motivo ("Cannot load nvcuda.dll"); o resto é o ffmpeg desistindo em cascata
+        escolhida = ([l for l in uteis if codec in l] or uteis or linhas)[0] if linhas else type(erro).__name__
+        return re.sub(r"^\[[^\]]+\]\s*", "", escolhida)[:160]
+
+
+def _placa_da_maquina(cfg, log=print):
+    """O primeiro codificador da escada que passa na prova de 1 s, provado uma vez por execução.
+
+    Devolve h264_nvenc, h264_qsv, h264_amf ou None quando nenhum serve. Uma recusa aqui é o normal: a placa
+    desta máquina é de outro fabricante."""
     with _trava_placa:
-        if "ok" not in _placa:
-            try:
-                rodar(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=black:s=256x144:d=0.2",
-                       "-c:v", "h264_nvenc", "-f", "null", "-"])
-                _placa["ok"] = True
-            except (RuntimeError, OSError):
-                _placa["ok"] = False
-        return _placa["ok"]
+        if "codec" not in _placa:
+            _placa["codec"] = None
+            pedido = str(cfg.get("codificador", "auto")).lower()
+            for codec, marca, _ in ESCADA_DE_PLACA:
+                if codec in SO_SE_PEDIR and pedido not in (codec, codec.removeprefix("h264_")):
+                    continue
+                motivo = _prova_de_um_segundo(codec, cfg)
+                if not motivo:
+                    log(f"  aceleração por placa de vídeo: {marca} ({codec}), prova de 1 s aprovada")
+                    _placa["codec"] = codec
+                    break
+                log(f"  {codec} ({marca}) não serve nesta máquina e a escada seguiu -- normal quando a placa"
+                    f" é de outro fabricante ({motivo})")
+            if _placa["codec"] is None:
+                log("  nenhuma placa de vídeo serve nesta máquina: a montagem final sai em libx264 (CPU)")
+        return _placa["codec"]
 
 
-def _quer_placa(cfg) -> bool:
-    return str(cfg.get("codificador", "auto")).lower() != "cpu" and _placa_funciona()
+def _quer_placa(cfg, log=print) -> bool:
+    if str(cfg.get("codificador", "auto")).lower() == "cpu" or _placa.get("desistiu"):
+        return False
+    return _placa_da_maquina(cfg, log) is not None
 
 
 def codec_de_video(cfg, placa) -> list:
@@ -794,22 +937,27 @@ def codec_de_video(cfg, placa) -> list:
     com o original que a CPU com crf 18 (SSIM 0,9607 e 0,9607), em uns 60% do tempo, com o arquivo 1,8 vez maior.
     Só a montagem final usa a placa: os clipes seguem na CPU, porque um clipe guardado da CPU emendado sem codificar
     a um novo da placa estragaria a emenda."""
-    if placa:
-        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", str(cfg.get("cq_placa", 24)),
-                "-b:v", "0", "-spatial-aq", "1", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(cfg.get("crf", 18)), "-pix_fmt", "yuv420p"]
+    codec = _placa_da_maquina(cfg) if placa and not _placa.get("desistiu") else None
+    return _argumentos_da_placa(codec, cfg) if codec else [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(cfg.get("crf", 18)), "-pix_fmt", "yuv420p"]
 
 
 def _rodar_codificando(comando, cfg, log=print, placa=None) -> bool:
     """Roda comando(codec) na placa; se ela recusar (sessões esgotadas, driver), roda de novo na CPU. Devolve True
-    se ficou na placa."""
-    if _quer_placa(cfg) if placa is None else placa:
+    se ficou na placa.
+
+    Uma recusa no meio do trabalho tira a placa do resto da execução: a prova de 1 s passou e a codificação de
+    verdade não, então tentar de novo a cada pedaço só perderia tempo."""
+    if (_quer_placa(cfg, log) if placa is None else placa) and not _placa.get("desistiu"):
         try:
             rodar(comando(codec_de_video(cfg, True)))
             return True
         except RuntimeError as erro:
-            log(f"  a placa de vídeo recusou a codificação, seguindo pela CPU. {str(erro)[-200:]}")
+            _placa["desistiu"] = True
+            log("  a placa de vídeo passou na prova de 1 s e FALHOU no meio do trabalho: daqui em diante o"
+                f" vídeo sai em libx264 (CPU), mais devagar e inteiro. {str(erro)[-200:]}")
     rodar(comando(codec_de_video(cfg, False)))
+    return False
     return False
 
 
@@ -858,9 +1006,10 @@ def grafo_do_pedaco(inicio, fim, motion, legenda) -> tuple:
 
 def _mixar_em_pedacos(projeto, video, audio, duracao, final, cfg, base, motion, legenda, log=print):
     fps = cfg.get("fps", 30)
-    na_placa = _quer_placa(cfg)
+    na_placa = _quer_placa(cfg, log)
     # a placa aceita poucas codificações ao mesmo tempo; na CPU cada pedaço já usa vários núcleos
-    juntos = int(cfg.get("pedacos_juntos") or (3 if na_placa else max(2, (os.cpu_count() or 4) // 4)))
+    juntos = int(cfg.get("pedacos_juntos") or (_parte_da_maquina(3) if na_placa
+                                               else _parte_da_maquina(max(2, (os.cpu_count() or 4) // 4), piso=2)))
     pedacos = pedacos_da_montagem(duracao, fps, cfg.get("pedacos") or juntos * 2)
     pasta = projeto.caminho(base, "pedacos")
     pasta.mkdir(parents=True, exist_ok=True)
@@ -1027,12 +1176,21 @@ def _legendas_finais(projeto, trechos, fecho, duracao, atraso, base="render"):
     return gravada
 
 
+# Alvo de CADA faixa (narração, música, efeitos) antes da mistura, não do arquivo final: a mistura soma as faixas
+# depois. O YouTube normaliza para -14 LUFS. Com o alvo antigo (-16), os finais do roteiro-4 e do roteiro-5 mediram
+# -16,4 e -16,5 LUFS, pico -3,4 e -3,5 dBFS: com -14 a conta dá perto de -14,4 LUFS e pico -1,4, ainda sem medida
+# num vídeo de verdade. O teto fica em -1 dBFS porque o AAC da saída pode passar de um teto apertado.
+LOUDNESS_ALVO = -14
+LOUDNESS_TETO = -1.0
+LOUDNESS = f"loudnorm=I={LOUDNESS_ALVO}:TP={LOUDNESS_TETO}:LRA=11"
+
+
 def _normalizar(arquivo):
     """Volume padrão em duas passadas. A primeira mede e a segunda aplica um ganho fixo, sem o volume oscilar."""
-    r = rodar(["ffmpeg", "-hide_banner", "-i", arquivo, "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"])
+    r = rodar(["ffmpeg", "-hide_banner", "-i", arquivo, "-af", f"{LOUDNESS}:print_format=json", "-f", "null", "-"])
     medida = json.loads(r.stderr[r.stderr.rfind("{"):r.stderr.rfind("}") + 1])
     return (
-        f"loudnorm=I=-16:TP=-1.5:LRA=11:measured_I={medida['input_i']}:measured_TP={medida['input_tp']}:"
+        f"{LOUDNESS}:measured_I={medida['input_i']}:measured_TP={medida['input_tp']}:"
         f"measured_LRA={medida['input_lra']}:measured_thresh={medida['input_thresh']}:"
         f"offset={medida['target_offset']}:linear=true"
     )

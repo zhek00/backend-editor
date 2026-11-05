@@ -849,6 +849,29 @@ roteiro ~22 min, busca e conferência ~27 min, 214 imagens de IA ~30 min, render
 - **16 imagens de IA ao mesmo tempo** (`imagens.processos`; eram 6). O preço é o mesmo.
 - **FFmpeg** atualizado em 2026-10-27 para o N-128100 (BtbN, 26/10/2026), em `C:\Users\Admin\.cargo\bin`; o de
   08/08/2026 ficou em `ffmpeg_backup_20260808` na mesma pasta.
+- **O vigia reiniciava a fábrica no meio do vídeo** (2026-10-27): ele conferia na `/api/projetos`, que lê o
+  cenas.json e o perfil de todo projeto (uns 4 s parada) e passava dos 20 s com a criação ocupada. No
+  tescos-60-billion foram 4 reinícios, e a esteira refez o fim da criação a cada um (uns 25 min). Agora o LIGAR e o
+  VIGIA conferem na `/api/saude` (async, não lê nada), e o vigia só reinicia depois de 3 minutos sem resposta.
+  **Nunca voltar o vigia para uma rota que lê os projetos.**
+- **Gemini lento na descrição sai da frente** (`descricao.limite_segundos`, 15; `gemini_local.perguntar(limite=)`):
+  no tescos-60-billion ele levou de 20 a 80 s por imagem (36 min somados) com o Google sobrecarregado. Passou do
+  limite, ou deu 429 do minuto ou 5xx, o modelo fica 3 min de lado (`_de_lado`) e a cadeia de visão descreve. O
+  Google recusa prazo abaixo de 10 s (400), então o limite nunca é menor que isso.
+- **Lotes do agente de roteiro soltos** (`roteirista.lotes_por_trecho: 1`, `paralelo: 20`): com 3 lotes em fila por
+  parte, uns 4 min cada, o JSON de cenas do tescos-60-billion levou 11 min.
+- **Narração com 8 blocos ao mesmo tempo não acelera** (`narracao.BLOCOS_AO_MESMO_TEMPO` fica 4). Medido em
+  2026-10-27, 8 frases curtas na voz do canal UK Market: 8 juntas terminaram em 112 s (cada uma de 45 a 112 s), 4 de
+  cada vez em 83 s (cada uma de 12 a 48 s); uma sozinha, 24 s. A GenAIPro aceita os 8 pedidos, mas reparte a
+  velocidade. O que pesa na narração é a fila da voz (`genaipro.lentidao`: há vozes com 400 s por bloco). Frase curta
+  custa perto de 1 crédito por letra (os dois testes, 513 e 453 créditos), não os 0,064 dos blocos grandes.
+- **Este computador tem placa AMD (RX 570), não NVIDIA**: a montagem na placa (`h264_nvenc`) não roda aqui e cai na
+  CPU. O `h264_amf` funciona (mesma qualidade, SSIM 0,987), mas a velocidade ainda não foi medida com a máquina livre.
+- **Entregas rápidas** (pedido do usuário em 2026-10-27, medido no 12-animais-que-evoluiram e no tescos-60-billion):
+  o agente de cenas é o caminho crítico (Nemotron grátis, 280 s por lote em média, contra 74 s do DeepSeek; o usuário
+  preferiu NÃO pôr o DeepSeek pago na frente). Mudou: `midia.escolhas_ao_mesmo_tempo` 8 (eram 4), `ia.teto` 0.25
+  (eram 0.35), e no `tudo` as animações e a trilha rodam ao mesmo tempo. A legenda por clipe foi descartada: a camada
+  de animação fica entre a imagem e a legenda, então a montagem final codifica de novo de qualquer jeito.
 - **Falta** (proposto ao usuário, com as falhas conhecidas): a esteira por trecho, com cada trecho de ~2 min indo da
   busca aos clipes sozinho e uma passada geral no fim (teto de IA, foto e vídeo, frequência das animações). Antes dela
   vêm as travas: cota de IA por trecho, um escritor só do `cenas.json`, trava na lista de imagens usadas e cortes na

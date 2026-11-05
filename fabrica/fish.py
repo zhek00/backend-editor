@@ -131,7 +131,7 @@ def palavras_com_tempo(audio, texto: str, idioma: str = "pt") -> tuple:
                 raise ErroFish("a transcrição voltou sem o tempo das palavras")
             return _casar_com_o_roteiro(texto, ouvidas), float((resposta.get("usage") or {}).get("cost") or 0)
         ultimo = f"{r.status_code} {r.text[:200]}"
-        if r.status_code in (400, 401, 402, 403):
+        if r.status_code in (400, 401, 402, 403) and not openrouter_local.credito_reservado(r):
             break  # sem saldo ou pedido recusado: esperar não resolve
         time.sleep(3 * (tentativa + 1))
     raise ErroFish(f"a transcrição não respondeu ({ultimo})")

@@ -1,0 +1,25 @@
+# Canal criado no editor (2026-10-15). Herda tudo de documentario.yaml e guarda a voz do canal.
+# Para mudar estilo, diretrizes ou texto fixo da descrição, edite aqui (veja perfis/base-documentario.yaml).
+base: documentario.yaml
+nome: João o Lobo
+voz:
+  provedor: genaipro
+  voice_id: 2CECaLAGTS5NRGxgbcxr
+  nome_da_voz: Davi Andrei
+  idioma_da_voz: pt
+
+publicacao:
+  rodape: |
+    O João o Lobo explica este assunto usando informação de acesso público e fontes oficiais, para quem assiste decidir melhor. Vídeos novos toda semana.
+
+    Aviso:
+
+    Este canal é feito para fins informativos e educativos. Os vídeos trazem comentário, análise e opinião a partir de informações de acesso público: publicações oficiais, comunicados das empresas, reportagens independentes e outros registros públicos.
+
+    O conteúdo não acusa nenhuma pessoa, marca ou empresa de conduta ilegal. Pessoas, produtos e empresas são citados apenas para informar, comentar e discutir assunto de interesse público. Procure as fontes oficiais e tire as suas próprias conclusões.
+
+    As informações mudam com o tempo. Nada aqui é orientação médica, jurídica ou profissional. Confira o que for decidir nas fontes oficiais.
+
+imagens:
+  provedor: assinatura
+  provedor_reserva: openrouter

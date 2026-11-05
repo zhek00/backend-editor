@@ -69,7 +69,7 @@ def test_a_fonte_do_japones_tem_as_letras():
 def test_a_descricao_japonesa_nao_leva_texto_fixo_em_portugues():
     from fabrica import publicacao
     texto = publicacao.descricao({"resumo": "皆さんは、銅がいつか別の素材に置き換わると思いますか。", "nomes_capitulos": ["銅の真実"]},
-                                 [{"inicio": 0}], creditos="")
+                                 [{"inicio": 0}])
     assert "チャプター" in texto and "合成音声" in texto
     assert "Capítulos" not in texto and "voz sintética" not in texto
 

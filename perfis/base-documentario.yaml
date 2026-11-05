@@ -88,3 +88,13 @@ titulos:
   duracao: 5                         # segundos do cartão de [TITULO] Nome da parte
 
 legenda_na_tela: true
+
+# estilo de edição (cor e textura de cada cena): documentario, investigacao, noticiario, energia ou cinema (com faixas
+# pretas na versão deitada). Sem esta linha, o vídeo sai como sempre saiu.
+# visual: cinema
+
+# texto fixo que abre a descrição de todo vídeo do canal no YouTube (até 1.500 caracteres), exatamente como escrito:
+# publicacao:
+#   texto_fixo: |
+#     Inscreva-se: https://youtube.com/@seucanal
+#     Contato: seuemail@exemplo.com

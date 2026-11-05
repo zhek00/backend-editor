@@ -164,7 +164,8 @@ REGRAS DAS BUSCAS (query):
 - Frase de chamada do canal (deixa o like, se inscreve, ativa o sininho, comenta, nos vemos no próximo vídeo): a
   cena mostra o ASSUNTO do vídeo (a âncora visual do bloco), nunca tela, logo, botão ou ícone do YouTube, celular com
   rede social ou mão apertando botão. Jamais peça material de edição (fundo verde, chroma key, botão animado).
-- Se o que a frase cita é específico demais para existir em banco de imagens (o gráfico de um estudo, um documento, uma pessoa anônima), busque uma representação DIRETA do mesmo tipo de coisa (um gráfico, um documento, uma pessoa de costas), nunca uma metáfora.
+- Se o que a frase cita é específico demais para existir em banco de imagens (um documento, uma pessoa anônima), busque uma representação DIRETA do mesmo tipo de coisa (um documento, uma pessoa de costas), nunca uma metáfora.
+- Nunca busque gráfico, tabela, infográfico, calendário ou estatística (chart, graph, infographic, calendar, statistics): no banco eles mostram números e datas de outro lugar ou de outro ano. Quando a fala traz um número, uma porcentagem, uma data ou um relatório, mostre o assunto real (quem compra, o produto, a prateleira, o lugar); o número entra na animação.
 - Sempre em inglês, com substantivos concretos, de 2 a 5 palavras. Nunca mais de 6.
 - Só o assunto: nunca palavras de clima, luz ou enquadramento (dark, moody, cinematic, silhouette, glowing, night, close-up, macro). O clima vai no prompt_ia, não na busca.
 - Quando o trecho fala do sujeito do bloco sem nomeá-lo ("ele", "o animal", "o lugar"), a busca usa o sujeito da âncora do bloco. Mas quando o trecho fala de OUTRA coisa (um hospital, uma pessoa, um soro, uma cidade, um tribunal), a imagem mostra essa outra coisa, e não o sujeito do bloco: "deu entrada às pressas em um hospital" é hospital, não a cobra do bloco.

@@ -1,0 +1,8 @@
+# Vídeo sem narração e sem custo, em inglês: o mesmo do sem-narracao.yaml, com os títulos e a publicação em inglês.
+# A voz do sistema (computador, grátis) só serve para a fábrica medir o tempo das cenas; o vídeo final sai sem ela.
+base: sem-narracao.yaml
+
+nome: No narration (EN)
+
+voz:
+  idioma_da_voz: en

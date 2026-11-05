@@ -24,6 +24,27 @@ $PASTA  = $PSScriptRoot   # a pasta onde este arquivo esta: serve em qualquer co
 $PORTA  = 8080
 $PAINEL = 'https://editor-video-dark.vercel.app'
 $LOG    = Join-Path $PASTA 'fabrica.log'
+
+# O editor (front-editor) servido pela propria fabrica, em http://localhost:8080. Pedido do usuario em 2026-10-12: o
+# painel da internet, com o endereco em branco, ia para a fabrica de outra maquina (editor.bbnews.cc), e ninguem
+# achava a fabrica deste computador. Com o editor aqui, o endereco em branco ja e esta fabrica. Sem a pasta do
+# editor, segue o painel da internet de sempre. O VIGIA-TIPLABS procura a pasta do mesmo jeito.
+function PastaDoEditor {
+    $acima = Split-Path $PASTA -Parent
+    foreach ($p in @((Join-Path $PASTA 'front-editor'), (Join-Path $acima 'front-editor'), (Join-Path $acima 'tiplabs\front-editor'))) {
+        if (Test-Path (Join-Path $p 'index.html')) { return $p }
+    }
+    return $null
+}
+$FRONT = PastaDoEditor
+if ($FRONT) {
+    # editor em dia com o GitHub; sem internet ou com mudanca local, fica como esta
+    if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $FRONT '.git'))) {
+        & git -C $FRONT pull --ff-only --quiet 2>&1 | Out-Null
+    }
+    $PAINEL = "http://localhost:$PORTA"
+}
+$ARGS_FRONT = if ($FRONT) { @('--frontend', $FRONT) } else { @() }
 $PORTA_MCP = 8092
 $URL_MCP   = 'https://mcp.bbnews.cc'
 $LOG_MCP   = Join-Path $PASTA 'mcp.log'
@@ -41,10 +62,11 @@ Write-Host ''
 # de token, ou seja, respondeu.
 function FabricaResponde {
     try {
-        Invoke-WebRequest "http://localhost:$PORTA/api/projetos" -UseBasicParsing -TimeoutSec 5 | Out-Null
+        Invoke-WebRequest "http://localhost:$PORTA/api/saude" -UseBasicParsing -TimeoutSec 5 | Out-Null
         return $true
     } catch {
-        return ($_.Exception.Response.StatusCode.value__ -eq 401)
+        # qualquer resposta conta (401 sem token; 404 na fabrica antiga, sem a /api/saude): so o silencio e problema
+        return [bool]$_.Exception.Response
     }
 }
 
@@ -242,6 +264,16 @@ if (-not $svc) {
 # ---------------------------------------------------------------
 $emUso = Get-NetTCPConnection -LocalPort $PORTA -State Listen -ErrorAction SilentlyContinue
 
+# fabrica ligada sem o editor (ligada antes desta mudanca, ou a mao): reinicia para servir o editor
+function ServeEditor {
+    try { return (Invoke-WebRequest "http://localhost:$PORTA/" -UseBasicParsing -TimeoutSec 5).Content -match 'gate-form' } catch { return $false }
+}
+if ($emUso -and $FRONT -and (FabricaResponde) -and -not (ServeEditor)) {
+    Passo '  A fabrica estava ligada sem o editor: reiniciando para abrir o editor nela.' Yellow
+    DesligarTudo
+    $emUso = $null
+}
+
 if ($emUso -and (FabricaResponde)) {
     Passo '  [2/3] Fabrica: ja estava rodando' Green
     Passo '  [3/3] Nada a fazer' Green
@@ -278,7 +310,7 @@ Passo '  [3/3] Subindo a fabrica...' Yellow
 if (Test-Path $LOG) { Remove-Item $LOG -Force -ErrorAction SilentlyContinue }
 
 Start-Process -FilePath $uv `
-    -ArgumentList @('run', 'fabrica', 'servidor', '--porta', "$PORTA") `
+    -ArgumentList (@('run', 'fabrica', 'servidor', '--porta', "$PORTA") + $ARGS_FRONT) `
     -WorkingDirectory $PASTA `
     -WindowStyle Hidden `
     -RedirectStandardOutput $LOG `

@@ -1,0 +1,13 @@
+# Canal criado no editor (2026-10-29). Herda tudo de documentario.yaml e guarda a voz do canal.
+# Para mudar estilo, diretrizes ou texto fixo da descrição, edite aqui (veja perfis/base-documentario.yaml).
+base: documentario.yaml
+nome: Jan de WOLF
+voz:
+  provedor: genaipro
+  voice_id: dLPO5AsXc3FZDbTh1IKa
+  nome_da_voz: Ido - Informal, Friendly Narrator
+  idioma_da_voz: nl
+
+imagens:
+  provedor: assinatura
+  provedor_reserva: openrouter

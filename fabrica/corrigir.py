@@ -267,8 +267,8 @@ PERGUNTAS_JEV = {
             "true": ("mostra o sujeito citado ou a representação visual direta do conceito, num cenário coerente: um "
                      "carro elétrico carregando para 'carro elétrico moderno', arquitetura romana para 'Roma Antiga', um "
                      "pangolim para o pangolim, servidores, código ou tela de criptografia para 'segurança de dados', um "
-                     "gráfico para 'a pesquisa mostrou um aumento', o botão vermelho sendo apertado, o ferrão, as "
-                     "brânquias. Coisa que só existe como tipo genérico (o gráfico de um estudo, um documento, uma "
+                     "cientista no laboratório para 'a pesquisa mostrou um aumento', o botão vermelho sendo apertado, o ferrão, as "
+                     "brânquias. Coisa que só existe como tipo genérico (um documento, uma "
                      "pessoa anônima) pode ser uma representação direta desse mesmo tipo. Não precisa mostrar cada "
                      "palavra da frase: basta o sujeito ou o conceito certo, sem trocar por outra coisa"),
             "false": ("mostra outra coisa no lugar do sujeito, mesmo parecida (carro a combustão para carro elétrico, "
@@ -277,7 +277,8 @@ PERGUNTAS_JEV = {
                       "finanças corporativas, praia para esporte de inverno); B-roll desconexo ou metáfora (líquido "
                       "fervendo, gente correndo ou engrenagem para 'segurança de dados'); ação diferente da narrada "
                       "(alguém olhando uma tela quando a narração diz que ele apertou o botão); placa, texto ou tela de "
-                      "outro contexto; logotipo em destaque; um animal sem dizer qual quando a narração nomeia a "
+                      "outro contexto; gráfico, tabela ou calendário com números ou datas de outro lugar ou outro ano; "
+                      "texto em outro idioma, ou preço em outra moeda, num vídeo sobre um país; logotipo em destaque; um animal sem dizer qual quando a narração nomeia a "
                       "espécie; ou, numa cena que é um item de lista, a imagem mostra outro item da frase (lobo na "
                       "cena dos alces) ou nenhum dos itens"),
         },
@@ -459,7 +460,7 @@ def _pelo_gemini(projeto, pedido, imagens, log):
             projeto, "descrever imagens", INSTRUCOES_LEGENDA + openrouter_local.REGRA_DO_ALFABETO, pedido,
             ESQUEMA_LEGENDA, log=log, modelo=modelo, imagens=imagens, temperatura=0, na_cadeia=True,
             raciocinio=cfg.get("raciocinio", "minimal"), resolucao=cfg.get("resolucao", "baixa"),
-            max_tokens=int(cfg.get("max_tokens", 600)))
+            max_tokens=int(cfg.get("max_tokens", 600)), limite=float(cfg.get("limite_segundos", 15)) or None)
     except (openrouter_local.RotaIndisponivel, RuntimeError) as e:
         log(f"  o Gemini não descreveu ({str(e)[:100]}): seguindo com a cadeia de visão")
         return None
@@ -1219,6 +1220,7 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
     if refazer:
         log(f"  {len(refazer)} imagem(ns) de IA mostram outra coisa: fazendo de novo, com o motivo no pedido")
         por_n = {c["n"]: c for c in projeto.ler_json("cenas.json")["cenas"]}
+        correcoes, bases, guardas = {}, {}, {}
         for n, a in refazer.items():
             cena = por_n[n]
             # o pedido corrigido daqui ia para o prompt_manual (imagens.refazer), como se fosse da pessoa, e a correção
@@ -1235,26 +1237,33 @@ def conferir_ia(projeto, numeros=None, log=print) -> dict:
             novo = (a.get("prompt_novo") or "").strip()
             if novo and not da_pessoa:
                 base, alvo_da_cena = novo, None
-            correcao = (f"{base}\n{CORRECAO_IA} ({a['legenda'][:200]})."
-                        + (f" The image must clearly show: {alvo_da_cena}." if alvo_da_cena else "")
-                        + " No text, letters or words anywhere in the image.")
+            correcoes[n] = (f"{base}\n{CORRECAO_IA} ({a['legenda'][:200]})."
+                            + (f" The image must clearly show: {alvo_da_cena}." if alvo_da_cena else "")
+                            + " No text, letters or words anywhere in the image.")
+            if not da_pessoa:
+                bases[n] = base
             # a imagem atual fica guardada: se a nova não sair (provedor fora do ar, sem saldo), ela volta. Sem isso, as
             # 9 cenas do virou-filme-em-1996 ficaram vazias quando o saldo da Kie acabou no meio
             guarda = projeto.imagem(n).with_name(f"{projeto.imagem(n).stem}_guarda{projeto.imagem(n).suffix}")
             if projeto.imagem(n).exists():
                 shutil.copy2(projeto.imagem(n), guarda)
-            try:
-                imagens.refazer(projeto, [n], prompt=correcao, log=log)
-            except (Exception, SystemExit) as erro:
-                log(f"  cena {n}: não deu para refazer a imagem de IA ({str(erro)[:120]}); fica a que estava")
-            if not da_pessoa:
-                # o pedido que valeu fica como o pedido da cena, não como escolha da pessoa
-                dados_agora = projeto.ler_json("cenas.json")
-                for c in dados_agora["cenas"]:
-                    if c["n"] == n and c.get("prompt_manual") == correcao:
-                        c["prompt"] = base
-                        c.pop("prompt_manual", None)
-                projeto.salvar_json("cenas.json", dados_agora)
+                guardas[n] = guarda
+        # todas de uma vez, em imagens.processos ao mesmo tempo. Uma a uma, as 23 imagens refeitas do
+        # 20-gigantes-da-era-do-gelo (2026-11-01) levaram 14 min em fila, a 36 s cada, com a mensagem do site
+        # parada em "completando 1 cena"
+        try:
+            imagens.refazer(projeto, list(correcoes), prompt=correcoes, log=log)
+        except (Exception, SystemExit) as erro:
+            log(f"  não deu para refazer as imagens de IA ({str(erro)[:120]}); fica a imagem que cada cena tinha")
+        if bases:
+            # o pedido que valeu fica como o pedido da cena, não como escolha da pessoa
+            dados_agora = projeto.ler_json("cenas.json")
+            for c in dados_agora["cenas"]:
+                if c["n"] in bases and c.get("prompt_manual") == correcoes[c["n"]]:
+                    c["prompt"] = bases[c["n"]]
+                    c.pop("prompt_manual", None)
+            projeto.salvar_json("cenas.json", dados_agora)
+        for n, guarda in guardas.items():
             if not projeto.imagem(n).exists() and guarda.exists():
                 shutil.move(guarda, projeto.imagem(n))
             guarda.unlink(missing_ok=True)

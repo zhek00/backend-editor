@@ -1,0 +1,12 @@
+# Vídeo sem narração e sem custo: só imagens e vídeos de banco, com cartões de título e trilha gerada.
+# A voz do sistema (computador, grátis) só serve para a fábrica medir o tempo das cenas; o vídeo final sai sem ela.
+# O Edge recusou a gravação (403) em 2026-10-29.
+# No projeto, config_override desliga a imagem de IA (ia.ativa: false).
+base: base-documentario.yaml
+
+nome: Sem narração
+
+voz:
+  provedor: computador
+
+legenda_na_tela: false
