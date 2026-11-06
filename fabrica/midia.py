@@ -195,7 +195,26 @@ def nota_minima_da_conferencia(projeto) -> int:
     return max(NOTA_MINIMA_FIXA, int((projeto.config.get("corrigir") or {}).get("nota_minima", NOTA_MINIMA_FIXA)))
 
 
-def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usados, vizinhas, log):
+def _adiantar_notas(projeto, por_n, ordens, candidatos, descricoes, usados, vizinhas, log) -> dict:
+    """{(cena, candidato): julgamento} do lote, com o Jev em paralelo. A escolha anda cena a cena, porque uma foto não
+    pode servir duas, e cada julgamento esperava o anterior: 489 chamadas de 0,7 s eram mais de 5 min parados no
+    speed-test. Julgar um candidato a mais custa US$ 0,00007."""
+    limite = (projeto.config.get("midia") or {}).get("candidatos_conferidos", 3)
+    tarefas = []
+    for n, ordem in ordens.items():
+        frases = descricoes.get(n) or {}
+        livres = [i for i in ordem if frases.get(i) and _chave(candidatos[n][i]) not in usados]
+        tarefas += [(n, i) for i in livres[:limite]]
+
+    def julgar(tarefa):
+        n, i = tarefa
+        return _nota_do_candidato(projeto, por_n[n], candidatos[n][i], descricoes[n][i], vizinhas, log)
+
+    with ThreadPoolExecutor(max(1, int((projeto.config.get("jev") or {}).get("processos", 6)))) as executor:
+        return {(n, _chave(candidatos[n][i])): nota for (n, i), nota in zip(tarefas, executor.map(julgar, tarefas))}
+
+
+def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usados, vizinhas, log, notas=None):
     """Percorre a ordem do modelo e devolve (candidato, dados da conferência) do primeiro que o Jev aprova.
 
     Sem descrição não há como julgar, então esse candidato passa como antes. Se nenhum dos testados for
@@ -222,7 +241,9 @@ def _escolher_conferindo(projeto, cena, ordem, candidatos_da_cena, frases, usado
                 continue
         if not frase:
             return candidato, {"conferida": False}
-        julgamento = _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log)
+        chave_da_nota = (cena.get("n"), _chave(candidato))
+        julgamento = (notas[chave_da_nota] if notas and chave_da_nota in notas
+                      else _nota_do_candidato(projeto, cena, candidato, frase, vizinhas, log))
         if julgamento is None:
             return candidato, {"conferida": False, "legenda": frase}
         nota = julgamento["nota"]
@@ -963,6 +984,7 @@ def _buscar_cenas(projeto, dados, alvo, geral, buscador, log, permissivo):
     def aplicar(ordens_parciais):
         """Baixa o material escolhido dessas cenas, sem repetir o de outra, e grava o cenas.json."""
         escolhidos, ordens = {}, {}
+        notas = _adiantar_notas(projeto, por_n, ordens_parciais, candidatos, descricoes, usados, vizinhas, log) if conferir else {}
         for n, ordem in ordens_parciais.items():
             decididas.add(n)
             if not ordem and not permissivo and segunda_leva.get(n) and n not in na_segunda and not projeto.offline:
@@ -982,7 +1004,7 @@ def _buscar_cenas(projeto, dados, alvo, geral, buscador, log, permissivo):
             ordens[n] = ordem
             if conferir and descricoes.get(n):
                 candidato, info = _escolher_conferindo(projeto, por_n[n], ordem, candidatos[n], descricoes[n],
-                                                       usados, vizinhas, log)
+                                                       usados, vizinhas, log, notas)
                 if candidato is not None:
                     usados.add(_chave(candidato))
                     escolhidos[n] = candidato

@@ -94,14 +94,35 @@ def test_cena_de_epoca_vai_ao_arquivo_e_nunca_vira_video():
     assert all(c["tipo"] == "foto_real" for c in lista if c.get("epoca"))
 
 
-def test_cinco_primeiros_minutos_70_por_cento_video():
+def test_o_comeco_nao_ganha_video_a_mais():
     lista = [{"n": i, "tipo": "foto_real", "ini": i * 4.0, "personagem": False} for i in range(150)]  # 10 min
     cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
-    gancho = [c for c in lista if c["ini"] < 40]
-    assert all(c["tipo"] == "video_real" for c in gancho)  # os primeiros 40 s são todos vídeo (2026-10-25)
-    inicio = [c for c in lista if 40 <= c["ini"] < 300]
-    assert sum(c["tipo"] == "video_real" for c in inicio) == round(len(inicio) * 0.7)
-    assert not any(c["tipo"] == "video_real" for c in lista if c["ini"] >= 300)
+    assert not any(c["tipo"] == "video_real" for c in lista)
+
+
+def test_video_continua_com_o_teto_de_30_por_cento():
+    lista = [{"n": i, "tipo": "video_real", "ini": i * 4.0, "personagem": False} for i in range(100)]
+    cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
+    assert sum(c["tipo"] == "video_real" for c in lista) == 30
+
+
+def test_adiantar_notas_julga_em_paralelo_e_a_escolha_usa_o_resultado(monkeypatch):
+    class Projeto:
+        config = {"midia": {"candidatos_conferidos": 2}, "jev": {"processos": 4}}
+
+    candidatos = {1: [{"fonte": "x", "id": 1}, {"fonte": "x", "id": 2}, {"fonte": "x", "id": 3}]}
+    vistos = []
+
+    def nota(_p, _cena, candidato, *_):
+        vistos.append(candidato["id"])
+        return {"nota": 90}
+
+    monkeypatch.setattr(midia, "_nota_do_candidato", nota)
+    notas = midia._adiantar_notas(Projeto(), {1: {"n": 1}}, {1: [0, 1, 2]}, candidatos, {1: {0: "a", 1: "b", 2: "c"}}, set(), {}, print)
+    assert sorted(vistos) == [1, 2] and len(notas) == 2
+    vistos.clear()
+    escolhido, info = midia._escolher_conferindo(Projeto(), {"n": 1}, [0], candidatos[1], {0: "a"}, set(), {}, print, notas)
+    assert escolhido["id"] == 1 and info["nota"] == 90 and vistos == []
 
 
 # ---------------------------------------------------------------- o modelo que escolhe recusou todos (natureza-nos-ensina)
