@@ -56,6 +56,8 @@ genaipro:
 cenas:
   provedor: groq              # ignorado: cenas, textos e buscas usam openrouter.modelo_principal
   reserva: gemini             # entra sozinho quando o Groq falha ou a cota de 24h enche. groq, gemini ou vazio
+  segundos_minimo: 4          # 4 a 6 s por cena desde 2026-11-05, perto do Robô do Dotti (mediana 4,7 s; a nossa era 3,3 s).
+  segundos_maximo: 6          # Menos cenas também quer dizer menos busca, menos imagens e menos tempo
 
 gemini:
   modelo: gemini-3.8-flash    # US$ 0,75 por milhão de tokens lidos e US$ 3,75 por milhão escritos (pensamento conta como escrito)
