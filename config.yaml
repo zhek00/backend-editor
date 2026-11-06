@@ -75,7 +75,8 @@ corrigir:
                            # cadeia de visão (Groq, Gemini 2.5), pedido do usuário em 2026-10-10
   cenas_por_chamada: 5    # cenas conferidas numa chamada só. 1 gasta mais, porque repete as instruções
   automatico: true         # roda sozinho no "tudo", depois do acervo e antes das imagens de IA
-  rodadas: 3               # vezes que tenta outro material real numa cena que não combina
+  rodadas: 1               # vezes que tenta outro material real numa cena que não combina. Eram 3 (1 desde 2026-11-05,
+                           # pedido do usuário: o que continua reprovado vai direto para a IA, como no Robô do Dotti)
   nota_para_trocar: 20     # abaixo disso o sistema troca sozinho. Entre este e o nota_minima ele só aponta
   nota_minima: 40          # no jev a nota é a probabilidade do Jev, que fica mais baixa: 55 pega o que está errado
                            # mesmo. Nos outros provedores, que dão nota de 0 a 100, use 80
@@ -131,6 +132,7 @@ openrouter:
                                 # minuto. Um pico da conferência mandou 27 descrições para o Qwen pago em 1 min. Era 60:
                                 # pedido do usuário em 2026-10-29, com o Groq voltando aos poucos cada chamada esperava
                                 # 1 min e não saiu nenhuma imagem de IA em 10 min
+  prazo_gratis: 150          # segundos que um modelo gratuito tem para responder antes da próxima rota da cadeia
   espera_pela_rapida: 8          # 8 s desde 2026-11-05 (pedido do usuário: acelerar a entrega). Era 30 (o padrão do
                                 # código): no asdas-80-billion-empire-is-collapsing-an a cadeia dormiu 48min24 somados em
                                 # 132 chamadas esperando o Gemini 2.5 Flash-Lite voltar do limite do minuto, uns 22 s por
@@ -176,7 +178,10 @@ groq:
 ia:
   ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA (conferida pelo Jev).
                              # false: vídeo só com banco de imagens, nenhuma IA
-  teto: 0.25                 # 25% desde 2026-10-27 (entregas rápidas: no tescos-60-billion a IA levou 27 min). Antes 35%:
+  teto: 0.75                 # 75% desde 2026-11-05 (pedido do usuário: entregar rápido como o Robô do Dotti, que usa uns
+                             # 75%). Com 25%, a cena reprovada não podia ir para a IA e voltava a buscar foto: no
+                             # asdas-80-billion, das 96 min, as imagens levaram 4 min e essas buscas de novo, uns 35.
+                             # Teto é limite, não alvo: cena com foto aprovada segue com a foto. Antes 25%, e antes 35%:
                              # no máximo 35% das cenas do vídeo com imagem de IA (pedido do usuário em 2026-10-15: o
                              # everything-you-need-to-answer saiu com 54%). A IA fica com quem mais precisa (momento que
                              # ninguém fotografou, foto reprovada, época); as cenas acima do teto ganham foto de banco do
@@ -270,7 +275,7 @@ midia:
   nota_minima_captura: 30    # abaixo disso o candidato é descartado e o próximo da lista é testado
   candidatos_conferidos: 3   # quantos candidatos testar por cena. Se nenhum passar, fica o de maior nota, sob suspeita
   contato: "jonathansantost99@gmail.com"   # o Wikimedia só libera buscas com um contato no pedido
-  processos: 8               # cenas buscando material real ao mesmo tempo. Eram 4, pedido do usuário em 2026-10-10
+  processos: 12              # cenas buscando material real ao mesmo tempo. Eram 8; o Robô do Dotti busca 12. Eram 4, pedido do usuário em 2026-10-10
                            # para acelerar: no teste-frango (5,5 min) a busca levou uns 20 dos 43 min da criação. Banco
                            # no limite fica de lado e a busca segue com os outros (Buscador, LimiteAtingido)
   escolhas_ao_mesmo_tempo: 8 # 8 desde 2026-10-27 (entregas rápidas: a busca do 12-animais levou 26 min com 4). Lotes de 6 cenas escolhidos e conferidos ao mesmo tempo pelo modelo principal e pelo Jev

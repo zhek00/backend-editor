@@ -7,6 +7,7 @@ roteador escolhe, então cada chamada grava em uso_openrouter.json o custo real 
 import base64
 import json
 import os
+import queue
 import random
 import re
 import threading
@@ -40,6 +41,28 @@ def principais(projeto=None) -> list:
 def principal(projeto=None) -> str:
     """O modelo que a fábrica usa para tudo que não é o juiz (Jev): o primeiro da cadeia de principais."""
     return principais(projeto)[0]
+
+
+def _com_prazo(segundos, pedir):
+    """O resultado de pedir(), ou TimeoutError depois de segundos. O timeout do httpx só conta o tempo parado, e um modelo
+    gratuito que solta um byte de vez em quando passa dele: no 10-leoes, uma chamada de 618 s e outra de 259 s seguraram
+    a divisão de cenas por 15 min."""
+    fim = queue.Queue(1)
+
+    def rodar():
+        try:
+            fim.put((True, pedir()))
+        except Exception as erro:  # volta para quem pediu, que sabe tratar
+            fim.put((False, erro))
+
+    threading.Thread(target=rodar, daemon=True).start()
+    try:
+        deu_certo, valor = fim.get(timeout=segundos)
+    except queue.Empty:
+        raise TimeoutError(f"sem resposta em {segundos} s") from None
+    if deu_certo:
+        return valor
+    raise valor
 
 
 class RotaIndisponivel(RuntimeError):
@@ -443,7 +466,13 @@ def _perguntar_rota(projeto, etapa, instrucoes, pedido, esquema, log, modelo, im
     inicio, orcamento = time.time(), cfg.get("espera_maxima", 300)
     while erros < cfg.get("tentativas", 5) and time.time() - inicio < orcamento:
         try:
-            r = httpx.post(url, json=corpo, headers=cabecalho, timeout=cfg.get("tempo_maximo", 180))
+            def pedir():
+                return httpx.post(url, json=corpo, headers=cabecalho, timeout=cfg.get("tempo_maximo", 180))
+            # gratuito com outra rota depois dele: tem prazo. A última rota da cadeia fica como sempre foi
+            r = _com_prazo(cfg.get("prazo_gratis", 150), pedir) if cadeia and gratuita(rota) else pedir()
+        except TimeoutError as e:
+            _fora_do_ar(rota, 2, str(e))
+            raise RotaIndisponivel(f"{rota}: {e}") from None
         except httpx.HTTPError as e:
             ultimo_erro, erros = str(e), erros + 1
             if cadeia and erros >= 2:

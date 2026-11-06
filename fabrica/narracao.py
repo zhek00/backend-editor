@@ -24,7 +24,7 @@ from .util import duracao_audio, rodar
 
 TAXA = 44100
 PAUSA_ENTRE_BLOCOS = 0.4
-BLOCOS_AO_MESMO_TEMPO = 4  # tarefas na GenAIPro em paralelo
+BLOCOS_AO_MESMO_TEMPO = 8  # tarefas na GenAIPro em paralelo (eram 4; um bloco leva de 30 s a 1,5 min)
 LETRA_LONGA = 0.35  # letra "falada" por mais tempo que isso está carregando a pausa anterior
 
 TEXTO_TESTE_VOZ = (

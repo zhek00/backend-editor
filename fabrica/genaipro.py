@@ -33,6 +33,10 @@ ESPERA_MAXIMA = 20 * 60  # uma tarefa grande pode ficar na fila da GenAIPro por 
 # GenAIPro não diz qual voz é própria dela e qual vem da comunidade, então o aviso sai da medida.
 ARQUIVO_VELOCIDADE = "genaipro_vozes.json"
 LENTA_A_PARTIR = 5 * 60  # espera típica por tarefa a partir da qual a voz ganha o aviso
+# Uma tarefa às vezes empaca: no asdas-80-billion 6 dos 7 blocos ficaram prontos em 4 min e o último só em 15; nos
+# 10 leões, 21 de 22 em 19 min e o último em 28. A voz inteira ficava esperando um bloco. Passado este tempo, a mesma
+# gravação é pedida de novo e vale a primeira que terminar. Custa o bloco repetido, uns 1.700 créditos (US$ 0,04)
+RESERVA_DEPOIS_DE = 180
 _trava_velocidade = threading.Lock()
 
 # Os 32 idiomas que os modelos de narração falam (Multilingual v2 e, com hu, no e vi, o Turbo v2.5). Conferido em
@@ -248,7 +252,7 @@ def narrar(texto: str, voz: dict, mp3, log=print) -> list:
 
     inicio = time.time()
     try:
-        tarefa = _esperar(tarefa_id, lambda t: t.get("result"))
+        tarefa_id, tarefa = _esperar_com_reserva(tarefa_id, corpo, log)
     except ErroGenAIPro:
         if time.time() - inicio >= ESPERA_MAXIMA:  # estourou a espera: a voz entra na conta como lenta
             anotar_espera(corpo["voice_id"], time.time() - inicio)
@@ -260,6 +264,29 @@ def narrar(texto: str, voz: dict, mp3, log=print) -> list:
     palavras = legenda_por_palavra(tarefa_id, tarefa)
     anotacao.unlink(missing_ok=True)
     return palavras
+
+
+def _esperar_com_reserva(tarefa_id, corpo, log=print) -> tuple:
+    """(id, tarefa) da primeira gravação pronta. A tarefa que passa de RESERVA_DEPOIS_DE ganha uma cópia, uma vez só."""
+    inicio, pausa, ids = time.time(), 1.5, [tarefa_id]
+    while True:
+        for atual in list(ids):
+            tarefa = _pedir("GET", f"/v1/labs/task/{atual}").json()
+            if tarefa.get("result"):
+                return atual, tarefa
+            if str(tarefa.get("status", "")).lower() in ("failed", "error", "cancelled"):
+                ids.remove(atual)
+                if not ids:
+                    raise ErroGenAIPro(f"A GenAIPro não conseguiu gravar o áudio (tarefa {atual}). "
+                                       f"{tarefa.get('error') or 'Tente de novo.'}")
+        if len(ids) == 1 and ids[0] == tarefa_id and time.time() - inicio > RESERVA_DEPOIS_DE:
+            ids.append(_pedir("POST", "/v1/labs/task", json=corpo).json()["task_id"])
+            log(f"    a tarefa passou de {RESERVA_DEPOIS_DE // 60} min na GenAIPro: pedi a mesma gravação de novo")
+        if time.time() - inicio > ESPERA_MAXIMA:
+            raise ErroGenAIPro(f"A GenAIPro não terminou em {ESPERA_MAXIMA // 60} minutos. Rode de novo: a mesma tarefa "
+                               "é retomada, sem pagar outra vez.")
+        time.sleep(pausa)
+        pausa = min(pausa * 1.3, 8.0)
 
 
 def _esperar(tarefa_id, pronta, limite=ESPERA_MAXIMA) -> dict:
