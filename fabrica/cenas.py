@@ -313,6 +313,23 @@ def _dividir_enumeracoes(cenas, alinhamento, minimo=ESTILO_MINIMO_ENUMERACAO, lo
     return resultado
 
 
+def _aplicar_fracao_da_ia(cenas, fracao, log=print):
+    """Leva a parte de IA do vídeo até a escolhida (ia.fracao), espalhada pelo vídeo. As cenas que só valem de verdade
+    (nome exato, época, arquivo) são as últimas a virar IA. O agente já escreveu o prompt de toda cena, então nada é
+    pedido de novo; a busca fica de reserva. O excesso de IA quem corta é o teto (imagens._teto_da_ia)."""
+    falta = round(fracao * len(cenas)) - sum(1 for c in cenas if c.get("tipo") == "ia")
+    reais = [c for c in cenas if c.get("tipo") != "ia" and (c.get("prompt") or "").strip()]
+    if falta <= 0 or not reais:
+        return
+    soltas = [c for c in reais if not (c.get("exato") or c.get("epoca") or c.get("onde_existe") == "arquivo")]
+    presas = [c for c in reais if c not in soltas]
+    quantas = min(falta, len(soltas))
+    escolhidas = [soltas[i * len(soltas) // quantas] for i in range(quantas)] + presas[:falta - quantas]
+    for c in escolhidas:
+        c["tipo"], c["busca_reserva"], c["busca"] = "ia", c.get("busca") or c.get("busca_reserva") or "", ""
+    log(f"  parte de IA escolhida ({fracao:.0%}): {len(escolhidas)} cena(s) de banco viraram imagem de IA")
+
+
 def _balancear_proporcao_90_10(cenas, log=print, sem_ia=False):
     """Com a IA desligada (ia.ativa: false no config.yaml), toda cena de IA vira foto ou vídeo de acervo. Ligada, nada
     muda: não existe teto de IA, e a cena que não existe em foto fica com a IA."""
@@ -838,6 +855,11 @@ def planejar(projeto, log=print) -> list[dict]:
         log(f"  {corrigidas} cena(s) voltaram a ter o pedido do agente para a frase que falam")
     
 
+
+    from .midia import fracao_da_ia
+
+    if fracao_da_ia(projeto):
+        _aplicar_fracao_da_ia(cenas, fracao_da_ia(projeto), log)
 
     if not projeto.offline and (projeto.config.get("cenas") or {}).get("provedor", "claude") in ("groq", "gemini"):
         # com o agente de roteiro, quem decide o que aparece é ele: aqui só as fatias de IA de uma enumeração

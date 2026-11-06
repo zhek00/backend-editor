@@ -280,6 +280,17 @@ def teto_da_ia(projeto):
     return teto if 0 < teto < 1 else None
 
 
+def fracao_da_ia(projeto):
+    """ia.fracao: a parte das cenas que sai em imagem de IA (0,75), escolhida para o vídeo. None: quem decide é o agente."""
+    if not ia_ativa(projeto):
+        return None
+    try:
+        fracao = float((projeto.config.get("ia") or {}).get("fracao") or 0)
+    except (TypeError, ValueError):
+        return None
+    return fracao if 0 < fracao <= 1 else None
+
+
 def precisa_ia(cena) -> bool:
     return cena.get("tipo", "ia") not in TIPOS_REAIS or bool(cena.get("sem_midia_real"))
 
@@ -833,8 +844,8 @@ def tentar_banco_nas_nao_existe(projeto, log=print) -> list:
     derrubando uma árvore, que os bancos têm. Como ele achou que não existe, a regra é estrita: só fica a foto que o
     Jev aprovou antes de baixar, com a nota mínima e sem suspeita; o resto volta para a IA. Cada cena é tentada uma
     vez (banco_tentado). Devolve as cenas que ficaram com material real."""
-    if projeto.offline or not ia_ativa(projeto):
-        return []  # sem IA, cenas.py já devolve essas cenas ao acervo
+    if projeto.offline or not ia_ativa(projeto) or fracao_da_ia(projeto):
+        return []  # sem IA, cenas.py já devolve essas cenas ao acervo; com a parte da IA escolhida, ela já está contada
     dados = projeto.ler_json("cenas.json")
     alvo = [c for c in dados["cenas"]
             if c.get("onde_existe") == "nao_existe" and c.get("tipo") == "ia" and not c.get("banco_tentado")

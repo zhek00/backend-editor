@@ -415,51 +415,10 @@ def openverse(b, tipo, busca):
     return achados
 
 
-NARA_FOTO = (".jpg", ".jpeg", ".png")
-NARA_MAXIMO = 25_000_000      # há digitalizações de centenas de MB; uma foto de cena não precisa disso
-
-
-def nara(b, tipo, busca):
-    """Arquivo Nacional dos EUA: fotos históricas de governo, guerra, obras e cidades. Precisa de chave grátis, pedida
-    por e-mail a Catalog_API@nara.gov. Sem ela a API responde a página do site, e não dá erro, então é preciso olhar o
-    tipo da resposta. Só entra o que o próprio registro marca como uso sem restrição."""
-    from .midia import FonteIndisponivel
-
-    if tipo != "foto":
-        return []
-    chave = _chave("NARA_API_KEY", "NARA_API")
-    if not chave:
-        raise FonteIndisponivel("falta NARA_API_KEY no .env (chave grátis pedida a Catalog_API@nara.gov)")
-    r = b.http.get("https://catalog.archives.gov/api/v2/records/search", headers={"x-api-key": chave}, params={
-        "q": busca, "availableOnline": "true", "typeOfMaterials": "Photographs and other Graphic Materials", "limit": 20})
-    b._checar(r, "NARA")
-    if "json" not in r.headers.get("content-type", ""):
-        raise FonteIndisponivel("a chave do NARA não foi aceita (a API devolveu a página do site)")
-    dados = r.json()
-    achados = []
-    for linha in ((dados.get("body") or dados).get("hits") or {}).get("hits", []):
-        registro = (linha.get("_source") or {}).get("record") or {}
-        if (registro.get("useRestriction") or {}).get("status") != "Unrestricted":
-            continue
-        objeto = next((o for o in registro.get("digitalObjects") or []
-                       if str(o.get("objectUrl", "")).lower().endswith(NARA_FOTO)
-                       and int(o.get("objectFileSize") or 0) <= NARA_MAXIMO), None)
-        if not objeto:
-            continue
-        numero = registro.get("naId") or linha.get("_id")
-        achados.append({
-            "fonte": "nara", "id": str(numero), "tipo": "foto", "miniatura": objeto["objectUrl"],
-            "arquivo": objeto["objectUrl"], "duracao": None, "pagina": f"https://catalog.archives.gov/id/{numero}",
-            "autor": "U.S. National Archives", "licenca": "Sem restrição de uso (NARA)",
-            "descricao": _limpar(f"{registro.get('title') or ''}. {registro.get('scopeAndContentNote') or ''}"),
-        })
-    return achados
-
-
 # Bancos de acervo (museus, arquivos e bibliotecas): devolvem pintura, gravura, objeto de vitrine e foto antiga.
 # Numa cena comum ("lince na neve") só ocupam vagas dos candidatos, então entram apenas em cena de acervo
 # (midia._e_de_acervo): assunto histórico, de arte, artefato, ou que o agente mandou buscar na Wikimedia.
-ACERVO = {"harvard", "europeana", "smithsonian", "nypl", "tepapa", "openverse", "nara"}
+ACERVO = {"harvard", "europeana", "smithsonian", "nypl", "tepapa", "openverse"}
 
 # O Biodiversity Heritage Library (biodiversitylibrary.org) ficou de fora de propósito: a API devolve livros e
 # artigos científicos inteiros, não imagens soltas, então não há o que pôr numa cena.
@@ -487,7 +446,6 @@ FORCAS = {
     "nypl": "fotos antigas, gravuras, mapas e cartões-postais históricos em domínio público (baixa resolução)",
     "tepapa": "museu da Nova Zelândia: espécimes de história natural, fotografia antiga, objetos e arte",
     "openverse": "fotos de licença livre de vários acervos juntos: Flickr, museus e bibliotecas",
-    "nara": "arquivo nacional dos EUA: fotos históricas de governo, guerras, obras públicas e cidades americanas",
     "youtube": "trechos de vídeos reais do YouTube: a cena acontecendo de verdade, gente, loja, rua, notícia,"
                " o que banco de imagem não tem",
 }
@@ -501,5 +459,5 @@ def descrever(fontes):
 
 # fonte -> função
 FONTES = {"inaturalist": inaturalist, "nasa": nasa, "unsplash": unsplash, "coverr": coverr, "smithsonian": smithsonian,
-          "europeana": europeana, "harvard": harvard, "nypl": nypl, "tepapa": tepapa, "openverse": openverse, "nara": nara,
+          "europeana": europeana, "harvard": harvard, "nypl": nypl, "tepapa": tepapa, "openverse": openverse,
           "youtube": youtube}
