@@ -122,11 +122,42 @@ def sessao(projeto) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", nome)[:120]
 
 
+# abaixo disto nem uma imagem passa: cada pedido reserva bem mais do que custa (medido em 2026-11-06: 6 imagens juntas
+# de US$ 0,005 pediram cerca de US$ 3 de reserva)
+LIMITE_MINIMO_DA_CHAVE = 0.5
+_limite_lido = (0.0, None)  # (quando, quanto resta): uma leitura por minuto basta
+
+
+def limite_da_chave(r) -> bool:
+    """403 do limite da própria chave (o semanal de openrouter.ai/settings/keys). A chave está boa."""
+    return r.status_code == 403 and "key limit exceeded" in r.text.lower()
+
+
+def chave_sem_limite() -> bool:
+    """O limite da chave acabou de verdade, e não só está reservado pelos pedidos em andamento."""
+    global _limite_lido
+    if time.time() - _limite_lido[0] > 60:
+        try:
+            resta = httpx.get("https://openrouter.ai/api/v1/key", headers=cabecalhos(), timeout=15).json()["data"]["limit_remaining"]
+        except (Exception, SystemExit):
+            resta = None
+        _limite_lido = (time.time(), resta)
+    return _limite_lido[1] is not None and _limite_lido[1] < LIMITE_MINIMO_DA_CHAVE
+
+
+def aviso_de_limite(r) -> str:
+    return ("OpenRouter: acabou o limite semanal desta chave. Aumente em openrouter.ai/settings/keys ou espere a "
+            f"renovação, e clique em Retomar. {r.text[:160]}")
+
+
 def credito_reservado(r) -> bool:
-    """402 que não é falta de saldo: o OpenRouter reserva o custo máximo de cada pedido em andamento e recusa o que
-    passaria do saldo (in_flight_budget_exhausted). Medido em 2026-10-29 com US$ 7 de saldo: de 8 imagens pedidas
-    juntas, 2 voltaram 402 e as outras saíram. Esperar os pedidos em andamento terminarem resolve; a fábrica tratava
-    como "acabou o crédito" e largava todas as imagens de IA do vídeo."""
+    """Recusa que não é falta de saldo: o OpenRouter reserva o custo máximo de cada pedido em andamento e recusa o que
+    passaria do saldo (402 in_flight_budget_exhausted) ou do limite da chave (403 Key limit exceeded). Medido em
+    2026-10-29 com US$ 7 de saldo: de 8 imagens pedidas juntas, 2 voltaram 402 e as outras saíram. Em 2026-11-06, com
+    US$ 1,64 no limite da chave, 4 de 6 voltaram 403, e o 15-animais-pre-historicos parou sem 15 imagens. Esperar os
+    pedidos em andamento terminarem resolve; a fábrica tratava como "acabou o crédito" ou "recusou a chave"."""
+    if limite_da_chave(r):
+        return not chave_sem_limite()
     return r.status_code == 402 and ("in_flight" in r.text or "in-flight" in r.text)
 
 

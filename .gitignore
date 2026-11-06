@@ -46,6 +46,7 @@ chatgpt_limites.json
 contas_youtube/
 drive_conta.json
 imagens_concorrencia.json
+banco_imagens/
 dist/
 
 # palhano: banco, segredo.key e token da máquina (o README de lá diz que não vão para o Git)

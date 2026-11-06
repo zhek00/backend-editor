@@ -177,6 +177,11 @@ groq:
   contexto_antes: 3          # cenas anteriores mostradas só para dar contexto
   contexto_depois: 2         # cenas seguintes mostradas só para dar contexto
 
+banco_imagens:               # toda imagem de IA fica guardada, e a cena parecida de outro canal usa ela sem gerar (banco_proprio.py)
+  ativo: true
+  semelhanca_minima: 0.8     # abaixo disso já vinha outra coisa. O Jev confere depois, como qualquer imagem de IA
+  usos_max: 3                # no total, contando quem gerou. Nunca duas vezes no mesmo canal
+
 ia:
   ativa: true                # cena que não existe em foto ou que veio errada recebe imagem de IA (conferida pelo Jev).
                              # false: vídeo só com banco de imagens, nenhuma IA

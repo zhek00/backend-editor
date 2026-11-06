@@ -23,7 +23,7 @@ from google import genai
 from google.genai import errors as erros_google
 from google.genai import types
 
-from . import chatgpt_assinatura, custos, midia
+from . import banco_proprio, chatgpt_assinatura, custos, midia
 from .config import RAIZ, caminho_relativo, chave
 from .util import mmss
 
@@ -238,6 +238,9 @@ def _gerar(projeto, apenas=None, log=print, direto=False):
         except (Exception, SystemExit) as erro:
             # deixa as imagens saírem com os prompts que já tinham
             log(f"  a revisão dos prompts em sequência falhou, seguindo com os prompts atuais: {str(erro)[:160]}")
+        pendentes = banco_proprio.atender(projeto, pendentes, log)
+        if not pendentes:
+            return gerar_revisao(projeto)
 
     referencias = []
     if not projeto.offline:
@@ -619,6 +622,7 @@ def _gerar_uma(projeto, cena, referencias, tentativas):
             temporario.write_bytes(dados)
             temporario.replace(destino)
             destino.with_suffix(".json").write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+            banco_proprio.depois_de_gerar(projeto, cena, destino, registro)
             from . import custos_reais
 
             custos_reais.registrar(
@@ -892,7 +896,7 @@ def _imagem_openrouter(prompt, img, projeto=None):
     """Gera imagem por um modelo de imagem do OpenRouter (padrão: Grok Imagine Image 2.0). A imagem volta na própria
     resposta, em base64 ou como endereço. Usa a chave do OpenRouter que a fábrica já tem no .env."""
     import base64
-    from .openrouter_local import cabecalhos, credito_reservado, postar_com_sessao
+    from .openrouter_local import aviso_de_limite, cabecalhos, credito_reservado, limite_da_chave, postar_com_sessao
 
     modelo = img.get("modelo_openrouter") or (img.get("modelo") if "/" in str(img.get("modelo") or "")
                                               and not str(img.get("modelo")).startswith("grok-imagine-image-2-0/")
@@ -908,6 +912,8 @@ def _imagem_openrouter(prompt, img, projeto=None):
             raise RuntimeError("OpenRouter: o saldo seguiu reservado pelos pedidos em andamento por 3 minutos")
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
+        if limite_da_chave(r):
+            raise SemCota(aviso_de_limite(r))
         if r.status_code in (401, 403):
             raise RuntimeError(f"OpenRouter recusou a chave ({r.status_code}). Confira o .env.")
         if r.status_code != 200:
@@ -934,7 +940,7 @@ def _imagem_openrouter_images(prompt, img, modelo, projeto=None):
     """GPT Image (openai/gpt-image-1) e GPT-5.4 Image 2 pela interface de imagens do OpenRouter. A qualidade vem de
     imagens.qualidade no perfil (padrão low) e a proporção é a mais larga que o modelo aceita (PROPORCAO_IMAGES_API)."""
     import base64
-    from .openrouter_local import cabecalhos, credito_reservado, postar_com_sessao
+    from .openrouter_local import aviso_de_limite, cabecalhos, credito_reservado, limite_da_chave, postar_com_sessao
 
     qualidade = str(img.get("qualidade") or "low").lower()
     corpo = {"model": modelo, "prompt": prompt, "n": 1, "quality": qualidade,
@@ -948,6 +954,8 @@ def _imagem_openrouter_images(prompt, img, modelo, projeto=None):
             raise RuntimeError("OpenRouter: o saldo seguiu reservado pelos pedidos em andamento por 3 minutos")
         if r.status_code == 402:
             raise SemCota("OpenRouter: acabou o crédito. Adicione saldo em openrouter.ai/credits.")
+        if limite_da_chave(r):
+            raise SemCota(aviso_de_limite(r))
         if r.status_code in (401, 403):
             raise RuntimeError(f"OpenRouter recusou a chave ({r.status_code}). Confira o .env.")
         if r.status_code != 200:

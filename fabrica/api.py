@@ -639,6 +639,10 @@ def _esteira(nome: str, task_id: str) -> None:
         # nada do assunto nos bancos nem em outra cena do mesmo assunto: pôr outra coisa seria gafe, então pede ajuda
         por_n = {c["n"]: c for c in p.ler_json("cenas.json")["cenas"]}
         lista = "; ".join(f"cena {n} ({por_n[n].get('sujeito') or por_n[n].get('busca')})" for n in cenas_sem_arquivo(p)[:15])
+        if midia.ia_ativa(p):  # com a IA ligada, faltar imagem é a IA que não entregou: o motivo está no log da criação
+            raise ParadaPrecisaDeVoce(
+                f"Nem os bancos nem a imagem de IA entregaram estas cenas: {lista}. Veja o motivo no log e clique em "
+                "Retomar, ou suba uma foto delas no editor.")
         raise ParadaPrecisaDeVoce(
             f"Os bancos de imagens não têm nenhuma foto destes assuntos: {lista}. Suba uma foto dessas cenas no editor "
             "(ou ligue a IA no config.yaml) e clique em Retomar.")
