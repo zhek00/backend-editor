@@ -46,7 +46,7 @@ Devolva SOMENTE um JSON válido, neste formato:
   ],
   "pessoas_reais": ["nomes de pessoas reais citadas, que nunca terão rosto gerado por IA"],
   "quem_e": [{"nome": "nome completo da pessoa real", "quem": "anos de vida, país e o que fez, em até 15 palavras"}],
-  "proibidos": ["marcas, séries, filmes, logos ou obras protegidas citadas que não podem aparecer em imagem"],
+  "proibidos": ["séries, filmes ou obras protegidas citadas que não podem aparecer em imagem"],
   "imagens_recorrentes": [
     {"descricao": "imagem que deve voltar em vários momentos para dar coesão", "momentos": "onde ela aparece"}
   ]
@@ -115,7 +115,7 @@ REGRAS ABSOLUTAS (tolerância zero para erro de contexto):
 2. Cenário e contexto fiéis. O ambiente corresponde à realidade do sujeito e ao tom do texto: finanças corporativas não acontecem num café descontraído (a menos que o texto peça); roteiro de esporte de inverno não tem praia.
 3. Nada de B-roll desconexo. Cada cena ilustra literalmente o conceito ou a ação narrada naquele segundo. "Segurança de dados" é servidor, código ou tela de criptografia, nunca líquido fervendo, gente correndo ou engrenagem genérica.
 4. Ação e característica exatas. Se a narração diz "ele apertou o botão vermelho de emergência", a imagem mostra o botão sendo apertado, não alguém olhando para uma tela. Se cita uma parte do corpo ou da estrutura (o ferrão, as brânquias, o casco), é ela que aparece.
-5. Placas, textos e telas do contexto certo. Nada de placa em inglês sobre avalanche num vídeo sobre trânsito urbano brasileiro. Na imagem de IA, nunca peça texto escrito, letras legíveis ou logotipos.
+5. Placas, textos e telas do contexto certo. Nada de placa em inglês sobre avalanche num vídeo sobre trânsito urbano brasileiro. Na imagem de IA, texto só o que a fala cita, como nas regras dos prompts.
 6. Continuidade sem reaproveitar fora do lugar. Uma imagem de impacto (explosão, cirurgia, gráfico disparando) não se repete em blocos sem relação: cada tópico tem a própria identidade visual. Reaproveitar só vale dentro do mesmo assunto, quando o trecho retoma algo já mostrado.
 
 Devolva SOMENTE um JSON válido, com um item por trecho recebido, com o mesmo número em "cena", na mesma ordem. Nunca pule um trecho e nunca invente trechos.
@@ -175,12 +175,12 @@ REGRAS DAS BUSCAS (query):
 - ANTES de escrever cada query e cada busca_alternativa, pergunte: "esta busca, sozinha num banco de fotos, sem saber do que o vídeo trata, pode trazer outra coisa?". Você conhece o roteiro inteiro; o banco de fotos não. Se a busca tem apelido, metáfora, comparação, palavra de duplo sentido ou nome que também é outra coisa, TIRE essa palavra e escreva o que a coisa é de fato, com o lugar ou o assunto do vídeo: num vídeo sobre Chernobyl, o "pé de elefante" é "Chernobyl reactor corium lava", nunca "elephant foot"; a "tampa do reator" é "Chernobyl reactor 4 destroyed roof", nunca "lid". O campo exato segue a mesma regra.
 
 REGRAS DOS PROMPTS DE IA (prompt_ia):
-- Fórmula: SUJEITO exato + fazendo a AÇÃO literal do trecho + ONDE (o cenário da descricao) + QUE ÉPOCA + LUZ e PALETA + CÂMERA (ex.: "cinematic shot, 35mm lens, hyper-realistic, strictly focused on [sujeito] [ação] in [ambiente], [luz], [paleta]").
+- Fórmula: SUJEITO exato + fazendo a AÇÃO literal do trecho + ONDE (o cenário da descricao) + QUE ÉPOCA + LUZ e PALETA + CÂMERA (ex.: "photo taken on a phone, strictly focused on [sujeito] [ação] in [ambiente], [luz], [paleta]").
 - Não repita o estilo geral do vídeo; ele será adicionado automaticamente.
 - Pessoas da lista "pessoas_reais": nunca mostrar o rosto. Mostrar de costas, de longe ou só as mãos, e nunca escrever o nome delas no prompt.
 - Nunca gerar nada da lista "proibidos".
 - Nunca gerar pessoas de povos ou grupos reais de forma estereotipada; prefira paisagem.
-- Nunca pedir texto escrito, letras, placas legíveis ou logotipos dentro da imagem.
+- Quando a fala cita loja, marca, preço, número, órgão ou documento, a imagem mostra isso como existe no mundo real: a fachada com o nome da loja, a etiqueta com o preço, a embalagem com a marca, o nome no prédio. Escreva o texto exato entre aspas no prompt, com até 4 palavras. Nunca invente marca, preço ou número que a fala não disse. Sem nada disso na fala, a imagem não leva texto.
 
 RITMO E COESÃO:
 - Frases curtas e de impacto merecem destaque (texto_tela ou imagem forte).

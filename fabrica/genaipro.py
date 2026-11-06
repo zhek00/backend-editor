@@ -36,7 +36,7 @@ LENTA_A_PARTIR = 5 * 60  # espera típica por tarefa a partir da qual a voz ganh
 # Uma tarefa às vezes empaca: no asdas-80-billion 6 dos 7 blocos ficaram prontos em 4 min e o último só em 15; nos
 # 10 leões, 21 de 22 em 19 min e o último em 28. A voz inteira ficava esperando um bloco. Passado este tempo, a mesma
 # gravação é pedida de novo e vale a primeira que terminar. Custa o bloco repetido, uns 1.700 créditos (US$ 0,04)
-RESERVA_DEPOIS_DE = 180
+RESERVA_DEPOIS_DE = 300
 _trava_velocidade = threading.Lock()
 
 # Os 32 idiomas que os modelos de narração falam (Multilingual v2 e, com hu, no e vi, o Turbo v2.5). Conferido em

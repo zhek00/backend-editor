@@ -323,7 +323,8 @@ Regras:
 4. Respeite o que o pedido exige: época, lugar, roupas, a espécie exata, e pessoa real vista de costas ou sem o rosto
    quando o pedido diz isso. Mesma época e mesmos personagens em todo o trecho, coerentes entre si.
 5. Cenas marcadas "JÁ TEM IMAGEM" não mudam: só servem para você não repetir o que elas mostram.
-6. Prompt em inglês, de 1 a 3 frases: sujeito, ação, enquadramento e ambiente. Nunca peça texto escrito na imagem.
+6. Prompt em inglês, de 1 a 3 frases: sujeito, ação, enquadramento e ambiente. Texto na imagem só a loja, a marca ou o
+   preço que a fala cita, escrito entre aspas, com até 4 palavras. Nunca invente nenhum deles.
    Responda um item para cada cena que pode mudar."""
 
 ESQUEMA_SEQUENCIA = {

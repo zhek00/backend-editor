@@ -67,11 +67,15 @@ imagens:
   modelo: openai/gpt-5.4-image-2     # GPT-5.4 Image 2, em 16:9; x-ai/grok-imagine-image-2.0 é o Grok (US$ 0,04)
   qualidade: low                     # low (uns US$ 0,005 por imagem, medido), medium ou high (uns US$ 0,13)
   proporcao: "16:9"
+  # Claro e documental desde 2026-11-05, a pedido do usuário: as imagens do Robô do Dotti mostram a loja, o preço e o
+  # lugar que a fala cita, com cara de foto de reportagem. Antes: "Cinematic still, dramatic lighting, strong contrast",
+  # e evitar também "text, letters, logos", que tiravam da imagem justo o que a fala estava citando
   estilo: >-
-    Cinematic still, photorealistic, dramatic lighting, strong contrast, one clear focal subject,
-    shallow depth of field, subtle film grain, striking composition.
+    Realistic documentary photo taken on a phone, natural bright daylight, true colors, everyday real-world
+    scene, one clear focal subject, sharp focus, looks like a photo from a news report.
   evitar: >-
-    text, letters, logos, watermarks, cartoon style, blurry, deformed limbs, extra limbs, extra fingers
+    dramatic lighting, dark moody tones, film grain, watermarks, cartoon style, blurry, deformed limbs, extra limbs,
+    extra fingers, misspelled or garbled text, any text the scene description did not ask for
 
 diretrizes: >-
   Alinhamento entre cena e roteiro é obrigatório e vem antes de qualquer outra prioridade: nenhuma cena
