@@ -534,8 +534,13 @@ def _hyperframes(projeto, args, pasta, limite):
     npx = node_pronto()
     versao = config(projeto).get("versao", VERSAO_PADRAO)
     ambiente = {**os.environ, "DO_NOT_TRACK": "1", "HYPERFRAMES_NO_TELEMETRY": "1", "HYPERFRAMES_SKIP_SKILLS": "1"}
-    return subprocess.run([npx, "--yes", f"hyperframes@{versao}", *args], cwd=pasta, env=ambiente,
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limite)
+    # cada chamada vai para a parte "hyperframes: render/check/snapshot" da etapa que estiver medindo (2026-11-07: a
+    # conferência do 20-fake-foods levou 41 min com uns 17 medidos, e as animações 23 min com menos de 1 de IA; o
+    # HyperFrames, que roda no processador, não aparecia em lugar nenhum)
+    from . import tempos
+    with tempos.parte(projeto, f"hyperframes: {args[0] if args else '?'}"):
+        return subprocess.run([npx, "--yes", f"hyperframes@{versao}", *args], cwd=pasta, env=ambiente,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limite)
 
 
 # texto fora da tela ou fora do card: o HyperFrames marca só como informação, mas num clipe de tela inteira é defeito
