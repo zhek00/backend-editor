@@ -626,8 +626,11 @@ def _esteira(nome: str, task_id: str) -> None:
     try:
         _atualizar(task_id, progresso_pct=96,
                    mensagem="Conferindo com o Jev as cenas completadas no fim (a errada é refeita)...")
-        with tempos.medir(p, "Conferência das completadas", log=log_w):
-            corrigir.conferir_completadas(p, log=log_w)
+        # um vídeo por vez nesta conferência (vez.py): duas juntas levavam quase 3 vezes cada
+        from . import vez
+        with vez.na_vez("conferencia_completadas", p, log_w, "conferência das completadas"):
+            with tempos.medir(p, "Conferência das completadas", log=log_w):
+                corrigir.conferir_completadas(p, log=log_w)
     except ParadaPrecisaDeVoce:
         raise
     except (Exception, SystemExit) as erro_comp:

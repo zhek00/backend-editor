@@ -68,6 +68,10 @@ gemini:
   cenas_por_lote: 20
   tentativas: 6
 
+vez:                       # quantos vídeos fazem a etapa ao mesmo tempo (fabrica/vez.py, medido em 2026-11-07). 0: sem limite
+  render_juntar: 1         # FFmpeg: dois juntos levavam quase 3 vezes cada
+  conferencia_completadas: 1
+
 corrigir:
   provedor: jev            # jev: o modelo de visão descreve a imagem e o Jev julga (muito mais barato).
                            # openrouter/groq/gemini: um modelo de visão só olha e julga de uma vez

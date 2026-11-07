@@ -262,10 +262,13 @@ def _renderizar(projeto, log, sem_avatar, vertical):
             if i % 10 == 0 or i == len(futuros):
                 log(f"  clipes {i}/{len(futuros)}")
 
-    medida = tempos.medir(projeto, "Render: juntar e mixar")
-    with medida:
-        return _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
-                       musica_abertura, faixa_abertura, legenda, cfg)
+    # um vídeo por vez nesta parte (vez.py): dois juntos levavam quase 3 vezes cada
+    from . import vez
+    with vez.na_vez("render_juntar", projeto, log, "juntar e mixar o vídeo"):
+        medida = tempos.medir(projeto, "Render: juntar e mixar")
+        with medida:
+            return _juntar(projeto, base, tarefas, extras, sons, vertical, motion, duracao_total, atraso, log, sem_avatar,
+                           musica_abertura, faixa_abertura, legenda, cfg)
 
 
 def _tarefas_da_linha(projeto, linha, cfg, pasta_clipes, transicao, so_prontas=False) -> list:
