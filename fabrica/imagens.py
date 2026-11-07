@@ -532,7 +532,7 @@ def _motion_antes_da_ia(projeto, apenas, pendentes, log):
     if so_motion:
         from . import corrigir
         for n in so_motion:
-            corrigir._voltar_reserva(projeto, n, log)
+            corrigir._voltar_reserva(projeto, n, log, motivo="o motion não saiu (nenhuma imagem de IA foi feita)")
         log(f"  {len(so_motion)} cena(s) com nota baixa não viraram motion e voltaram para a foto que tinham")
     if feitas or so_motion:
         cenas = [c for c in projeto.ler_json("cenas.json")["cenas"] if apenas is None or c["n"] in apenas]

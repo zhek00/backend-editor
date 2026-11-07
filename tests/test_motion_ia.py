@@ -167,7 +167,7 @@ def test_cena_so_de_nota_baixa_volta_para_a_foto_se_o_motion_falhar(monkeypatch)
     from fabrica import corrigir
     voltaram = []
     monkeypatch.setattr(motion_ia, "resolver", lambda p, pend, log: [])
-    monkeypatch.setattr(corrigir, "_voltar_reserva", lambda p, n, log: voltaram.append(n))
+    monkeypatch.setattr(corrigir, "_voltar_reserva", lambda p, n, log, motivo="": voltaram.append(n))
     cenas = {"cenas": [{"n": 5, "tipo": "ia", "motion_so": True}, {"n": 7, "tipo": "ia"}]}
     projeto = SimpleNamespace(offline=False, ler_json=lambda nome: cenas, imagem=lambda n: SimpleNamespace(exists=lambda: False))
     imagens._motion_antes_da_ia(projeto, None, cenas["cenas"], log=lambda *a: None)

@@ -1069,13 +1069,19 @@ def mandar_para_ia(projeto, itens, log=print) -> list[int]:
             c.pop("motion_so", None)
         mandadas.append(c["n"])
     projeto.salvar_json("cenas.json", dados)
-    if mandadas:
-        log(f"  {len(mandadas)} cena(s) erradas vão para imagem de IA: {', '.join(map(str, mandadas[:40]))}")
+    so_motion = [n for n in mandadas if por_n[n].get("motion_so")]
+    ia = [n for n in mandadas if n not in so_motion]
+    if ia:
+        log(f"  {len(ia)} cena(s) erradas vão para imagem de IA: {', '.join(map(str, ia[:40]))}")
+    if so_motion:
+        log(f"  {len(so_motion)} cena(s) de nota baixa tentam o motion (sem imagem de IA; se não sair, a foto volta): "
+            + ", ".join(map(str, so_motion[:40])))
     return mandadas
 
 
-def _voltar_reserva(projeto, n, log) -> bool:
-    """A cena volta para a foto que tinha antes da IA."""
+def _voltar_reserva(projeto, n, log, motivo="a imagem de IA saiu pior") -> bool:
+    """A cena volta para a foto que tinha antes da IA. motivo vai para o log: a cena que só tentou o motion
+    (motion_so) nunca teve imagem de IA, e o log dizia "a imagem de IA saiu pior" (2026-11-07, parecia desperdício)."""
     dados = projeto.ler_json("cenas.json")
     c = next((x for x in dados["cenas"] if x["n"] == n), None)
     reserva = (c or {}).get("ia_reserva")
@@ -1092,7 +1098,7 @@ def _voltar_reserva(projeto, n, log) -> bool:
     c["captura"] = {**(c.get("captura") or {}), "suspeita": True}
     c.pop("ia_reserva", None)
     projeto.salvar_json("cenas.json", dados)
-    log(f"  cena {n}: a imagem de IA saiu pior, voltou a foto que estava")
+    log(f"  cena {n}: {motivo}, voltou a foto que estava")
     return True
 
 
