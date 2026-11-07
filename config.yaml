@@ -291,6 +291,7 @@ midia:
   espera_maxima: 3600        # segundos que a fábrica espera quando uma fonte atinge o limite de buscas
 
 imagens:
+  adiantar: true             # as cenas nascidas para a IA começam enquanto a busca de acervo roda (imagens.adiantar)
   lote: false                # false desde 2026-10-30 (pedido do usuário): o lote do Google custa metade, mas fica
                              # pronto "em minutos ou horas" e a fábrica espera parado por ele (espera_lote_horas).
                              # Só vale para canal com imagens.provedor google: os canais de hoje herdam

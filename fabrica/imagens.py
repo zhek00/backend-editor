@@ -59,6 +59,9 @@ class SemImagem(Exception):
     """O provedor respondeu, mas não entregou imagem, em geral por bloqueio de conteúdo."""
 
 
+FOLGA_DO_TETO = 0.7  # das vagas do teto de IA, esta parte pode sair antes da busca. O resto é das cenas reprovadas
+
+
 class SemCota(Exception):
     """O Google recusou por falta de cota, em geral porque o faturamento do projeto não está ativo."""
 
@@ -340,6 +343,54 @@ ESQUEMA_SEQUENCIA = {
     "required": ["cenas"],
 }
 _TRECHO_MAXIMO = 8  # cenas por pedido; trecho maior vai em partes, cada parte vendo o fim da anterior
+
+
+def adiantar(projeto, log=print):
+    """Começa as imagens de IA enquanto a busca de acervo roda, e devolve a linha para esperar (ou None).
+
+    Pedido do usuário em 2026-11-06: o 15-animais-pre-historicos passou 33 min em busca e conferência e só depois gastou
+    38 min gerando imagens que não dependiam delas. As cenas nascidas para a IA já têm o pedido pronto. O que escreve no
+    cenas.json fica antes de a linha começar: daqui em diante ela só grava arquivos de imagem, então não briga com a busca.
+    Fica de fora o que depende do resultado da busca: a cena de personagem (precisa das referências) e uma folga do teto
+    de IA, que é das cenas que o Jev reprovar. Nunca para o vídeo: o que não sair agora, imagens.gerar faz depois."""
+    if projeto.offline or not (projeto.config.get("imagens") or {}).get("adiantar", True) or not midia.ia_ativa(projeto):
+        return None
+    cenas = projeto.ler_json("cenas.json")["cenas"]
+    pendentes = [c for c in pendentes_ia(projeto, cenas) if not c.get("personagem")]
+    if not pendentes:
+        return None
+    try:
+        if prompts_em_sequencia(projeto, {c["n"] for c in pendentes}, log):
+            cenas = projeto.ler_json("cenas.json")["cenas"]
+            pendentes = [c for c in pendentes_ia(projeto, cenas) if not c.get("personagem")]
+    except (Exception, SystemExit) as erro:
+        log(f"  a revisão dos prompts em sequência falhou, seguindo com os prompts atuais: {str(erro)[:160]}")
+    teto = midia.teto_da_ia(projeto)
+    if teto:
+        pendentes = sorted(pendentes, key=lambda c: (_prioridade_da_ia(c), c["n"]))[:int(teto * len(cenas) * FOLGA_DO_TETO)]
+    geral = projeto.config.get("imagens") or {}
+
+    def rodar():
+        try:
+            faltam = banco_proprio.atender(projeto, pendentes, log)
+            with ThreadPoolExecutor(concorrencia(provedor(projeto.perfil), int(geral.get("processos", 6)))) as executor:
+                futuros = [executor.submit(_gerar_uma, projeto, c, [], geral.get("tentativas", 3)) for c in faltam]
+                for futuro in as_completed(futuros):
+                    try:
+                        futuro.result()
+                    except SemCota as erro:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        log(f"  imagens adiantadas paradas: {str(erro)[:160]}")
+                        return
+                    except Exception:  # noqa: BLE001 (a cena que falhou aqui é refeita em imagens.gerar)
+                        pass
+        except (Exception, SystemExit) as erro:
+            log(f"  as imagens adiantadas pararam, seguem depois da busca: {str(erro)[:160]}")
+
+    log(f"  adiantando {len(pendentes)} imagens de IA enquanto a busca roda")
+    linha = threading.Thread(target=rodar, daemon=True, name=f"imagens-{projeto.nome}")
+    linha.start()
+    return linha
 
 
 def _palavras_do_prompt(texto) -> set:

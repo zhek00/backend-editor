@@ -545,6 +545,7 @@ def _esteira(nome: str, task_id: str) -> None:
     _atualizar(task_id, etapa="midia", passo_atual=3, progresso_pct=65,
                mensagem="Buscando fotos e vídeos de acervo (Pexels, Pixabay e Wikimedia)...")
     _soltar_midia_sumida(p)
+    imagens_adiantadas = imagens.adiantar(p, log_w)
     _etapa(task_id, "Busca de acervo", lambda: midia.buscar(p, log=log_w))
     marcar("midia")
 
@@ -590,6 +591,9 @@ def _esteira(nome: str, task_id: str) -> None:
     # montados em segundo plano enquanto isso (render.adiantar_clipes): o render final só faz os que mudarem
     render.adiantar_clipes(p, log_w)
     _atualizar(task_id, etapa="imagens", passo_atual=5, progresso_pct=88, mensagem="Gerando imagens de IA...")
+    if imagens_adiantadas:
+        with tempos.medir(p, "Esperando as imagens adiantadas", log=log_w):
+            imagens_adiantadas.join()
     _etapa(task_id, "Imagens de IA", lambda: imagens.gerar(p, log=log_w))
     marcar("imagens")
 
