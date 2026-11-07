@@ -632,6 +632,16 @@ def _esteira(nome: str, task_id: str) -> None:
         raise
     except (Exception, SystemExit) as erro_comp:
         log_w(f"  a conferência das cenas completadas falhou, seguindo sem ela: {erro_comp}")
+    # garantia (pedido do usuário em 2026-11-07): a cena que ainda não combina com a fala vira imagem de IA, e a imagem
+    # de IA ruim é feita de novo. Nunca para o vídeo
+    try:
+        _atualizar(task_id, progresso_pct=96, mensagem="Trocando por imagem de IA as cenas que ainda não combinam com a fala...")
+        with tempos.medir(p, "Garantia das cenas", log=log_w):
+            corrigir.garantir(p, log=log_w)
+    except ParadaPrecisaDeVoce:
+        raise
+    except (Exception, SystemExit) as erro_gar:
+        log_w(f"  a garantia das cenas falhou, seguindo sem ela: {erro_gar}")
     if cenas_sem_arquivo(p) and midia.ia_ativa(p):
         # a repetida que não achou foto nova nos bancos vai para a imagem de IA (ia.ativa). Antes a criação parava
         # pedindo uma foto (cena 79 do nunca-deve-ter-dentro-de-casa-parte-2, o petauro-do-açúcar, com a IA ligada)

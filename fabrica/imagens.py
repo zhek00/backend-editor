@@ -139,6 +139,8 @@ def _prioridade_da_ia(cena) -> int:
     personagem, que só a IA desenha)."""
     if cena.get("personagem") or cena.get("prompt_manual") or cena.get("imagem_da_pessoa"):
         return 0
+    if cena.get("garantia"):
+        return 0  # a foto de banco ainda não combinava no fim (corrigir.garantir): só a IA resolve
     if cena.get("teto_ia"):
         # já teve a chance no banco pelo teto: se voltou para a IA, a foto do assunto não existia ou foi reprovada
         # pelo Jev (nunca outra coisa no vídeo). Uma vez só, senão a cena ia e voltava entre o banco e a IA

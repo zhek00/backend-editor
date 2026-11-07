@@ -63,10 +63,13 @@ def calcular(projeto) -> dict:
         if conf.get("nota") is not None:
             b["boas"] += int(conf["nota"] >= corrigir.NOTA_MINIMA and not corrigir.errada(conf))
             b["erradas"] += int(corrigir.errada(conf))
+    # motion e animação são feitos da própria fala e não passam pelo Jev: contavam como cena ruim, e no
+    # 15-animais-pre-historicos eram 26 das 394 cenas puxando a nota para baixo (2026-11-07)
+    julgaveis = total - sum(1 for c in cenas if _origem(c, projeto) in ("Motion IA", "Animation IA"))
     return {
         "quando": datetime.now().isoformat(timespec="seconds"),
         "cenas": total,
-        "boas_pct": round(100 * len(boas) / total) if total else 0,
+        "boas_pct": round(100 * len(boas) / julgaveis) if julgaveis else 0,
         "boas": len(boas),
         "erradas": erradas,
         "sem_conferencia": sem_conferencia,
