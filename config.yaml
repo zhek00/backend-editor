@@ -77,8 +77,8 @@ corrigir:
                            # cadeia de visão (Groq, Gemini 2.5), pedido do usuário em 2026-10-10
   cenas_por_chamada: 5    # cenas conferidas numa chamada só. 1 gasta mais, porque repete as instruções
   automatico: true         # roda sozinho no "tudo", depois do acervo e antes das imagens de IA
-  garantir: true           # no fim, a cena que ainda não combina com a fala vira imagem de IA (corrigir.garantir)
-  garantir_rodadas: 2      # vezes que a imagem de IA ruim é feita de novo. Cada imagem custa ~US$ 0,01
+  garantir: true           # no fim, a foto de banco que ainda não combina com a fala vira imagem de IA, uma vez
+                           # (corrigir.garantir). A imagem de IA ruim não é refeita. ~US$ 0,0046 por imagem
   rodadas: 1               # vezes que tenta outro material real numa cena que não combina. Eram 3 (1 desde 2026-11-05,
                            # pedido do usuário: o que continua reprovado vai direto para a IA, como no Robô do Dotti)
   nota_para_trocar: 20     # abaixo disso o sistema troca sozinho. Entre este e o nota_minima ele só aponta

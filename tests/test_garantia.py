@@ -89,33 +89,27 @@ def test_foto_fraca_vira_ia_e_a_boa_fica(tmp_path, monkeypatch):
     p, chamadas = preparar(monkeypatch, tmp_path, [foto(1, 30), foto(2, 90)], {1: 85})
     r = corrigir.garantir(p, log=lambda *_: None)
     assert chamadas["gerar"] == [[1]]
-    assert r == {"refeitas": [1], "ficaram": []}
+    assert r == {"para_ia": [1], "voltaram": []}
     assert p.dados["cenas"][0]["garantia"] is True
 
 
-def test_imagem_de_ia_ruim_e_feita_de_novo(tmp_path, monkeypatch):
+def test_imagem_de_ia_ruim_nao_e_feita_de_novo(tmp_path, monkeypatch):
     p, chamadas = preparar(monkeypatch, tmp_path, [ia(1, 10), ia(2, 70)], {1: 90})
-    corrigir.garantir(p, log=lambda *_: None)
-    assert chamadas["refazer"] == [[1]]
-
-
-def test_para_depois_das_rodadas_e_conta_o_que_ficou(tmp_path, monkeypatch):
-    p, chamadas = preparar(monkeypatch, tmp_path, [ia(1, 10)], {1: 15})
-    r = corrigir.garantir(p, log=lambda *_: None, rodadas=2)
-    assert chamadas["refazer"] == [[1], [1]]
-    assert r["ficaram"] == [1]
+    assert corrigir.garantir(p, log=lambda *_: None) == {"para_ia": [], "voltaram": []}
+    assert chamadas["gerar"] == [] and chamadas["refazer"] == []
 
 
 def test_ia_nova_pior_que_a_foto_devolve_a_foto(tmp_path, monkeypatch):
     p, chamadas = preparar(monkeypatch, tmp_path, [foto(1, 35)], {1: 20})
-    corrigir.garantir(p, log=lambda *_: None, rodadas=1)
+    corrigir.garantir(p, log=lambda *_: None)
     assert chamadas["voltou"] == [1]
+    assert chamadas["refazer"] == []
 
 
 def test_cena_da_pessoa_e_motion_ficam_de_fora(tmp_path, monkeypatch):
     cenas = [{**foto(1, 10), "imagem_da_pessoa": True}, {**foto(2, 10), "midia": {"fonte": "motion_ia", "id": "2"}}]
     p, chamadas = preparar(monkeypatch, tmp_path, cenas, {})
-    assert corrigir.garantir(p, log=lambda *_: None) == {"refeitas": [], "ficaram": []}
+    assert corrigir.garantir(p, log=lambda *_: None) == {"para_ia": [], "voltaram": []}
     assert chamadas["gerar"] == [] and chamadas["refazer"] == []
 
 
