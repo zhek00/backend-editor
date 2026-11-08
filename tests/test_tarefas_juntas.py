@@ -36,7 +36,7 @@ def _etapa_com_falhas(monkeypatch, tmp_path, falhas, apagar_na=None):
     (tmp_path / "x").mkdir()
     (tmp_path / "x" / "projeto.json").write_text("{}", encoding="utf-8")
     esperas = []
-    monkeypatch.setattr(api.time, "sleep", lambda s: esperas.append(s))
+    monkeypatch.setattr(api, "_esperar", lambda nome, s: esperas.append(s))
     api.TAREFAS["criar_x_1"] = {"projeto": "x", "tipo": "criacao", "logs": []}
     chamadas = []
 

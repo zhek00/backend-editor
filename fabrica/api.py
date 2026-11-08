@@ -300,6 +300,37 @@ def _sem_medida():
     yield
 
 
+# A espera entre tentativas de cada projeto, para o botão Retomar (rota /retomar) acordar a criação na hora. Pedido do
+# usuário em 2026-11-08: o pedido 83 ficou um dia esperando 5 min entre tentativas, e depois da recarga da GenAIPro
+# não havia como fazê-lo seguir sem esperar a próxima volta
+ACORDAR: Dict[str, threading.Event] = {}
+
+
+def acordar(nome: str) -> bool:
+    """Faz a criação que está esperando a próxima tentativa tentar já. False quando ela não está esperando."""
+    with TAREFAS_LOCK:
+        evento = ACORDAR.get(nome)
+    if evento is None:
+        return False
+    evento.set()
+    return True
+
+
+def _esperar(nome, segundos) -> None:
+    if not nome:
+        time.sleep(segundos)
+        return
+    evento = threading.Event()
+    with TAREFAS_LOCK:
+        ACORDAR[nome] = evento
+    try:
+        evento.wait(segundos)
+    finally:
+        with TAREFAS_LOCK:
+            if ACORDAR.get(nome) is evento:
+                ACORDAR.pop(nome, None)
+
+
 def _etapa_tentando(task_id: str, nome, rotulo: str, funcao):
     tentativa = 0
     while True:
@@ -316,7 +347,7 @@ def _etapa_tentando(task_id: str, nome, rotulo: str, funcao):
             _log_tarefa(task_id, f"  {rotulo}: {msg}")
             _log_tarefa(task_id, f"  tentando de novo em {espera}s, de onde parou (tentativa {tentativa + 1})")
             _atualizar(task_id, mensagem=f"{rotulo}: um serviço falhou, tentando de novo em {espera}s...")
-            time.sleep(espera)
+            _esperar(nome, espera)
             _atualizar(task_id, mensagem=f"{rotulo}: retomando...")
 
 
@@ -1271,6 +1302,8 @@ def retomar_criacao(nome: str, payload: Optional[RetomarPayload] = None):
     with TAREFAS_LOCK:
         ativa = nome in CRIACOES_ATIVAS
     if ativa:
+        if acordar(nome):
+            return {"status": "retomando", "mensagem": "A criação estava esperando a próxima tentativa e tenta de novo agora."}
         return {"status": "processando", "mensagem": "A criação deste vídeo já está andando."}
     p = Projeto(nome)
     resumo = {"sem_acervo": 0, "sem_imagem_ia": 0, "custo_estimado_usd": 0.0}

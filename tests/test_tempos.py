@@ -41,7 +41,7 @@ def test_etapa_da_criacao_mede_com_as_novas_tentativas(tmp_path, monkeypatch):
     (tmp_path / "video").mkdir()
     (tmp_path / "video" / "projeto.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(api, "PROJETOS", tmp_path)
-    monkeypatch.setattr(api.time, "sleep", lambda s: None)
+    monkeypatch.setattr(api, "_esperar", lambda nome, s: None)
     api.TAREFAS["t_tempos"] = {"projeto": "video", "tipo": "teste", "logs": []}
     vezes = []
 
