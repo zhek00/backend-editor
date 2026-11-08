@@ -3,3 +3,12 @@
 base: base-documentario.yaml
 
 nome: Documentário
+
+# Trechos de vídeos do YouTube nas cenas que os bancos não cobrem (fabrica/garimpo.py), em todo canal que herda
+# daqui. Pedido do usuário em 2026-11-07, pela retenção. Só vídeos com licença Creative Commons (so_creative_commons
+# fica no padrão, true): trecho de vídeo comum pode render reivindicação de direitos. A porcentagem escolhida na Nova
+# produção do Radar vale por cima desta, só naquele vídeo
+garimpo:
+  ligado: true
+  alvo: 0.15
+  teto: 0.20

@@ -95,9 +95,11 @@ def test_cena_de_epoca_vai_ao_arquivo_e_nunca_vira_video():
 
 
 def test_o_comeco_nao_ganha_video_a_mais():
+    """O mínimo de vídeo vale para o vídeo inteiro por igual: o começo não ganha mais que o resto."""
     lista = [{"n": i, "tipo": "foto_real", "ini": i * 4.0, "personagem": False} for i in range(150)]  # 10 min
     cenas_mod._balancear_foto_e_video(lista, log=lambda *a: None)
-    assert not any(c["tipo"] == "video_real" for c in lista)
+    comeco = [c for c in lista if c["ini"] < 60]
+    assert sum(c["tipo"] == "video_real" for c in comeco) <= round(len(comeco) * cenas_mod.ESTILO_MINIMO_VIDEO) + 1
 
 
 def test_video_continua_com_o_teto_de_30_por_cento():

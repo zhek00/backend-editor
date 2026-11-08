@@ -25,6 +25,10 @@ ESTILO_ALVO_SEGUNDOS = 4.0
 ESTILO_MINIMO_SEGUNDOS = 3.0
 ESTILO_MAXIMO_SEGUNDOS = 5.0
 ESTILO_MINIMO_FOTOS = 0.70  # do material real, pelo menos isso tem que ser foto
+# e pelo menos isso é vídeo, espalhado pelo vídeo inteiro (pedido do usuário em 2026-11-07: a retenção). O agente quase
+# nunca pedia vídeo e, sem a regra do começo, o 25-cavalos saiu com 505 fotos e nenhum vídeo de banco. A cena que não
+# acha vídeo do assunto cai para foto na busca (midia.Buscador.candidatos), então o mínimo nunca deixa cena vazia
+ESTILO_MINIMO_VIDEO = 0.25
 # fatias de vídeo por trecho do começo: (até o segundo, fatia). Vazio desde 2026-11-06, a pedido do usuário: o começo segue
 # a mesma regra do resto do vídeo. Era 100% de vídeo nos 40 s iniciais e 70% até os 5 minutos (pedido de 2026-10-25)
 ESTILO_VIDEO_NO_INICIO = ()
@@ -359,6 +363,27 @@ def _e_de_epoca(cena) -> bool:
     return e_de_epoca(cena)
 
 
+def _completar_video(reais) -> int:
+    """Leva o vídeo até ESTILO_MINIMO_VIDEO do material real, trocando fotos espalhadas pelo vídeo todo.
+
+    Primeiro as cenas de coisa comum de hoje (onde_existe banco, sem nome exato a mostrar), que o Pexels e o Pixabay
+    têm em vídeo; só depois as outras. Cena de enumeração fica foto: dura um ou dois segundos."""
+    falta = int(len(reais) * ESTILO_MINIMO_VIDEO + 0.5) - sum(1 for c in reais if c["tipo"] == "video_real")
+    if falta <= 0:
+        return 0
+    fotos = [c for c in reais if c["tipo"] == "foto_real" and not c.get("enumeracao") and not c.get("item_citado")]
+    boas = [c for c in fotos if c.get("onde_existe") in (None, "", "banco") and not (c.get("exato") or "").strip()]
+    trocadas = 0
+    for grupo in (boas, [c for c in fotos if c not in boas]):
+        quantas = min(falta - trocadas, len(grupo))
+        for k in range(quantas):
+            grupo[int(k * len(grupo) / quantas)]["tipo"] = "video_real"
+        trocadas += quantas
+        if trocadas >= falta:
+            break
+    return trocadas
+
+
 def _balancear_foto_e_video(cenas, log=print):
     """Do material real, pelo menos 70% é foto. Um trecho em ESTILO_VIDEO_NO_INICIO tem a fatia de vídeo dele.
 
@@ -406,6 +431,7 @@ def _balancear_foto_e_video(cenas, log=print):
     resto = faixas[-1]
     if sum(1 for c in resto if c["tipo"] == "video_real") > restante:
         mudou += ajustar(resto, restante)
+    mudou += _completar_video(reais)
     if mudou:
         fotos = sum(1 for c in reais if c["tipo"] == "foto_real")
         log(f"  ajustando foto e vídeo: {mudou} cena(s) trocadas, {fotos / len(reais):.0%} do material real é foto")

@@ -121,7 +121,7 @@ REGRAS ABSOLUTAS (tolerância zero para erro de contexto):
 Devolva SOMENTE um JSON válido, com um item por trecho recebido, com o mesmo número em "cena", na mesma ordem. Nunca pule um trecho e nunca invente trechos.
 
 Campos de cada cena (para cada trecho, analise o texto falado e responda):
-- tipo: foto_real | ia | texto_tela | linha_do_tempo | mapa | diagrama
+- tipo: foto_real | video_real | ia | texto_tela | linha_do_tempo | mapa | diagrama
 - fonte: stock | wikimedia | ia | motion
 - sujeito: o SUJEITO/FOCO PRINCIPAL que tem que estar na cena, sem ambiguidade, em inglês, em 1 a 3 palavras, só o substantivo (ex.: "cobra", "soil core", "hospital"), nunca uma cena descrita
 - descricao: o que aparece na tela, em português, 1 frase com o sujeito concreto E o CENÁRIO/AMBIENTE onde ele está, físico ou digital (nunca "ele", "o lugar", "o animal")
@@ -153,7 +153,8 @@ COMO DECIDIR O TIPO (siga nesta ordem, pare na primeira que servir):
 3. Fala de LUGARES, DISTÂNCIAS ou ROTAS? → mapa (fonte: motion)
 4. Explica um CONCEITO ou PROCESSO que não se fotografa? → diagrama (fonte: motion)
 5. O que aparece EXISTE HOJE e já foi fotografado?
-   - Se é algo comum (animal conhecido, paisagem, objeto do dia a dia, monumento famoso) → foto_real, fonte: stock
+   - Se é algo comum EM MOVIMENTO ou com vida (animal se mexendo, água, gente trabalhando, trânsito, cidade, natureza, máquina funcionando, comida sendo feita) → video_real, fonte: stock. Vídeo prende mais o espectador que foto parada: use em pelo menos 1 de cada 4 cenas reais quando o assunto permite
+   - Se é algo comum parado (animal conhecido posando, paisagem, objeto do dia a dia, monumento famoso) → foto_real, fonte: stock
    - Se é um lugar, objeto, artefato ou espécie específico e pouco conhecido → foto_real, fonte: wikimedia
 6. Nada disso (passado distante, cena reconstruída, momento que ninguém fotografou) → ia
 
@@ -204,7 +205,7 @@ ESQUEMA_CENAS = {
         "type": "object",
         "properties": {
             "cena": {"type": "integer"},
-            "tipo": {"type": "string", "enum": ["foto_real", "ia", "texto_tela", "linha_do_tempo", "mapa", "diagrama"]},
+            "tipo": {"type": "string", "enum": ["foto_real", "video_real", "ia", "texto_tela", "linha_do_tempo", "mapa", "diagrama"]},
             "fonte": {"type": "string", "enum": ["stock", "wikimedia", "ia", "motion"]},
             "descricao": {"type": "string"},
             "sujeito": {"type": "string"},
@@ -556,7 +557,10 @@ def _converter(item, m, bloco):
     if onde == "nao_existe":
         # ninguém fotografou: a cena nasce como IA (com a IA desligada, cenas.py devolve ela ao acervo)
         tipo = "ia"
-    elif visual == "foto_real" or (visual in TIPOS_MOTION and busca) or onde in ("banco", "arquivo"):
+    elif visual == "video_real" and onde != "arquivo" and not _epoca(item.get("epoca")):
+        # vídeo de banco só existe do que é de hoje: cena de arquivo ou de época fica foto (cenas._balancear_foto_e_video)
+        tipo = "video_real"
+    elif visual in ("foto_real", "video_real") or (visual in TIPOS_MOTION and busca) or onde in ("banco", "arquivo"):
         tipo = "foto_real"
     else:
         tipo = "ia"
