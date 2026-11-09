@@ -38,6 +38,12 @@ LIMITES = RAIZ / "chatgpt_limites.json"
 # (token_revoked) e a renovação também foi recusada, mas o arquivo continuava lá: a tela dizia "conectada" e cada
 # imagem tentava de novo. Um login novo grava outro auth.json e a recusa velha deixa de valer sozinha
 RECUSA = PASTA_LOGIN / "recusado.json"
+# As outras contas do ChatGPT, guardadas pelo Radar (radar/chatgpt_conta.py, "Conectar outra conta"), no mesmo formato:
+# {"login": auth.json, "limites": chatgpt_limites.json, "guardada": quando}. A fábrica troca de conta sozinha quando a
+# ligada para (pedido do usuário em 2026-11-08: "se falhar muda pra outra conta de ChatGPT e aí se não tiver vai pro
+# OpenRouter") e marca na gaveta por que a anterior saiu: "recusada" (login revogado) ou "limite_ate" (quando volta)
+GAVETA = PASTA_LOGIN / "contas-radar"
+_trava_troca = threading.Lock()
 
 RESPOSTAS = "https://chatgpt.com/backend-api/codex/responses"
 RENOVAR = "https://auth.openai.com/oauth/token"
@@ -318,8 +324,92 @@ def _quando_volta() -> str:
 _modelo_que_atende = None       # o primeiro modelo que a conta aceitou, para não tentar os recusados a cada imagem
 
 
+def _email(login: dict) -> str:
+    return (_dentro_do_jwt(((login or {}).get("tokens") or {}).get("id_token") or "").get("email") or "").lower()
+
+
+def _na_gaveta(email: str) -> Path:
+    return GAVETA / (re.sub(r"[^\w.@-]", "_", email.lower()) + ".json")
+
+
+def _ler_json(arquivo: Path) -> dict:
+    try:
+        return json.loads(arquivo.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _gravar_json(arquivo: Path, dados: dict) -> None:
+    arquivo.parent.mkdir(parents=True, exist_ok=True)
+    temporario = arquivo.with_suffix(".gravando")
+    temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporario.replace(arquivo)
+
+
+def _serve(guardada: dict, agora: float) -> bool:
+    return bool(guardada.get("login")) and not guardada.get("recusada") and float(guardada.get("limite_ate") or 0) <= agora
+
+
+def trocar_de_conta(erro, versao_que_falhou: str = "") -> bool:
+    """Põe a conta ligada na gaveta, com o motivo da saída, e liga a próxima que serve. False quando nenhuma serve.
+
+    versao_que_falhou é o auth.json que a imagem usou: se outra imagem (elas correm em paralelo) já trocou a conta, não
+    troca de novo, só manda tentar na nova."""
+    global _modelo_que_atende
+    with _trava_troca:
+        if versao_que_falhou and _versao_do_login() != versao_que_falhou:
+            return True
+        agora = time.time()
+        atual = _ler_json(LOGIN)
+        email = _email(atual)
+        candidatas = []
+        for arquivo in sorted(GAVETA.glob("*.json")) if GAVETA.exists() else []:
+            guardada = _ler_json(arquivo)
+            outro = _email(guardada.get("login") or {})
+            if outro and outro != email and _serve(guardada, agora):
+                candidatas.append((float(guardada.get("guardada") or 0), arquivo, guardada))
+        if not candidatas:
+            return False
+        if email:
+            saida = {"login": atual, "limites": _limites_guardados(), "guardada": agora}
+            if isinstance(erro, LimiteDaAssinatura):
+                janelas = (_limites_guardados().get("janelas") or {}).values()
+                voltas = [j.get("volta_em") for j in janelas if (j.get("usado_pct") or 0) >= 99 and j.get("volta_em")]
+                saida["limite_ate"] = max(voltas) if voltas else agora + 3600
+            else:
+                saida["recusada"] = str(erro)[:300]
+            _gravar_json(_na_gaveta(email), saida)
+        _, arquivo, escolhida = min(candidatas, key=lambda c: c[0])   # a que está guardada há mais tempo
+        _gravar_json(LOGIN, escolhida["login"])
+        try:
+            if escolhida.get("limites"):
+                _gravar_json(LIMITES, escolhida["limites"])
+            else:
+                LIMITES.unlink(missing_ok=True)
+        except OSError:
+            pass
+        arquivo.unlink(missing_ok=True)
+        _modelo_que_atende = None
+        print(f"  ChatGPT: a conta {email or '(sem e-mail)'} parou ({str(erro)[:120]}); "
+              f"as imagens seguem pela {_email(escolhida['login'])}")
+        return True
+
+
 def gerar(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referencias=()) -> tuple[bytes, dict]:
-    """A imagem pronta e o registro dela. Gasta o limite da assinatura, nunca crédito de API."""
+    """A imagem pronta e o registro dela, pela conta ligada e, se ela parar, pelas outras contas guardadas. Só quando
+    nenhuma conta serve o erro sobe, e aí quem chama vai para a chave de API (imagens._gerar_uma)."""
+    for _ in range(1 + len(list(GAVETA.glob("*.json")) if GAVETA.exists() else [])):
+        versao = _versao_do_login()
+        try:
+            return _gerar_na_conta(prompt, qualidade, proporcao, referencias)
+        except (SemLogin, LimiteDaAssinatura) as erro:
+            if not trocar_de_conta(erro, versao):
+                raise
+    return _gerar_na_conta(prompt, qualidade, proporcao, referencias)
+
+
+def _gerar_na_conta(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referencias=()) -> tuple[bytes, dict]:
+    """A imagem pela conta ligada agora. Gasta o limite da assinatura, nunca crédito de API."""
     global _modelo_que_atende
     token, conta, _ = _credenciais()
     qualidade = qualidade if qualidade in QUALIDADES else "low"
@@ -380,9 +470,15 @@ def gerar(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referenc
 
 
 def disponivel() -> bool:
-    """Se dá para contar com a assinatura agora (o login existe e não venceu de vez)."""
-    try:
-        _credenciais()
-        return True
-    except (SemLogin, RuntimeError):
-        return False
+    """Se dá para contar com a assinatura agora: a conta ligada, ou outra da gaveta que entra no lugar dela."""
+    for _ in range(1 + len(list(GAVETA.glob("*.json")) if GAVETA.exists() else [])):
+        versao = _versao_do_login()
+        try:
+            _credenciais()
+            return True
+        except SemLogin as erro:
+            if not trocar_de_conta(erro, versao):
+                return False
+        except RuntimeError:
+            return False
+    return False
