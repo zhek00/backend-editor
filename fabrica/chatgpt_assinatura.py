@@ -34,6 +34,10 @@ PASTA_CODEX = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))   #
 PASTA_LOGIN = Path(os.environ.get("FABRICA_CODEX_HOME") or (Path.home() / ".codex-fabrica"))
 LOGIN = PASTA_LOGIN / "auth.json"
 LIMITES = RAIZ / "chatgpt_limites.json"
+# A recusa do login guardada junto com a versão do auth.json que foi recusada. Em 2026-11-08 a OpenAI revogou o token
+# (token_revoked) e a renovação também foi recusada, mas o arquivo continuava lá: a tela dizia "conectada" e cada
+# imagem tentava de novo. Um login novo grava outro auth.json e a recusa velha deixa de valer sozinha
+RECUSA = PASTA_LOGIN / "recusado.json"
 
 RESPOSTAS = "https://chatgpt.com/backend-api/codex/responses"
 RENOVAR = "https://auth.openai.com/oauth/token"
@@ -128,15 +132,48 @@ def _renovar(dados: dict) -> dict:
     return dados
 
 
+def _versao_do_login() -> str:
+    try:
+        s = LOGIN.stat()
+        return f"{s.st_mtime_ns}-{s.st_size}"
+    except OSError:
+        return ""
+
+
+def marcar_recusa(motivo: str) -> None:
+    """Guarda que a OpenAI recusou este login, para a tela e para disponivel() pararem de contar com ele."""
+    try:
+        RECUSA.write_text(json.dumps({"login": _versao_do_login(), "motivo": str(motivo)[:300], "em": time.time()},
+                                     ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _recusa_valida() -> str:
+    """O motivo da recusa, se ela é deste mesmo auth.json. Vazio quando não há recusa ou o login foi refeito."""
+    try:
+        r = json.loads(RECUSA.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return r.get("motivo") or "" if r.get("login") == _versao_do_login() else ""
+
+
 def _credenciais() -> tuple[str, str, dict]:
     """O access_token válido, o id da conta e o que o id_token conta (e-mail e plano)."""
+    recusa = _recusa_valida()
+    if recusa:
+        raise SemLogin(recusa)
     with _trava:
         dados = _ler_login()
         tokens = dados.get("tokens") or {}
         if not tokens.get("access_token"):
             raise SemLogin("O login do ChatGPT está sem token. Rode `codex login` neste computador.")
         if _venceu(tokens["access_token"]):
-            dados = _renovar(dados)
+            try:
+                dados = _renovar(dados)
+            except SemLogin as erro:
+                marcar_recusa(erro)
+                raise
             tokens = dados.get("tokens") or {}
         return tokens["access_token"], tokens.get("account_id") or "", _dentro_do_jwt(tokens.get("id_token") or "")
 
@@ -306,14 +343,26 @@ def gerar(prompt: str, qualidade: str = "low", proporcao: str = "16:9", referenc
                     # basta: recusado, renova uma vez e pede de novo
                     r.read()
                     renovado = True
+                    motivo = r.text
                     with _trava:
-                        dados = _renovar(_ler_login())
+                        try:
+                            dados = _renovar(_ler_login())
+                        except SemLogin:
+                            revogado = "token_revoked" in motivo or "invalidated" in motivo
+                            erro = SemLogin("A OpenAI revogou o login do ChatGPT desta fábrica (token_revoked). Conecte a "
+                                            "conta de novo em Radar › Integrações › Conexões da conta." if revogado else
+                                            "O login do ChatGPT venceu. Conecte a conta de novo em Radar › Integrações.")
+                            marcar_recusa(erro)
+                            raise erro from None
                     token = dados["tokens"]["access_token"]
                     conta = dados["tokens"].get("account_id") or conta
                     continue
                 if r.status_code in (401, 403):
                     r.read()
-                    raise SemLogin("O ChatGPT recusou o login da assinatura. Rode `codex login` neste computador.")
+                    erro = SemLogin("O ChatGPT recusou o login da assinatura. Conecte a conta de novo em Radar › "
+                                    f"Integrações › Conexões da conta. ({r.text[:120]})")
+                    marcar_recusa(erro)
+                    raise erro
                 if r.status_code != 200:
                     r.read()
                     if r.status_code == 400 and "model_not_found" in r.text:
