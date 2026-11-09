@@ -604,9 +604,11 @@ def _esteira(nome: str, task_id: str) -> None:
                    mensagem=f"Conferindo as {len(na_duvida)} cena(s) que ficaram na dúvida na captura...")
         log_w(f"  {len(na_duvida)} cena(s) na dúvida vão para a conferência; as aprovadas na captura ficam como estão")
         try:
-            resultado_conf = _etapa(task_id, "Conferência", lambda: corrigir.corrigir(
-                p, numeros=na_duvida, rodadas=cfg_corr.get("rodadas", corrigir.RODADAS),
-                nota_minima=minima, nota_para_trocar=minima, log=log_w))
+            # as cenas que a conferência manda para a IA já começam a ser geradas enquanto ela segue (imagens.ao_fundo)
+            with imagens.ao_fundo(p, log_w, onde="a conferência"):
+                resultado_conf = _etapa(task_id, "Conferência", lambda: corrigir.corrigir(
+                    p, numeros=na_duvida, rodadas=cfg_corr.get("rodadas", corrigir.RODADAS),
+                    nota_minima=minima, nota_para_trocar=minima, log=log_w))
             _atualizar(task_id, conferencia={
                 "avaliadas": resultado_conf["avaliadas"], "trocadas": resultado_conf["trocadas"],
                 "para_revisar": resultado_conf.get("para_revisar", []),
@@ -660,7 +662,8 @@ def _esteira(nome: str, task_id: str) -> None:
         # um vídeo por vez nesta conferência (vez.py): duas juntas levavam quase 3 vezes cada
         from . import vez
         with vez.na_vez("conferencia_completadas", p, log_w, "conferência das completadas"):
-            with tempos.medir(p, "Conferência das completadas", log=log_w):
+            with tempos.medir(p, "Conferência das completadas", log=log_w), \
+                    imagens.ao_fundo(p, log_w, onde="a conferência das completadas"):
                 corrigir.conferir_completadas(p, log=log_w)
     except ParadaPrecisaDeVoce:
         raise

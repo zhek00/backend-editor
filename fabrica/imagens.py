@@ -14,6 +14,7 @@ import threading
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -397,9 +398,81 @@ def adiantar(projeto, log=print):
             log(f"  as imagens adiantadas pararam, seguem depois da busca: {str(erro)[:160]}")
 
     log(f"  adiantando {len(pendentes)} imagens de IA enquanto a busca roda")
+    _ADIANTADAS[projeto.nome] = {c["n"] for c in pendentes}
     linha = threading.Thread(target=rodar, daemon=True, name=f"imagens-{projeto.nome}")
     linha.start()
     return linha
+
+
+# as cenas que a linha das adiantadas já levou, por projeto: o gerador de fundo não faz a mesma cena junto com ela
+_ADIANTADAS: dict = {}
+
+
+@contextmanager
+def ao_fundo(projeto, log=print, intervalo=15.0, onde=""):
+    """Gera as imagens de IA enquanto a conferência roda, em vez de esperar ela acabar (pedido do usuário em 2026-11-09,
+    "juntar as ondas"). Medido no 25-cavalos: a Conferência levou 24 min sem nenhuma imagem sendo feita e só depois
+    vieram 27 min de imagens; a Conferência das completadas e a garantia repetiam isso no fim.
+
+    A cada `intervalo` segundos, a cena que a conferência já mandou para a IA começa a ser gerada. Ficam para o
+    imagens.gerar de depois, como antes: a cena de personagem (precisa das referências) e a cena de um trecho de IA
+    seguido, porque o prompts_em_sequencia reescreve os prompts do trecho no cenas.json, e reescrever aqui brigaria com
+    a conferência, que grava o mesmo arquivo. Daqui só saem arquivos de imagem, nunca o cenas.json. A cena que a
+    conferência devolver ao acervo depois fica com a imagem de IA sem uso (US$ 0,004 no máximo). imagens.ao_fundo:
+    false desliga."""
+    geral = projeto.config.get("imagens") or {}
+    if projeto.offline or geral.get("ao_fundo") is False or not midia.ia_ativa(projeto):
+        yield
+        return
+    parar = threading.Event()
+    feitas = {"n": 0}
+
+    def rodar():
+        no_ar, ja = {}, set(_ADIANTADAS.get(projeto.nome, set()))
+        with ThreadPoolExecutor(concorrencia(provedor(projeto.perfil), int(geral.get("processos", 6)))) as executor:
+            while True:
+                for n, futuro in list(no_ar.items()):
+                    if not futuro.done():
+                        continue
+                    no_ar.pop(n)
+                    erro = futuro.exception()
+                    if isinstance(erro, SemCota):
+                        log(f"  imagens de fundo paradas: {str(erro)[:160]}")
+                        parar.set()
+                    elif erro is None:
+                        feitas["n"] += 1
+                if parar.is_set():
+                    break
+                try:
+                    cenas = projeto.ler_json("cenas.json")["cenas"]
+                    pendentes = [c for c in pendentes_ia(projeto, cenas)
+                                 if not c.get("personagem") and c["n"] not in no_ar and c["n"] not in ja]
+                    em_trecho = {x["n"] for t in _trechos_de_ia(cenas, {c["n"] for c in pendentes}) for x in t}
+                    pendentes = [c for c in pendentes if c["n"] not in em_trecho]
+                    if pendentes:
+                        faltam = banco_proprio.atender(projeto, pendentes, log)
+                        for c in faltam:
+                            ja.add(c["n"])
+                            no_ar[c["n"]] = executor.submit(_gerar_uma, projeto, c, [], geral.get("tentativas", 3))
+                except (Exception, SystemExit) as erro:  # noqa: BLE001 (o fundo nunca para o vídeo: gerar faz depois)
+                    log(f"  imagens de fundo: {str(erro)[:160]}")
+                parar.wait(intervalo)
+            for futuro in no_ar.values():     # as que estão no ar terminam antes de a criação seguir
+                try:
+                    futuro.result()
+                    feitas["n"] += 1
+                except Exception:  # noqa: BLE001
+                    pass
+
+    linha = threading.Thread(target=rodar, daemon=True, name=f"imagens-fundo-{projeto.nome}")
+    linha.start()
+    try:
+        yield
+    finally:
+        parar.set()
+        linha.join()
+        if feitas["n"]:
+            log(f"  {feitas['n']} imagem(ns) de IA feitas durante {onde or 'a conferência'}, sem esperar ela acabar")
 
 
 def _palavras_do_prompt(texto) -> set:
